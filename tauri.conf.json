@@ -1,0 +1,36 @@
+{
+    "$schema":  "https://schema.tauri.app/config/2",
+    "identifier":  "dev.soulkernel.app",
+    "productName":  "SoulKernel",
+    "version":  "0.1.0",
+    "build":  {
+                  "beforeBuildCommand":  "",
+                  "beforeDevCommand":  "",
+                  "frontendDist":  "ui"
+              },
+    "app":  {
+                "withGlobalTauri":  true,
+                "security":  {
+                                 "csp":  null
+                             },
+                "windows":  [
+                                {
+                                    "fullscreen":  false,
+                                    "height":  800,
+                                    "resizable":  true,
+                                    "title":  "SoulKernel",
+                                    "width":  1200
+                                }
+                            ]
+            },
+    "bundle":  {
+                   "icon":  [
+                                "icons/icon.ico"
+                            ],
+                   "shortDescription":  "Orchestrateur Performance Dome — priorise votre processus, prouve les gains.",
+                   "longDescription":  "SoulKernel pilote les paramètres noyau (CPU, RAM, I/O) pour donner un maximum d\u0027amplitude au processus cible. Export des gains et comparaison avant/après pour prouver l\u0027effet."
+               },
+    "plugins":  {
+
+                }
+}
