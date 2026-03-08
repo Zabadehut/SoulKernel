@@ -213,7 +213,7 @@ fn apply_hud_window_mode(
     let w = ensure_hud_window(app)?;
     let (width, height) = preset_to_size(preset);
     let clamped_opacity = opacity.clamp(0.3, 1.0);
-    if let Some(display) = pick_display(app, display_index)? {
+    if let Ok(Some(display)) = pick_display(app, display_index) {
         let x = display.x + 14;
         let y = display.y + 58;
         let _ = w.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
