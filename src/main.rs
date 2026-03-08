@@ -470,30 +470,41 @@ fn set_system_hud_display(
     Ok(())
 }
 #[tauri::command]
-fn list_processes() -> Result<Vec<ProcessInfo>, String> {
-    let mut sys = sysinfo::System::new_all();
-    sys.refresh_all();
-    let mut list: Vec<ProcessInfo> = sys
-        .processes()
-        .iter()
-        .map(|(pid, p)| ProcessInfo {
-            pid: pid.as_u32(),
-            name: p.name().to_string(),
-            cpu_usage: p.cpu_usage() as f64,
-        })
-        .collect();
-    list.sort_by(|a, b| {
-        b.cpu_usage
-            .partial_cmp(&a.cpu_usage)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    list.truncate(100);
-    Ok(list)
+async fn list_processes() -> Result<Vec<ProcessInfo>, String> {
+    tokio::task::spawn_blocking(|| {
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_all();
+        let mut list: Vec<ProcessInfo> = sys
+            .processes()
+            .iter()
+            .map(|(pid, p)| ProcessInfo {
+                pid: pid.as_u32(),
+                name: p.name().to_string(),
+                cpu_usage: p.cpu_usage() as f64,
+            })
+            .collect();
+        list.sort_by(|a, b| {
+            b.cpu_usage
+                .partial_cmp(&a.cpu_usage)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        list.truncate(100);
+        Ok::<Vec<ProcessInfo>, String>(list)
+    })
+    .await
+    .map_err(|e| format!("list_processes: spawn_blocking error: {}", e))?
 }
 
 #[tauri::command]
 async fn get_metrics() -> Result<metrics::ResourceState, String> {
-    metrics::collect().map_err(|e| e.to_string())
+    tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        tokio::task::spawn_blocking(metrics::collect),
+    )
+    .await
+    .map_err(|_| "get_metrics: timeout after 4s".to_string())?
+    .map_err(|e| format!("get_metrics: spawn_blocking error: {}", e))?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -518,7 +529,10 @@ async fn activate_dome(
     let profile = formula::WorkloadProfile::from_name(&workload)
         .ok_or_else(|| format!("Unknown workload: {}", workload))?;
 
-    let metrics = metrics::collect().map_err(|e| e.to_string())?;
+    let metrics = tokio::task::spawn_blocking(metrics::collect)
+        .await
+        .map_err(|e| format!("activate_dome: spawn_blocking error: {}", e))?
+        .map_err(|e| e.to_string())?;
     let formula_res = formula::compute(&metrics, &profile, kappa);
 
     if metrics.sigma >= sigma_max {
