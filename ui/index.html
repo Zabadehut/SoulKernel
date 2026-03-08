@@ -15,7 +15,7 @@
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;font-size:14px;
   min-height:100vh;overflow-x:hidden;}
-body::before{content:';position:fixed;inset:0;pointer-events:none;z-index:999;
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:999;
   background:repeating-linear-gradient(0deg,transparent,transparent 2px,
   rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px);}
 header{display:flex;align-items:center;justify-content:space-between;
@@ -46,7 +46,7 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .panel-title{font-size:.66rem;letter-spacing:.14em;color:var(--muted);
   margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--s3);
   display:flex;align-items:center;gap:.5rem;}
-.panel-title::before{content:';display:inline-block;width:4px;height:4px;
+.panel-title::before{content:'';display:inline-block;width:4px;height:4px;
   background:var(--cpu);border-radius:1px;}
 
 .resource-item{margin-bottom:1.1rem;}
@@ -55,7 +55,7 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .res-val{font-size:.9rem;font-weight:700;}
 .bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
 .bar-fill{height:100%;border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1);position:relative;}
-.bar-fill::after{content:';position:absolute;right:0;top:0;bottom:0;width:6px;
+.bar-fill::after{content:'';position:absolute;right:0;top:0;bottom:0;width:6px;
   background:inherit;filter:brightness(2);border-radius:0 2px 2px 0;}
 .bar-cpu{background:linear-gradient(90deg,#005f6e,var(--cpu));}
 .bar-mem{background:linear-gradient(90deg,#4a1880,var(--mem));}
@@ -723,6 +723,8 @@ function initTauri() {
   }).catch(e => log('Audit path error: ' + e, 'warn'));
   loadPlatformInfo();
   updateSystemStatus(null);
+  // Kickstart polling immediately — don't wait for the async IIFE to reach poll()
+  setTimeout(poll, 80);
 }
 
 if (window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke) {
@@ -1756,9 +1758,9 @@ function renderFormula(m) {
   piEl.textContent = 'π = ' + pi.toFixed(5);
   piEl.className   = 'eq-result' + (pi>.5?' high':pi<.2?' low':'');
 
-  document.getElementById('domeVal').textContent = state.domeActive
-    ? '𝒟 = ' + dGain.toFixed(4)
-    : '𝒟 = —';
+  const dEl = document.getElementById('domeVal');
+  dEl.textContent = '𝒟 ' + (state.domeActive ? '= ' : '≈ ') + dGain.toFixed(4);
+  dEl.style.opacity = state.domeActive ? '1' : '0.5';
 
   set('mBrut',  brut.toFixed(4));
   set('mFric',  fric.toFixed(4));
@@ -2648,21 +2650,31 @@ function fallbackInvoke(cmd, args) {
     await initHudOnlyMode();
     return;
   }
+
+  // Phase 1 — sync setup (no await, no blocking)
   loadRuntimeSettings();
   setViewMode(state.viewMode);
   applyHudPresentation();
   setHudInteractive(!!state.hudInteractive);
-  setHudVisible(!!state.hudVisible);
-  try { await invoke('set_policy_mode', { mode: state.policyMode }); } catch (_) {}
+  setHudVisible(!!state.hudVisible); // async, intentionally not awaited
+
+  // Phase 2 — fire critical UI log + start polling immediately
   log('SoulKernel demarre - ' + (hasTauri ? 'Tauri runtime (metriques reelles)' : 'Hors Tauri - lancez cargo tauri dev pour les metriques'), hasTauri ? 'ok' : 'warn');
-  loadPlatformInfo();
+  loadPlatformInfo();        // async, not awaited
   updateSystemStatus(null);
-  poll();
-  refreshProcesses({ userInitiated: false });
+  poll();                    // kick off first metrics poll — not awaited
+  refreshProcesses({ userInitiated: false }); // not awaited
+
+  // Phase 3 — fire-and-forget background inits that must NOT block polling
+  invoke('set_policy_mode', { mode: state.policyMode }).catch(() => {});
+
+  // Phase 4 — awaitable secondary init (policy, soulram, telemetry)
   await syncSoulRamStatus();
   await loadPolicyStatus();
   await applyStartupIntentIfAny();
   await refreshTelemetrySummary(true);
+
+  // Phase 5 — UI state sync
   updateSoulRamUi();
   const ad = document.getElementById('adaptiveEnabled'); if (ad) ad.checked = !!state.adaptiveEnabled;
   const aad = document.getElementById('adaptiveAutoDome'); if (aad) aad.checked = !!state.adaptiveAutoDome;
