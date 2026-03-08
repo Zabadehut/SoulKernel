@@ -254,10 +254,13 @@ fn open_system_hud(
     hud_health: State<'_, SharedHudHealth>,
     audit: State<'_, SharedAudit>,
 ) -> Result<(), String> {
-    {
+    // Copier les paramètres et relâcher le verrou AVANT toute opération fenêtre
+    // (évite de bloquer le watchdog pendant la création/show de la fenêtre)
+    let (interactive, preset, opacity, display_index) = {
         let mut hs = hud.lock().map_err(|e| e.to_string())?;
         hs.visible = true;
-    }
+        (hs.interactive, hs.preset.clone(), hs.opacity, hs.display_index)
+    };
     {
         let mut health = hud_health.lock().map_err(|e| e.to_string())?;
         let now = now_ms_local();
@@ -265,8 +268,8 @@ fn open_system_hud(
         health.last_reload_ms = 0;
         health.reload_count = 0;
     }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(&app, hs.interactive, &hs.preset, hs.opacity, hs.display_index)?;
+    // Verrous relâchés — création/show de la fenêtre sans contention
+    apply_hud_window_mode(&app, interactive, &preset, opacity, display_index)?;
     if let Some(w) = app.get_webview_window("hud") {
         let _ = w.show();
     }
@@ -276,10 +279,10 @@ fn open_system_hud(
         "open",
         Some("info"),
         Some(serde_json::json!({
-            "preset": hs.preset,
-            "interactive": hs.interactive,
-            "opacity": hs.opacity,
-            "display_index": hs.display_index
+            "preset": preset,
+            "interactive": interactive,
+            "opacity": opacity,
+            "display_index": display_index
         })),
     );
     Ok(())
@@ -309,18 +312,18 @@ fn set_system_hud_interactive(
     hud: State<'_, SharedHud>,
     audit: State<'_, SharedAudit>,
 ) -> Result<(), String> {
-    {
+    let (preset, op, disp) = {
         let mut hs = hud.lock().map_err(|e| e.to_string())?;
         hs.interactive = interactive;
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(&app, hs.interactive, &hs.preset, hs.opacity, hs.display_index)?;
+        (hs.preset.clone(), hs.opacity, hs.display_index)
+    };
+    apply_hud_window_mode(&app, interactive, &preset, op, disp)?;
     let _ = audit_write(
         &audit,
         "hud",
         "interactive",
         Some("info"),
-        Some(serde_json::json!({ "interactive": hs.interactive })),
+        Some(serde_json::json!({ "interactive": interactive })),
     );
     Ok(())
 }
@@ -333,24 +336,24 @@ fn set_system_hud_preset(
     hud: State<'_, SharedHud>,
     audit: State<'_, SharedAudit>,
 ) -> Result<(), String> {
-    {
+    let (final_preset, final_opacity, interactive, display_index) = {
         let mut hs = hud.lock().map_err(|e| e.to_string())?;
         hs.preset = match preset.as_str() {
             "mini" | "compact" | "detailed" => preset,
             _ => "compact".to_string(),
         };
         hs.opacity = opacity.clamp(0.3, 1.0);
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(&app, hs.interactive, &hs.preset, hs.opacity, hs.display_index)?;
+        (hs.preset.clone(), hs.opacity, hs.interactive, hs.display_index)
+    };
+    apply_hud_window_mode(&app, interactive, &final_preset, final_opacity, display_index)?;
     let _ = audit_write(
         &audit,
         "hud",
         "preset",
         Some("info"),
         Some(serde_json::json!({
-            "preset": hs.preset,
-            "opacity": hs.opacity
+            "preset": final_preset,
+            "opacity": final_opacity
         })),
     );
     Ok(())
@@ -451,24 +454,18 @@ fn set_system_hud_display(
     hud: State<'_, SharedHud>,
     audit: State<'_, SharedAudit>,
 ) -> Result<(), String> {
-    {
+    let (interactive, preset, opacity) = {
         let mut hs = hud.lock().map_err(|e| e.to_string())?;
         hs.display_index = display_index;
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(
-        &app,
-        hs.interactive,
-        &hs.preset,
-        hs.opacity,
-        hs.display_index,
-    )?;
+        (hs.interactive, hs.preset.clone(), hs.opacity)
+    };
+    apply_hud_window_mode(&app, interactive, &preset, opacity, display_index)?;
     let _ = audit_write(
         &audit,
         "hud",
         "display",
         Some("info"),
-        Some(serde_json::json!({ "display_index": hs.display_index })),
+        Some(serde_json::json!({ "display_index": display_index })),
     );
     Ok(())
 }
@@ -1140,9 +1137,26 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
-                cleanup_hud_before_exit(&window.app_handle());
-                window.app_handle().exit(0);
+            match (window.label(), event) {
+                // Fenêtre principale : nettoyage HUD puis exit forcé
+                ("main", WindowEvent::CloseRequested { .. }) => {
+                    cleanup_hud_before_exit(&window.app_handle());
+                    // std::process::exit contourne la boucle d'événements Tauri
+                    // pour éviter le deadlock sur Windows (exit() depuis on_window_event)
+                    std::process::exit(0);
+                }
+                // Fenêtre HUD : si l'utilisateur la ferme directement (Alt+F4, etc.)
+                // on met visible=false mais on ne quitte pas l'application
+                ("hud", WindowEvent::CloseRequested { .. }) => {
+                    let app = window.app_handle();
+                    if let Some(hud_state) = app.try_state::<SharedHud>() {
+                        if let Ok(mut hs) = hud_state.lock() {
+                            hs.visible = false;
+                        }
+                    }
+                    let _ = app.emit("soulkernel://hud-state", false);
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![

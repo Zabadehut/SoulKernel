@@ -39,8 +39,18 @@ body.edit .hud-title{cursor:move}
   </div>
 </div>
 <script>
-const t = window.__TAURI__;
-const invoke = t?.core?.invoke ? t.core.invoke : null;
+// Tauri peut injecter __TAURI__ après le parse — résolution paresseuse
+let invoke = null;
+function resolveInvoke() {
+  if (invoke) return true;
+  const t = window.__TAURI__;
+  const fn = t?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
+  if (fn) { invoke = fn; return true; }
+  return false;
+}
+resolveInvoke();
+window.addEventListener('tauriReady', () => { resolveInvoke(); refreshHud(); });
+
 const root = document.getElementById('hudRoot');
 const mode = document.getElementById('hudMode');
 const drag = document.getElementById('hudDrag');
@@ -65,7 +75,7 @@ function renderPayload(p){
 }
 
 async function refreshHud() {
-  if (!invoke) return;
+  if (!invoke && !resolveInvoke()) return;
   const now = Date.now();
   if (now - lastReadyPing > 1000) {
     lastReadyPing = now;
