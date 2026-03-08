@@ -1,0 +1,38 @@
+# --- Build artifacts ---
+/target/
+**/*.rs.bk
+
+# --- Rust/Cargo ---
+# Keep Cargo.lock for application crates
+# /Cargo.lock
+
+# --- Tauri / frontend outputs ---
+/src-tauri/target/
+/dist/
+/build/
+
+# --- Logs / runtime data ---
+*.log
+*.tmp
+*.cache
+
+# --- Local helper/generated scratch files ---
+.tmp_*.js
+.tmp_*.ts
+.tmp_*.json
+soulkernel_gains_*.json
+nul
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+.cursor/
+
+# --- Windows ---
+Thumbs.db
+Desktop.ini
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example

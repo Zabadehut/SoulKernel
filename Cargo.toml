@@ -1,0 +1,64 @@
+[package]
+name    = "soulkernel"
+version = "0.1.0"
+edition = "2021"
+description = "SoulKernel — Performance Dome orchestrator"
+
+[lib]
+name = "soulkernel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "soulkernel"
+path = "src/main.rs"
+
+# ─── Core ───────────────────────────────────────────────────────────────────
+[dependencies]
+tauri        = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+serde        = { version = "1",   features = ["derive"] }
+serde_json   = "1"
+tokio        = { version = "1",   features = ["full"] }
+anyhow       = "1"
+log          = "0.4"
+env_logger   = "0.11"
+rfd          = "0.14"
+
+# Cross-platform hardware metrics (CPU, RAM, I/O)
+sysinfo      = "0.30"
+
+# ─── Linux only ─────────────────────────────────────────────────────────────
+[target.'cfg(target_os = "linux")'.dependencies]
+nix          = { version = "0.28", features = ["fs", "process", "resource", "sched"] }
+procfs       = "0.16"
+
+# ─── Windows only ───────────────────────────────────────────────────────────
+[target.'cfg(target_os = "windows")'.dependencies]
+windows      = { version = "0.56", features = [
+  "Win32_System_SystemInformation",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Performance",
+  "Win32_System_Power",
+  "Win32_System_JobObjects",
+  "Win32_Foundation",
+  "Win32_System_Threading",
+] }
+winreg       = "0.52"
+
+# ─── macOS only ─────────────────────────────────────────────────────────────
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+system-configuration = "0.6"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+opt-level = 3
+lto       = true
+codegen-units = 1
+strip     = true
+
+

@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoulKernel</title>
+<style>
+/* ── Identical visual shell to standalone version ────────── */
+:root {
+  --bg:#060a10;--s1:#0b1320;--s2:#0f1e30;--s3:#162840;
+  --border:#1a3355;--dim:#243f5e;
+  --cpu:#00e5ff;--mem:#b060ff;--io:#00ff9d;--gpu:#ffb300;
+  --stress:#ff3b5c;--text:#d0e8ff;--muted:#5a80a8;--hi:#ffffff;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;
+  min-height:100vh;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,
+  rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px);}
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:.6rem 1.4rem;background:var(--s1);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:100;}
+.logo{display:flex;align-items:center;gap:.7rem;}
+.logo-mark{width:28px;height:28px;border:2px solid var(--cpu);border-radius:4px;
+  display:grid;place-items:center;font-size:.65rem;color:var(--cpu);}
+.logo-text{font-size:.85rem;letter-spacing:.15em;color:var(--hi);}
+.logo-sub{font-size:.6rem;color:var(--muted);letter-spacing:.08em;}
+.no-tauri-banner{background:#8b2635;color:#fff;padding:.5rem 1rem;text-align:center;font-size:.8rem;}
+.no-tauri-banner strong{color:#ffcc00;}
+.status-bar{display:flex;gap:1.2rem;align-items:center;}
+.status-pill{padding:.2rem .7rem;border-radius:999px;border:1px solid;
+  font-size:.62rem;letter-spacing:.1em;}
+.pill-ok{border-color:var(--io);color:var(--io);}
+.pill-run{border-color:var(--cpu);color:var(--cpu);animation:blink 1.4s infinite;}
+.pill-off{border-color:var(--muted);color:var(--muted);}
+.pill-warn{border-color:var(--gpu);color:var(--gpu);}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.clock{font-size:.65rem;color:var(--muted);}
+.platform-badge{font-size:.55rem;padding:.15rem .6rem;border-radius:999px;
+  border:1px solid var(--mem);color:var(--mem);}
+
+main{display:grid;grid-template-columns:240px 1fr 240px;
+  gap:1px;background:var(--border);min-height:calc(100vh - 46px);}
+.panel{background:var(--bg);padding:1rem;}
+.panel-title{font-size:.6rem;letter-spacing:.18em;color:var(--muted);
+  margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--s3);
+  display:flex;align-items:center;gap:.5rem;}
+.panel-title::before{content:'';display:inline-block;width:4px;height:4px;
+  background:var(--cpu);border-radius:1px;}
+
+.resource-item{margin-bottom:1.1rem;}
+.res-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.3rem;}
+.res-name{font-size:.65rem;letter-spacing:.08em;}
+.res-val{font-size:.9rem;font-weight:700;}
+.bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1);position:relative;}
+.bar-fill::after{content:'';position:absolute;right:0;top:0;bottom:0;width:6px;
+  background:inherit;filter:brightness(2);border-radius:0 2px 2px 0;}
+.bar-cpu{background:linear-gradient(90deg,#005f6e,var(--cpu));}
+.bar-mem{background:linear-gradient(90deg,#4a1880,var(--mem));}
+.bar-lam{background:linear-gradient(90deg,#005f3a,var(--io));}
+.bar-io{background:linear-gradient(90deg,#664500,var(--gpu));}
+.bar-gpu{background:linear-gradient(90deg,#6e0020,#ff6b6b);}
+.res-label{font-size:.52rem;color:var(--muted);margin-top:.2rem;}
+
+.formula-zone{background:var(--s1);border:1px solid var(--s3);border-left:3px solid var(--s3);
+  border-radius:6px;padding:1rem 1.2rem;margin-bottom:.8rem;text-align:center;
+  transition:border-color .3s,box-shadow .3s;overflow-x:auto;}
+.formula-zone.active{border-left-color:var(--cpu);
+  box-shadow:0 0 30px rgba(0,229,255,.12),inset 0 0 20px rgba(0,229,255,.03);}
+.formula-main{font-size:.75rem;line-height:2.2;color:var(--text);}
+.f-sym{color:var(--cpu);font-style:italic;}
+.f-green{color:var(--io);}.f-purple{color:var(--mem);}
+.f-red{color:var(--stress);}.f-op{color:var(--muted);}
+.eq-result{margin-top:.5rem;font-size:1.5rem;font-weight:700;color:var(--cpu);
+  text-shadow:0 0 20px rgba(0,229,255,.5);transition:color .3s;}
+.eq-result.high{color:var(--io);text-shadow:0 0 20px rgba(0,255,157,.4);}
+.eq-result.low{color:var(--stress);text-shadow:0 0 20px rgba(255,59,92,.4);}
+.formula-label{font-size:.52rem;color:var(--muted);margin-top:.25rem;letter-spacing:.12em;}
+
+.dome-vis{background:var(--s1);border:1px solid var(--s3);border-radius:6px;
+  padding:.8rem 1rem;margin-bottom:.8rem;}
+.dome-title{font-size:.58rem;color:var(--muted);letter-spacing:.12em;margin-bottom:.6rem;}
+.dome-bars{display:grid;grid-template-columns:repeat(5,1fr);gap:.3rem;
+  align-items:end;height:55px;}
+.dome-bar-wrap{display:flex;flex-direction:column;align-items:center;gap:.2rem;}
+.dome-bar-col{width:100%;min-height:3px;border-radius:2px 2px 0 0;
+  transition:height .5s cubic-bezier(.4,0,.2,1);}
+.dome-bar-label{font-size:.48rem;color:var(--muted);}
+
+.metrics-row{display:grid;grid-template-columns:repeat(4,1fr);
+  gap:1px;background:var(--border);border:1px solid var(--border);
+  border-radius:6px;overflow:hidden;}
+.metric-cell{background:var(--s1);padding:.6rem .4rem;text-align:center;}
+.metric-val{font-size:.9rem;font-weight:700;color:var(--hi);}
+.metric-name{font-size:.5rem;color:var(--muted);margin-top:.1rem;letter-spacing:.1em;}
+
+.panel-left{grid-column:1;grid-row:1/4;}
+.panel-center{grid-column:2;}
+.panel-workloads{grid-column:2;}
+.panel-right{grid-column:3;grid-row:1/4;display:flex;flex-direction:column;gap:1rem;}
+
+.workload-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;}
+.wl-btn{background:var(--s2);border:1px solid var(--s3);border-radius:6px;
+  padding:.5rem .4rem;cursor:pointer;transition:all .2s;text-align:center;}
+.wl-btn:hover{border-color:var(--dim);background:var(--s3);}
+.wl-btn.active{border-color:var(--cpu);background:rgba(0,229,255,.05);
+  box-shadow:0 0 10px rgba(0,229,255,.1);}
+.wl-icon{font-size:1rem;margin-bottom:.2rem;}
+.wl-name{font-size:.55rem;color:var(--text);letter-spacing:.06em;}
+.wl-hint{font-size:.46rem;color:var(--muted);margin-top:.1rem;}
+
+.sigma-gauge{position:relative;height:80px;background:var(--s1);
+  border:1px solid var(--s3);border-radius:6px;overflow:hidden;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.2rem;}
+.sigma-fill{position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(180deg,rgba(255,59,92,.6),rgba(255,59,92,.1));
+  transition:height .5s;}
+.sigma-val{font-size:1.3rem;font-weight:700;color:var(--stress);position:relative;z-index:1;}
+.sigma-label{font-size:.52rem;color:var(--muted);letter-spacing:.08em;position:relative;z-index:1;}
+
+.controls{display:flex;flex-direction:column;gap:.35rem;}
+.ctrl-btn{padding:.55rem .7rem;border-radius:5px;border:1px solid;font-family:inherit;
+  font-size:.6rem;letter-spacing:.1em;cursor:pointer;transition:all .2s;text-transform:uppercase;}
+.btn-primary{background:rgba(0,229,255,.08);border-color:var(--cpu);color:var(--cpu);}
+.btn-primary:hover{background:rgba(0,229,255,.15);box-shadow:0 0 15px rgba(0,229,255,.2);}
+.btn-secondary{background:rgba(176,96,255,.06);border-color:var(--mem);color:var(--mem);}
+.btn-secondary:hover{background:rgba(176,96,255,.12);}
+.btn-danger{background:rgba(255,59,92,.05);border-color:var(--stress);color:var(--stress);}
+.btn-danger:hover{background:rgba(255,59,92,.12);}
+
+.kappa-ctrl{margin-bottom:.6rem;}
+.target-select{width:100%;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:.3rem .5rem;font-size:.75rem;border-radius:4px;}
+.target-hint{font-size:.48rem;color:var(--muted);margin-top:.25rem;line-height:1.4;}
+.proof-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.4rem;font-size:.65rem;}
+.proof-placeholder{color:var(--muted);font-style:italic;}
+.proof-compare{display:flex;align-items:center;gap:.5rem;margin-top:.3rem;}
+.proof-col{flex:1;}
+.proof-label{font-size:.55rem;color:var(--muted);letter-spacing:.08em;margin-bottom:.15rem;}
+.proof-metrics{font-size:.6rem;line-height:1.5;color:var(--text);}
+.proof-arrow{color:var(--cpu);font-weight:700;}
+.gains-actions{display:flex;gap:.35rem;margin-top:.3rem;flex-wrap:wrap;}
+.gains-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.4rem;font-size:.7rem;}
+.gains-summary{color:var(--io);margin-bottom:.3rem;}
+.gains-list{max-height:120px;overflow-y:auto;}
+.gains-list .gains-row{display:flex;gap:.5rem;padding:.15rem 0;border-bottom:1px solid var(--border);color:var(--muted);}
+.gains-list .gains-row:last-child{border-bottom:none;}
+.gains-list .gains-pi{color:var(--cpu);min-width:3rem;}
+.gains-list .gains-d{color:var(--mem);min-width:3.5rem;}
+.kappa-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;}
+.kappa-name{font-size:.58rem;color:var(--muted);letter-spacing:.08em;}
+.kappa-num{font-size:.72rem;color:var(--cpu);}
+input[type=range]{-webkit-appearance:none;width:100%;height:3px;
+  background:var(--s3);border-radius:2px;outline:none;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;
+  width:12px;height:12px;background:var(--cpu);border-radius:50%;cursor:pointer;}
+input[type=range].mem-range::-webkit-slider-thumb{background:var(--mem);}
+input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
+
+.log-panel{flex:1;background:var(--s1);border:1px solid var(--s3);
+  border-radius:6px;padding:.6rem;overflow-y:auto;max-height:280px;}
+.log-entry{font-size:.56rem;line-height:1.7;border-bottom:1px solid rgba(26,51,85,.4);
+  padding:.12rem 0;display:flex;gap:.5rem;}
+.log-ts{color:var(--muted);min-width:48px;}
+.log-lvl{min-width:28px;}
+.lvl-ok{color:var(--io);}.lvl-warn{color:var(--gpu);}
+.lvl-info{color:var(--cpu);}.lvl-err{color:var(--stress);}
+.log-msg{color:var(--text);}
+
+.panel-bottom{grid-column:1/-1;background:var(--s1);border-top:1px solid var(--border);
+  padding:.5rem 1rem;display:flex;align-items:center;justify-content:space-between;}
+.bottom-formula{font-size:.58rem;color:var(--muted);}
+.bottom-formula span{color:var(--text);}
+.dome-badge{padding:.2rem .7rem;border-radius:999px;border:1px solid var(--io);
+  font-size:.56rem;color:var(--io);opacity:0;transition:opacity .3s;}
+.dome-badge.show{opacity:1;animation:blink 1s infinite;}
+
+.raw-grid{display:grid;grid-template-columns:1fr 1fr;gap:.3rem;margin-top:.8rem;}
+.raw-cell{background:var(--s2);border:1px solid var(--border);border-radius:4px;
+  padding:.35rem .5rem;font-size:.55rem;}
+.raw-label{color:var(--muted);font-size:.48rem;}
+.raw-val{color:var(--text);font-weight:700;}
+
+.feat-tags{display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.5rem;}
+.feat-tag{font-size:.5rem;padding:.15rem .45rem;border-radius:999px;
+  border:1px solid var(--border);color:var(--muted);}
+.feat-tag.active{border-color:var(--io);color:var(--io);}
+</style>
+</head>
+<body>
+
+<div id="noTauriBanner" class="no-tauri-banner" style="display:none">
+  ⚠ Vous n'utilisez pas l'application Tauri — les métriques affichées sont à 0 / N/A. Lancez <strong>cargo tauri dev</strong> depuis la racine du projet pour ouvrir la fenêtre native et afficher les vraies métriques.
+</div>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">◉</div>
+    <div>
+      <div class="logo-text">SoulKernel</div>
+      <div class="logo-sub">PERFORMANCE DOME ORCHESTRATOR</div>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="platform-badge" id="platformBadge">Connecting…</div>
+    <div class="status-pill pill-ok" id="sysStatus">SYSTEM OK</div>
+    <div class="status-pill pill-off" id="domeStatus">DOME IDLE</div>
+    <div class="clock" id="clk">--:--:--</div>
+  </div>
+</header>
+
+<main>
+
+  <!-- LEFT -->
+  <div class="panel panel-left">
+    <div class="panel-title">HARDWARE r(t) · LIVE</div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--cpu)">C(t) · CPU</span>
+        <span class="res-val" style="color:var(--cpu)" id="vCPU">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-cpu" id="bCPU" style="width:0"></div></div>
+      <div class="res-label" id="lCPU">α<sub>C</sub> — polling…</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--mem)">M(t) · RAM</span>
+        <span class="res-val" style="color:var(--mem)" id="vMEM">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-mem" id="bMEM" style="width:0"></div></div>
+      <div class="res-label" id="lMEM">polling…</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--io)">Λ(t) · COMPRESSION</span>
+        <span class="res-val" style="color:var(--io)" id="vLAM">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-lam" id="bLAM" style="width:0"></div></div>
+      <div class="res-label" id="lLAM">zRAM / zSWAP ratio</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--gpu)">B<sub>io</sub>(t) · I/O</span>
+        <span class="res-val" style="color:var(--gpu)" id="vIO">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-io" id="bIO" style="width:0"></div></div>
+      <div class="res-label" id="lIO">polling…</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
+        <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-gpu" id="bGPU" style="width:0"></div></div>
+      <div class="res-label" id="lGPU">IOKit / sysfs / DXGI</div>
+    </div>
+
+    <div style="margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--s3)">
+      <div class="panel-title" style="margin-bottom:.4rem">RAW METRICS</div>
+      <div class="raw-grid">
+        <div class="raw-cell"><div class="raw-label">MEM used</div><div class="raw-val" id="rawMemUsed">—</div></div>
+        <div class="raw-cell"><div class="raw-label">MEM total</div><div class="raw-val" id="rawMemTotal">—</div></div>
+        <div class="raw-cell"><div class="raw-label">zRAM used</div><div class="raw-val" id="rawZram">—</div></div>
+        <div class="raw-cell"><div class="raw-label">PSI CPU</div><div class="raw-val" id="rawPsiCpu">—</div></div>
+        <div class="raw-cell"><div class="raw-label">PSI MEM</div><div class="raw-val" id="rawPsiMem">—</div></div>
+        <div class="raw-cell"><div class="raw-label">CPU %</div><div class="raw-val" id="rawCpuPct">—</div></div>
+      </div>
+    </div>
+
+    <div style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--s3)">
+      <div class="panel-title" style="margin-bottom:.3rem">PLATFORM FEATURES</div>
+      <div class="feat-tags" id="featTags"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: FORMULA -->
+  <div class="panel panel-center">
+    <div class="panel-title">FORMULE UNIFIÉE π(t)</div>
+
+    <div class="formula-zone" id="fZone">
+      <div class="formula-main">
+        <span class="f-sym" style="font-size:1.1em">π</span><span class="f-op">(t) = (</span>
+        <span class="f-sym">𝒲</span><span class="f-op">·</span><span class="f-sym">r</span><span class="f-op">(t)) ·</span>
+        <span class="f-op">∏</span><sub style="font-size:.6em">k</sub>
+        <span class="f-op">(1−</span><span class="f-sym f-green">ε</span><sub style="font-size:.6em">k</sub><span class="f-op">)</span><sup style="font-size:.6em;color:var(--io)">α<sub>k</sub></sup>
+        <span class="f-op"> · </span>
+        <span class="f-red">e</span><sup style="font-size:.6em;color:var(--stress)">−κΣ(t)</sup>
+      </div>
+      <div class="eq-result" id="piVal">π = —</div>
+      <div class="formula-label">RENDEMENT INSTANTANÉ · HARDWARE LIVE</div>
+    </div>
+
+    <div class="formula-zone" id="dZone" style="margin-bottom:.6rem">
+      <div class="formula-main">
+        <span class="f-sym" style="font-size:1em">𝒟</span>
+        <span class="f-op">[τ₀,τ₁] = ∫π(t)dt −</span>
+        <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">setup</sub>
+        <span class="f-op">−</span>
+        <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">rb</sub>
+      </div>
+      <div class="eq-result" id="domeVal" style="font-size:1.1rem">𝒟 = —</div>
+      <div class="formula-label">GAIN NET DU DÔME</div>
+    </div>
+
+    <div class="dome-vis">
+      <div class="dome-title">ALLOCATION PAR DIMENSION · α · r(t)</div>
+      <div class="dome-bars">
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc0" style="height:0;background:var(--cpu)"></div>
+          <div class="dome-bar-label">CPU</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc1" style="height:0;background:var(--mem)"></div>
+          <div class="dome-bar-label">MEM</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc2" style="height:0;background:var(--io)"></div>
+          <div class="dome-bar-label">COMP</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc3" style="height:0;background:var(--gpu)"></div>
+          <div class="dome-bar-label">I/O</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc4" style="height:0;background:#ff6b6b"></div>
+          <div class="dome-bar-label">GPU</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics-row">
+      <div class="metric-cell"><div class="metric-val" id="mBrut">—</div><div class="metric-name">GAIN BRUT</div></div>
+      <div class="metric-cell"><div class="metric-val" id="mFric">—</div><div class="metric-name">FRICTION</div></div>
+      <div class="metric-cell"><div class="metric-val" id="mFrein">—</div><div class="metric-name">FREIN σ</div></div>
+      <div class="metric-cell"><div class="metric-val" id="mRenta">—</div><div class="metric-name">RENTABLE</div></div>
+    </div>
+  </div>
+
+  <!-- CENTER BOTTOM: WORKLOADS -->
+  <div class="panel panel-workloads">
+    <div class="panel-title">PROFIL WORKLOAD 𝒲</div>
+    <div class="workload-grid" id="wlGrid">
+      <div class="wl-btn active" data-wl="es">
+        <div class="wl-icon">🔍</div>
+        <div class="wl-name">ELASTICSEARCH</div>
+        <div class="wl-hint">α: 0.20/0.35/0.20/0.25/0</div>
+      </div>
+      <div class="wl-btn" data-wl="compile">
+        <div class="wl-icon">⚙️</div>
+        <div class="wl-name">COMPILATION</div>
+        <div class="wl-hint">α: 0.55/0.25/0.10/0.10/0</div>
+      </div>
+      <div class="wl-btn" data-wl="ai">
+        <div class="wl-icon">🧠</div>
+        <div class="wl-name">AI INFERENCE</div>
+        <div class="wl-hint">α: 0.15/0.20/0.05/0.05/0.55</div>
+      </div>
+      <div class="wl-btn" data-wl="backup">
+        <div class="wl-icon">💾</div>
+        <div class="wl-name">BACKUP</div>
+        <div class="wl-hint">α: 0.15/0.15/0.30/0.40/0</div>
+      </div>
+      <div class="wl-btn" data-wl="sqlite">
+        <div class="wl-icon">🗃️</div>
+        <div class="wl-name">SQLITE</div>
+        <div class="wl-hint">α: 0.20/0.10/0.05/0.65/0</div>
+      </div>
+      <div class="wl-btn" data-wl="oracle">
+        <div class="wl-icon">🏛️</div>
+        <div class="wl-name">ORACLE</div>
+        <div class="wl-hint">α: 0.25/0.30/0.10/0.35/0</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="panel panel-right">
+    <div class="panel-title">STRESS GLOBAL Σ(t) · LIVE</div>
+    <div class="sigma-gauge">
+      <div class="sigma-fill" id="sigmaFill" style="height:0"></div>
+      <div class="sigma-val" id="sigmaVal">—</div>
+      <div class="sigma-label">PSI + STEAL + MEM PRESSURE</div>
+    </div>
+
+    <div class="panel-title">PARAMÈTRES</div>
+
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name">κ · FREIN STABILITÉ</span>
+        <span class="kappa-num" id="kappaNum">2.0</span>
+      </div>
+      <input type="range" id="kappaSlider" min="0.5" max="5" step="0.1" value="2.0">
+    </div>
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name" style="color:var(--muted)">Σ<sub>max</sub></span>
+        <span class="kappa-num" id="sigmaMaxNum" style="color:var(--stress)">0.75</span>
+      </div>
+      <input type="range" class="mem-range" id="sigmaMaxSlider" min="0.3" max="0.95" step="0.05" value="0.75">
+    </div>
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name" style="color:var(--muted)">η · AJUSTEMENT</span>
+        <span class="kappa-num" id="etaNum" style="color:var(--io)">0.15</span>
+      </div>
+      <input type="range" class="io-range" id="etaSlider" min="0.01" max="0.5" step="0.01" value="0.15">
+    </div>
+
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name" style="color:var(--mem)">Processus cible</span>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnRefreshProcesses" style="font-size:.65rem;padding:.15rem .4rem">Rafraîchir</button>
+      </div>
+      <select id="targetProcess" class="target-select">
+        <option value="">Ce processus (SoulKernel)</option>
+      </select>
+      <div class="target-hint">Si un processus est choisi, le dôme lui donne un maximum d’amplitude et de performance (tous les cœurs, priorité haute, working set 2–4 Go).</div>
+    </div>
+
+    <div class="controls">
+      <button class="ctrl-btn btn-primary"   id="btnDome">▶ ACTIVER DOME</button>
+      <button class="ctrl-btn btn-secondary" id="btnInfo">ⓘ PLATFORM INFO</button>
+      <button class="ctrl-btn btn-danger"    id="btnReset">⏹ ROLLBACK</button>
+    </div>
+
+    <div class="panel-title" style="margin-top:.6rem">PREUVE · AVANT / APRÈS</div>
+    <div class="proof-panel" id="proofPanel">
+      <div class="proof-placeholder" id="proofPlaceholder">Activer le dôme pour afficher l’état avant → après (métriques réelles).</div>
+      <div class="proof-compare" id="proofCompare" style="display:none">
+        <div class="proof-col"><div class="proof-label">Avant dôme</div><div class="proof-metrics" id="proofBefore">—</div></div>
+        <div class="proof-arrow">→</div>
+        <div class="proof-col"><div class="proof-label">Maintenant</div><div class="proof-metrics" id="proofAfter">—</div></div>
+      </div>
+    </div>
+
+    <div class="panel-title" style="margin-top:.6rem">GAINS DÔME</div>
+    <div class="gains-panel">
+      <div class="gains-summary" id="gainsSummary">— Aucune activation encore</div>
+      <div class="gains-list" id="gainsList"></div>
+      <div class="gains-actions">
+        <button type="button" class="ctrl-btn btn-secondary" id="btnCopyGains" style="font-size:.7rem">Copier résumé</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnExportGains" style="font-size:.7rem">Exporter (fichier)</button>
+      </div>
+    </div>
+
+    <div class="panel-title" style="margin-top:.3rem">LOG KERNEL</div>
+    <div class="log-panel" id="logPanel"></div>
+  </div>
+
+  <!-- BOTTOM -->
+  <div class="panel-bottom">
+    <div class="bottom-formula">
+      𝒟* = max<sub>P</sub>[∫π(t)dt − 𝒞<sub>setup</sub> − 𝒞<sub>rb</sub>]  ·  Σmax=<span id="smaxBot">0.75</span>
+    </div>
+    <div class="dome-badge" id="domeBadge">● DOME ACTIF · SoulKernel</div>
+  </div>
+</main>
+
+<script>
+// ─── Tauri bridge (v2: __TAURI__.core.invoke + tauriReady pour éviter race) ─────
+let hasTauri = false;
+let invoke  = (cmd, args) => fallbackInvoke(cmd, args);
+
+function initTauri() {
+  const t = window.__TAURI__;
+  if (!t?.core?.invoke) return;
+  hasTauri = true;
+  invoke = t.core.invoke;
+  const banner = document.getElementById('noTauriBanner');
+  if (banner) banner.style.display = 'none';
+  log('Tauri runtime connecté — métriques réelles', 'ok');
+  loadPlatformInfo();
+}
+
+if (window.__TAURI__?.core?.invoke) {
+  initTauri();
+} else {
+  window.addEventListener('tauriReady', initTauri);
+  setTimeout(() => {
+    if (!hasTauri && window.__TAURI__?.core?.invoke) initTauri();
+    if (!hasTauri) document.getElementById('noTauriBanner').style.display = 'block';
+  }, 150);
+}
+
+// ─── Workload alpha table (mirrors Rust side) ─────────────────────────────────
+const WORKLOADS = {
+  es:      [0.20, 0.35, 0.20, 0.25, 0.00],
+  compile: [0.55, 0.25, 0.10, 0.10, 0.00],
+  ai:      [0.15, 0.20, 0.05, 0.05, 0.55],
+  backup:  [0.15, 0.15, 0.30, 0.40, 0.00],
+  sqlite:  [0.20, 0.10, 0.05, 0.65, 0.00],
+  oracle:  [0.25, 0.30, 0.10, 0.35, 0.00],
+};
+
+let state = {
+  wl: 'es',
+  kappa: 2.0,
+  sigmaMax: 0.75,
+  eta: 0.15,
+  domeActive: false,
+  lastMetrics: null,
+  snapshotBefore: null,
+  targetPid: null,
+  domeHistory: [],
+};
+const MAX_DOME_HISTORY = 30;
+
+// ─── Polling loop: get_metrics every 500ms ────────────────────────────────────
+let _metricsLoggedOnce = false;
+async function poll() {
+  try {
+    const m = await invoke('get_metrics');
+    state.lastMetrics = m;
+    if (!_metricsLoggedOnce) {
+      _metricsLoggedOnce = true;
+      const r = m.raw;
+      const na = v => (v != null ? String(v) : 'N/A');
+      const memUsed = (r.mem_used_mb / 1024).toFixed(2);
+      const memTotal = (r.mem_total_mb / 1024).toFixed(2);
+      log(`Métriques récupérées — ${r.platform}`, 'ok');
+      log(`  CPU: ${r.cpu_pct.toFixed(1)}% | RAM: ${memUsed}/${memTotal} GB | swap: ${r.swap_used_mb}/${r.swap_total_mb} MB`, 'info');
+      log(`  zram: ${na(r.zram_used_mb)} MB | I/O R/W: ${na(r.io_read_mb_s)}/${na(r.io_write_mb_s)} MB/s | GPU: ${na(r.gpu_pct)}% | PSI cpu/mem: ${na(r.psi_cpu != null ? (r.psi_cpu*100).toFixed(1) : null)}%/${na(r.psi_mem != null ? (r.psi_mem*100).toFixed(1) : null)}%`, 'info');
+    }
+    renderMetrics(m);
+    renderFormula(m);
+    renderProofPanel();
+  } catch(e) {
+    log(`Metrics error: ${e}`, 'err');
+  }
+}
+
+function formatMetricsShort(m) {
+  if (!m || !m.raw) return '—';
+  const r = m.raw;
+  const mem = (r.mem_used_mb / 1024).toFixed(1) + '/' + (r.mem_total_mb / 1024).toFixed(1) + ' GB';
+  return `CPU ${r.cpu_pct.toFixed(0)}% · ${mem} · σ=${m.sigma.toFixed(2)}`;
+}
+
+function renderProofPanel() {
+  const placeholder = document.getElementById('proofPlaceholder');
+  const compare = document.getElementById('proofCompare');
+  const beforeEl = document.getElementById('proofBefore');
+  const afterEl = document.getElementById('proofAfter');
+  if (!compare || !placeholder) return;
+  if (state.domeActive && state.snapshotBefore && state.lastMetrics) {
+    placeholder.style.display = 'none';
+    compare.style.display = 'flex';
+    beforeEl.textContent = formatMetricsShort(state.snapshotBefore);
+    afterEl.textContent = formatMetricsShort(state.lastMetrics);
+  } else {
+    placeholder.style.display = 'block';
+    compare.style.display = 'none';
+  }
+}
+
+function renderMetrics(m) {
+  const na = 'N/A';
+  const opt = (v, fmt) => (v != null ? fmt(v) : na);
+
+  // r(t) bars — val/label optionnels : pas de simulation, on affiche N/A si pas de donnée
+  setBar('CPU', m.cpu, m.raw.cpu_pct.toFixed(1)+'%');
+  setBar('MEM', m.mem, (m.raw.mem_used_mb/1024).toFixed(1)+' GB used');
+  setBar('LAM', m.compression, m.compression != null ? 'Λ(t)' : na);
+  setBar('IO',  m.io_bandwidth, (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null)
+    ? (m.raw.io_read_mb_s.toFixed(0)+' + '+m.raw.io_write_mb_s.toFixed(0)+' MB/s') : na);
+  setBar('GPU', m.gpu, opt(m.raw.gpu_pct, v => v.toFixed(1)+'%'));
+
+  // labels
+  document.getElementById('lCPU').textContent = `α_C=${WORKLOADS[state.wl][0]} · cpu=${m.raw.cpu_pct.toFixed(1)}%`;
+  document.getElementById('lMEM').textContent = `${(m.raw.mem_used_mb/1024).toFixed(1)}/${(m.raw.mem_total_mb/1024).toFixed(1)} GB`;
+  document.getElementById('lIO').textContent  = (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null)
+    ? `R:${m.raw.io_read_mb_s.toFixed(0)} W:${m.raw.io_write_mb_s.toFixed(0)} MB/s` : na;
+
+  // sigma
+  document.getElementById('sigmaFill').style.height = (m.sigma * 100) + '%';
+  document.getElementById('sigmaVal').textContent    = m.sigma.toFixed(3);
+
+  // raw metrics — uniquement valeurs réelles, N/A si indisponible
+  set('rawMemUsed',  (m.raw.mem_used_mb/1024).toFixed(2)+' GB');
+  set('rawMemTotal', (m.raw.mem_total_mb/1024).toFixed(2)+' GB');
+  set('rawZram',     opt(m.raw.zram_used_mb, v => v + ' MB'));
+  set('rawPsiCpu',   opt(m.raw.psi_cpu, v => (v*100).toFixed(1)+'%'));
+  set('rawPsiMem',   opt(m.raw.psi_mem, v => (v*100).toFixed(1)+'%'));
+  set('rawCpuPct',   m.raw.cpu_pct.toFixed(1)+'%');
+}
+
+function setBar(id, val, _label) {
+  const vEl = document.getElementById('v'+id);
+  const bEl = document.getElementById('b'+id);
+  const num = (val != null && typeof val === 'number') ? val : 0;
+  vEl.textContent = val != null ? num.toFixed(3) : 'N/A';
+  bEl.style.width = (num * 100).toFixed(1) + '%';
+}
+
+function renderFormula(m) {
+  const alpha = WORKLOADS[state.wl];
+  const r     = [m.cpu, m.mem, m.compression ?? 0, m.io_bandwidth ?? 0, m.gpu ?? 0];
+  const eps   = m.epsilon;
+
+  const brut    = alpha.reduce((s,a,i) => s + a*r[i], 0);
+  const fric    = alpha.reduce((p,a,i) => p * Math.pow(Math.max(0,1-eps[i]), a), 1);
+  const brake   = Math.exp(-state.kappa * m.sigma);
+  const pi      = brut * fric * brake;
+
+  const T       = { es:60, compile:120, ai:30, backup:300, sqlite:20, oracle:180 }[state.wl] || 60;
+  const dGain   = pi * T - 0.04 - 0.02;
+  const deltaK  = [0.9,0.85,0.95,0.8,0.7];
+  const bIdle   = alpha.reduce((s,a,i) => s + a*(1-r[i]*0.7)*deltaK[i], 0);
+
+  const piEl = document.getElementById('piVal');
+  piEl.textContent = 'π = ' + pi.toFixed(5);
+  piEl.className   = 'eq-result' + (pi>.5?' high':pi<.2?' low':'');
+
+  document.getElementById('domeVal').textContent = state.domeActive
+    ? '𝒟 = ' + dGain.toFixed(4)
+    : '𝒟 = —';
+
+  set('mBrut',  brut.toFixed(4));
+  set('mFric',  fric.toFixed(4));
+  set('mFrein', brake.toFixed(4));
+  const rEl = document.getElementById('mRenta');
+  rEl.textContent = dGain > 0 ? 'OUI ✓' : 'NON ✗';
+  rEl.style.color = dGain > 0 ? 'var(--io)' : 'var(--stress)';
+
+  // dome bars = α_i · r_i · 50px
+  alpha.forEach((a,i) => {
+    document.getElementById('dc'+i).style.height = (a * r[i] * 50).toFixed(1)+'px';
+  });
+}
+
+// ─── Platform info ────────────────────────────────────────────────────────────
+async function loadPlatformInfo() {
+  try {
+    const info = await invoke('platform_info');
+    const badge = document.getElementById('platformBadge');
+    if (hasTauri) {
+      badge.textContent = info.os + ' · ' + info.kernel;
+      badge.title = 'Métriques réelles (runtime Tauri)';
+    } else {
+      badge.textContent = info.os + ' · ' + info.kernel;
+      badge.title = 'Hors Tauri : lancez "cargo tauri dev" ou l\'exécutable pour les métriques réelles.';
+    }
+    const tags = document.getElementById('featTags');
+    tags.innerHTML = '';
+    info.features.forEach(f => {
+      const t = document.createElement('span');
+      t.className = 'feat-tag active';
+      t.textContent = f;
+      tags.appendChild(t);
+    });
+    log(`Platform: ${info.os} · cgroups-v2:${info.has_cgroups_v2} · zRAM:${info.has_zram} · root:${info.is_root}`, 'ok');
+  } catch(e) {
+    document.getElementById('platformBadge').textContent = hasTauri ? 'Connected' : 'Hors Tauri — lancez l\'app native';
+    document.getElementById('platformBadge').title = hasTauri ? '' : 'Ouvrez via cargo tauri dev pour les métriques réelles.';
+    log(hasTauri ? `platform_info error: ${e}` : 'Mode navigateur — pas de métriques réelles (lancez cargo tauri dev)', 'warn');
+  }
+}
+
+// ─── Dome activation ──────────────────────────────────────────────────────────
+document.getElementById('btnDome').addEventListener('click', async () => {
+  try {
+    const pidVal = document.getElementById('targetProcess').value;
+    state.targetPid = pidVal === '' ? null : parseInt(pidVal, 10);
+    log(`Activation dome: workload=${state.wl} κ=${state.kappa} Σmax=${state.sigmaMax}${state.targetPid ? ' → PID ' + state.targetPid : ''}`, 'info');
+    const result = await invoke('activate_dome', {
+      workload:  state.wl,
+      kappa:     state.kappa,
+      sigmaMax:  state.sigmaMax,
+      eta:       state.eta,
+      targetPid: state.targetPid,
+    });
+    state.domeActive = result.activated;
+    if (result.activated) {
+      try { state.snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) { state.snapshotBefore = null; }
+      state.domeHistory.unshift({
+        ts: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        workload: state.wl,
+        pi: result.pi,
+        domeGain: result.dome_gain,
+        targetPid: state.targetPid,
+      });
+      if (state.domeHistory.length > MAX_DOME_HISTORY) state.domeHistory.pop();
+      renderGainsHistory();
+    }
+    log(result.message, result.activated ? 'ok' : 'warn');
+    result.actions.forEach(a => log(a, a.startsWith('✓') ? 'ok' : 'warn'));
+    updateDomeBadge(result.activated);
+    document.getElementById('fZone').classList.toggle('active', result.activated);
+    document.getElementById('dZone').classList.toggle('active', result.activated);
+    renderProofPanel();
+  } catch(e) {
+    log(`Dome error: ${e}`, 'err');
+  }
+});
+
+// ─── Rollback ─────────────────────────────────────────────────────────────────
+document.getElementById('btnReset').addEventListener('click', async () => {
+  try {
+    const actions = await invoke('rollback_dome');
+    state.domeActive = false;
+    actions.forEach(a => log(a, a.startsWith('✓') ? 'ok' : 'warn'));
+    state.snapshotBefore = null;
+    log('ROLLBACK — kernel params restored', 'ok');
+    updateDomeBadge(false);
+    document.getElementById('fZone').classList.remove('active');
+    document.getElementById('dZone').classList.remove('active');
+    renderProofPanel();
+  } catch(e) {
+    log(`Rollback error: ${e}`, 'err');
+  }
+});
+
+document.getElementById('btnInfo').addEventListener('click', loadPlatformInfo);
+
+function renderGainsHistory() {
+  const summary = document.getElementById('gainsSummary');
+  const listEl = document.getElementById('gainsList');
+  if (state.domeHistory.length === 0) {
+    summary.textContent = '— Aucune activation encore';
+    listEl.innerHTML = '';
+    return;
+  }
+  const n = state.domeHistory.length;
+  const avgD = state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / n;
+  summary.textContent = `Session: ${n} dôme(s) · 𝒟 moyen = ${avgD.toFixed(2)}`;
+  listEl.innerHTML = state.domeHistory.map(e =>
+    `<div class="gains-row"><span>${e.ts}</span><span>${e.workload}</span><span class="gains-pi">π=${e.pi.toFixed(4)}</span><span class="gains-d">𝒟=${e.domeGain.toFixed(2)}</span><span>${e.targetPid ? 'PID ' + e.targetPid : '—'}</span></div>`
+  ).join('');
+}
+
+document.getElementById('btnCopyGains').addEventListener('click', () => {
+  if (state.domeHistory.length === 0) {
+    log('Aucun gain à copier', 'warn');
+    return;
+  }
+  const lines = ['SoulKernel — Gains dôme', 'Heure\tWorkload\tπ\t𝒟\tCible', ...state.domeHistory.map(e =>
+    `${e.ts}\t${e.workload}\t${e.pi.toFixed(4)}\t${e.domeGain.toFixed(2)}\t${e.targetPid || '—'}`
+  )];
+  const avgD = state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length;
+  lines.push('', `Session: ${state.domeHistory.length} activation(s), 𝒟 moyen = ${avgD.toFixed(2)}`);
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    log('Résumé gains copié dans le presse-papier', 'ok');
+  }).catch(() => log('Copie échouée', 'err'));
+});
+
+document.getElementById('btnExportGains').addEventListener('click', async () => {
+  try {
+    let snapshotBefore = state.snapshotBefore;
+    if (state.domeActive && !snapshotBefore) {
+      try { snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) {}
+    }
+    const payload = {
+      exported_at: new Date().toISOString(),
+      product: 'SoulKernel',
+      version: '0.1.0',
+      dome_active: state.domeActive,
+      snapshot_before: snapshotBefore,
+      history: state.domeHistory,
+      session_summary: state.domeHistory.length ? {
+        count: state.domeHistory.length,
+        avg_dome_gain: state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length,
+      } : null,
+    };
+    const path = await invoke('export_gains_to_file', { content: JSON.stringify(payload, null, 2) });
+    log('Export enregistré : ' + path, 'ok');
+  } catch (e) {
+    if (String(e).includes('Annulé')) return;
+    log('Export : ' + e, 'err');
+  }
+});
+
+document.getElementById('btnRefreshProcesses').addEventListener('click', async () => {
+  try {
+    const list = await invoke('list_processes');
+    const sel = document.getElementById('targetProcess');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Ce processus (SoulKernel)</option>';
+    list.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.pid;
+      opt.textContent = `${p.name} (PID ${p.pid}) — ${p.cpu_usage.toFixed(1)}% CPU`;
+      sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
+    log(`Liste processus: ${list.length} entrées`, 'ok');
+  } catch (e) {
+    log(`list_processes: ${e}`, 'err');
+  }
+});
+
+// ─── Workloads ────────────────────────────────────────────────────────────────
+document.getElementById('wlGrid').addEventListener('click', e => {
+  const btn = e.target.closest('.wl-btn');
+  if (!btn) return;
+  document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  state.wl = btn.dataset.wl;
+  log(`Profil: ${state.wl}`, 'info');
+  if (state.lastMetrics) renderFormula(state.lastMetrics);
+});
+
+// ─── Sliders ──────────────────────────────────────────────────────────────────
+document.getElementById('kappaSlider').addEventListener('input', e => {
+  state.kappa = parseFloat(e.target.value);
+  document.getElementById('kappaNum').textContent = state.kappa.toFixed(1);
+});
+document.getElementById('sigmaMaxSlider').addEventListener('input', e => {
+  state.sigmaMax = parseFloat(e.target.value);
+  document.getElementById('sigmaMaxNum').textContent = state.sigmaMax.toFixed(2);
+  document.getElementById('smaxBot').textContent = state.sigmaMax.toFixed(2);
+});
+document.getElementById('etaSlider').addEventListener('input', e => {
+  state.eta = parseFloat(e.target.value);
+  document.getElementById('etaNum').textContent = state.eta.toFixed(2);
+});
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function set(id, txt) { const el=document.getElementById(id); if(el) el.textContent=txt; }
+function updateDomeBadge(on) {
+  document.getElementById('domeStatus').textContent = on ? 'DOME ACTIF' : 'DOME IDLE';
+  document.getElementById('domeStatus').className   = 'status-pill ' + (on ? 'pill-run' : 'pill-off');
+  document.getElementById('domeBadge').classList.toggle('show', on);
+}
+setInterval(() => {
+  document.getElementById('clk').textContent = new Date().toTimeString().slice(0,8);
+}, 1000);
+
+function log(msg, lvl='info') {
+  const panel = document.getElementById('logPanel');
+  const ts = new Date().toTimeString().slice(0,8);
+  const clsMap = {ok:'lvl-ok',warn:'lvl-warn',info:'lvl-info',err:'lvl-err'};
+  const lblMap = {ok:'OK ',warn:'WRN',info:'INF',err:'ERR'};
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = `<span class="log-ts">${ts}</span><span class="log-lvl ${clsMap[lvl]}">${lblMap[lvl]}</span><span class="log-msg">${msg}</span>`;
+  panel.prepend(entry);
+  while (panel.children.length > 60) panel.removeChild(panel.lastChild);
+}
+
+// ─── Mode navigateur (hors Tauri) : pas de métriques réelles, pas de simulation ──
+// Quand la page est ouverte en direct dans le navigateur, il n'y a pas de backend Rust.
+// Il faut lancer l'app avec "cargo tauri dev" (ou l'exécutable) pour avoir les vraies métriques.
+function fallbackInvoke(cmd, args) {
+  if (cmd === 'get_metrics') {
+    return Promise.resolve({
+      cpu: 0, mem: 0,
+      compression: null, io_bandwidth: null, gpu: null,
+      sigma: 0, epsilon: [0,0,0,0,0],
+      raw: {
+        cpu_pct: 0, mem_used_mb: 0, mem_total_mb: 0,
+        swap_used_mb: 0, swap_total_mb: 0,
+        zram_used_mb: null, io_read_mb_s: null, io_write_mb_s: null,
+        gpu_pct: null, psi_cpu: null, psi_mem: null,
+        platform: 'Hors Tauri — lancez cargo tauri dev',
+      }
+    });
+  }
+  if (cmd === 'platform_info') return Promise.resolve({
+    os: 'Hors Tauri', kernel: 'lancez l\'app native',
+    features: ['pas de métriques réelles'],
+    has_cgroups_v2: false, has_zram: false, has_gpu_sysfs: false, is_root: false
+  });
+  if (cmd === 'list_processes') return Promise.resolve([]);
+  if (cmd === 'activate_dome') return Promise.resolve({
+    activated: false, pi: 0, dome_gain: 0, b_idle: 0,
+    message: 'Non disponible hors Tauri.',
+    actions: []
+  });
+  if (cmd === 'rollback_dome') return Promise.resolve(['Non disponible hors Tauri.']);
+  if (cmd === 'get_snapshot_before_dome') return Promise.resolve(null);
+  if (cmd === 'export_gains_to_file') return Promise.reject('Export fichier disponible uniquement dans l’app native.');
+  return Promise.reject('unknown command');
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+log('SoulKernel démarré · ' + (hasTauri ? 'Tauri runtime (métriques réelles)' : 'Hors Tauri — lancez cargo tauri dev pour les métriques'), hasTauri ? 'ok' : 'warn');
+loadPlatformInfo();
+poll();
+setInterval(poll, 500);
+</script>
+</body>
+</html>

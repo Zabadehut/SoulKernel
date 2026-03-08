@@ -1,0 +1,2740 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoulKernel</title>
+<style>
+/* ── Identical visual shell to standalone version ────────── */
+:root {
+  --bg:#060a10;--s1:#0b1320;--s2:#0f1e30;--s3:#162840;
+  --border:#1a3355;--dim:#243f5e;
+  --cpu:#00e5ff;--mem:#b060ff;--io:#00ff9d;--gpu:#ffb300;
+  --stress:#ff3b5c;--text:#d0e8ff;--muted:#5a80a8;--hi:#ffffff;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;font-size:14px;
+  min-height:100vh;overflow-x:hidden;}
+body::before{content:';position:fixed;inset:0;pointer-events:none;z-index:999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,
+  rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px);}
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:.6rem 1.4rem;background:var(--s1);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:100;}
+.logo{display:flex;align-items:center;gap:.7rem;}
+.logo-mark{width:28px;height:28px;border:2px solid var(--cpu);border-radius:4px;
+  display:grid;place-items:center;font-size:.65rem;color:var(--cpu);}
+.logo-text{font-size:.85rem;letter-spacing:.15em;color:var(--hi);}
+.logo-sub{font-size:.6rem;color:var(--muted);letter-spacing:.08em;}
+.no-tauri-banner{background:#8b2635;color:#fff;padding:.5rem 1rem;text-align:center;font-size:.8rem;}
+.no-tauri-banner strong{color:#ffcc00;}
+.status-bar{display:flex;gap:1.2rem;align-items:center;}
+.status-pill{padding:.2rem .7rem;border-radius:999px;border:1px solid;
+  font-size:.62rem;letter-spacing:.1em;}
+.pill-ok{border-color:var(--io);color:var(--io);}
+.pill-run{border-color:var(--cpu);color:var(--cpu);animation:blink 1.4s infinite;}
+.pill-off{border-color:var(--muted);color:var(--muted);}
+.pill-warn{border-color:var(--gpu);color:var(--gpu);}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.clock{font-size:.65rem;color:var(--muted);}
+.platform-badge{font-size:.55rem;padding:.15rem .6rem;border-radius:999px;
+  border:1px solid var(--mem);color:var(--mem);}
+
+main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto auto 1fr auto;
+  gap:1px;background:var(--border);min-height:calc(100vh - 46px);}
+.panel{background:var(--bg);padding:1rem 1.05rem;}
+.panel-title{font-size:.66rem;letter-spacing:.14em;color:var(--muted);
+  margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--s3);
+  display:flex;align-items:center;gap:.5rem;}
+.panel-title::before{content:';display:inline-block;width:4px;height:4px;
+  background:var(--cpu);border-radius:1px;}
+
+.resource-item{margin-bottom:1.1rem;}
+.res-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.3rem;}
+.res-name{font-size:.65rem;letter-spacing:.08em;}
+.res-val{font-size:.9rem;font-weight:700;}
+.bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1);position:relative;}
+.bar-fill::after{content:';position:absolute;right:0;top:0;bottom:0;width:6px;
+  background:inherit;filter:brightness(2);border-radius:0 2px 2px 0;}
+.bar-cpu{background:linear-gradient(90deg,#005f6e,var(--cpu));}
+.bar-mem{background:linear-gradient(90deg,#4a1880,var(--mem));}
+.bar-lam{background:linear-gradient(90deg,#005f3a,var(--io));}
+.bar-io{background:linear-gradient(90deg,#664500,var(--gpu));}
+.bar-gpu{background:linear-gradient(90deg,#6e0020,#ff6b6b);}
+.res-label{font-size:.52rem;color:var(--muted);margin-top:.2rem;}
+
+.formula-zone{background:var(--s1);border:1px solid var(--s3);border-left:3px solid var(--s3);
+  border-radius:6px;padding:1rem 1.2rem;margin-bottom:.8rem;text-align:center;
+  transition:border-color .3s,box-shadow .3s;overflow-x:auto;}
+.formula-zone.active{border-left-color:var(--cpu);
+  box-shadow:0 0 30px rgba(0,229,255,.12),inset 0 0 20px rgba(0,229,255,.03);}
+.formula-main{font-size:.75rem;line-height:2.2;color:var(--text);}
+.f-sym{color:var(--cpu);font-style:italic;}
+.f-green{color:var(--io);}.f-purple{color:var(--mem);}
+.f-red{color:var(--stress);}.f-op{color:var(--muted);}
+.eq-result{margin-top:.5rem;font-size:1.5rem;font-weight:700;color:var(--cpu);
+  text-shadow:0 0 20px rgba(0,229,255,.5);transition:color .3s;}
+.eq-result.high{color:var(--io);text-shadow:0 0 20px rgba(0,255,157,.4);}
+.eq-result.low{color:var(--stress);text-shadow:0 0 20px rgba(255,59,92,.4);}
+.formula-label{font-size:.52rem;color:var(--muted);margin-top:.25rem;letter-spacing:.12em;}
+
+.dome-vis{background:var(--s1);border:1px solid var(--s3);border-radius:6px;
+  padding:.8rem 1rem;margin-bottom:.8rem;}
+.dome-title{font-size:.58rem;color:var(--muted);letter-spacing:.12em;margin-bottom:.6rem;}
+.dome-bars{display:grid;grid-template-columns:repeat(5,1fr);gap:.3rem;
+  align-items:end;height:55px;}
+.dome-bar-wrap{display:flex;flex-direction:column;align-items:center;gap:.2rem;}
+.dome-bar-col{width:100%;min-height:3px;border-radius:2px 2px 0 0;
+  transition:height .5s cubic-bezier(.4,0,.2,1);}
+.dome-bar-label{font-size:.48rem;color:var(--muted);}
+
+.metrics-row{display:grid;grid-template-columns:repeat(4,1fr);
+  gap:1px;background:var(--border);border:1px solid var(--border);
+  border-radius:6px;overflow:hidden;}
+.metric-cell{background:var(--s1);padding:.6rem .4rem;text-align:center;}
+.metric-val{font-size:.9rem;font-weight:700;color:var(--hi);}
+.metric-name{font-size:.5rem;color:var(--muted);margin-top:.1rem;letter-spacing:.1em;}
+
+.panel-left{grid-column:1;grid-row:1/4;}
+.panel-center{grid-column:2;}
+.panel-workloads{grid-column:2;}
+.panel-right{grid-column:3;grid-row:1/4;display:flex;flex-direction:column;gap:1rem;}
+
+.workload-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;}
+.wl-btn{background:var(--s2);border:1px solid var(--s3);border-radius:6px;
+  padding:.5rem .4rem;cursor:pointer;transition:all .2s;text-align:center;}
+.wl-btn:hover{border-color:var(--dim);background:var(--s3);}
+.wl-btn.active{border-color:var(--cpu);background:rgba(0,229,255,.05);
+  box-shadow:0 0 10px rgba(0,229,255,.1);}
+.wl-icon{font-size:1rem;margin-bottom:.2rem;}
+.wl-name{font-size:.55rem;color:var(--text);letter-spacing:.06em;}
+.wl-hint{font-size:.46rem;color:var(--muted);margin-top:.1rem;}
+
+.sigma-gauge{position:relative;height:80px;background:var(--s1);
+  border:1px solid var(--s3);border-radius:6px;overflow:hidden;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.2rem;}
+.sigma-fill{position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(180deg,rgba(255,59,92,.6),rgba(255,59,92,.1));
+  transition:height .5s;}
+.sigma-val{font-size:1.3rem;font-weight:700;color:var(--stress);position:relative;z-index:1;}
+.sigma-label{font-size:.52rem;color:var(--muted);letter-spacing:.08em;position:relative;z-index:1;}
+
+.controls{display:flex;flex-direction:column;gap:.35rem;}
+.controls-primary{margin-top:.55rem}
+.ctrl-btn{padding:.62rem .8rem;border-radius:6px;border:1px solid;font-family:inherit;
+  font-size:.64rem;letter-spacing:.08em;cursor:pointer;transition:all .2s;text-transform:uppercase;}
+.btn-primary{background:rgba(0,229,255,.08);border-color:var(--cpu);color:var(--cpu);}
+.btn-primary:hover{background:rgba(0,229,255,.15);box-shadow:0 0 15px rgba(0,229,255,.2);}
+.btn-secondary{background:rgba(176,96,255,.06);border-color:var(--mem);color:var(--mem);}
+.btn-secondary:hover{background:rgba(176,96,255,.12);}
+.btn-danger{background:rgba(255,59,92,.05);border-color:var(--stress);color:var(--stress);}
+.btn-danger:hover{background:rgba(255,59,92,.12);}
+
+.kappa-ctrl{margin-bottom:.6rem;}
+.target-select{width:100%;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:.3rem .5rem;font-size:.75rem;border-radius:4px;}
+.target-hint{font-size:.52rem;color:var(--muted);margin-top:.25rem;line-height:1.45;}
+.target-tools{display:flex;justify-content:space-between;align-items:center;margin:.3rem 0 .25rem;gap:.4rem;}
+.target-auto{display:flex;align-items:center;gap:.35rem;font-size:.54rem;color:var(--muted);}
+.target-auto input{accent-color:var(--cpu);}
+.advisor-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.45rem;}
+.advisor-title{font-size:.56rem;color:var(--cpu);letter-spacing:.08em;margin-bottom:.22rem;}
+.advisor-text{font-size:.58rem;line-height:1.45;color:var(--text);}
+.advisor-actions{display:flex;gap:.35rem;margin-top:.35rem;}
+.proof-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.4rem;font-size:.65rem;}
+.proof-placeholder{color:var(--muted);font-style:italic;}
+.proof-compare{display:flex;align-items:center;gap:.5rem;margin-top:.3rem;}
+.proof-col{flex:1;}
+.proof-label{font-size:.55rem;color:var(--muted);letter-spacing:.08em;margin-bottom:.15rem;}
+.proof-metrics{font-size:.6rem;line-height:1.5;color:var(--text);}
+.proof-arrow{color:var(--cpu);font-weight:700;}
+.gains-actions{display:flex;gap:.35rem;margin-top:.3rem;flex-wrap:wrap;}
+.gains-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.4rem;font-size:.7rem;}
+.gains-summary{color:var(--io);margin-bottom:.3rem;}
+.gains-list{max-height:120px;overflow-y:auto;}
+.gains-list .gains-row{display:flex;gap:.5rem;padding:.15rem 0;border-bottom:1px solid var(--border);color:var(--muted);}
+.gains-list .gains-row:last-child{border-bottom:none;}
+.gains-list .gains-pi{color:var(--cpu);min-width:3rem;}
+.gains-list .gains-d{color:var(--mem);min-width:3.5rem;}
+.kappa-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem;}
+.kappa-name{font-size:.62rem;color:var(--muted);letter-spacing:.06em;}
+.kappa-num{font-size:.72rem;color:var(--cpu);}
+input[type=range]{-webkit-appearance:none;width:100%;height:3px;
+  background:var(--s3);border-radius:2px;outline:none;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;
+  width:12px;height:12px;background:var(--cpu);border-radius:50%;cursor:pointer;}
+input[type=range].mem-range::-webkit-slider-thumb{background:var(--mem);}
+input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
+
+.log-panel{flex:1;background:var(--s1);border:1px solid var(--s3);
+  border-radius:6px;padding:.6rem;overflow-y:auto;max-height:280px;}
+.log-entry{font-size:.56rem;line-height:1.7;border-bottom:1px solid rgba(26,51,85,.4);
+  padding:.12rem 0;display:flex;gap:.5rem;}
+.log-ts{color:var(--muted);min-width:48px;}
+.log-lvl{min-width:28px;}
+.lvl-ok{color:var(--io);}.lvl-warn{color:var(--gpu);}
+.lvl-info{color:var(--cpu);}.lvl-err{color:var(--stress);}
+.log-msg{color:var(--text);}
+
+.panel-bottom{grid-column:1/-1;background:var(--s1);border-top:1px solid var(--border);
+  padding:.5rem 1rem;display:flex;align-items:center;justify-content:space-between;}
+.bottom-formula{font-size:.58rem;color:var(--muted);}
+.bottom-formula span{color:var(--text);}
+.dome-badge{padding:.2rem .7rem;border-radius:999px;border:1px solid var(--io);
+  font-size:.56rem;color:var(--io);opacity:0;transition:opacity .3s;}
+.dome-badge.show{opacity:1;animation:blink 1s infinite;}
+
+.raw-grid{display:grid;grid-template-columns:1fr 1fr;gap:.3rem;margin-top:.8rem;}
+.raw-cell{background:var(--s2);border:1px solid var(--border);border-radius:4px;
+  padding:.35rem .5rem;font-size:.55rem;}
+.raw-label{color:var(--muted);font-size:.48rem;}
+.raw-val{color:var(--text);font-weight:700;}
+
+.feat-tags{display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.5rem;}
+.feat-tag{font-size:.5rem;padding:.15rem .45rem;border-radius:999px;
+  border:1px solid var(--border);color:var(--muted);}
+.feat-tag.active{border-color:var(--io);color:var(--io);}
+.pilotage-card{background:var(--s1);border:1px solid var(--s3);border-radius:6px;padding:.55rem;}
+.pilotage-title{font-size:.62rem;color:var(--io);letter-spacing:.08em;margin-bottom:.45rem;border-bottom:1px solid var(--s3);padding-bottom:.28rem;}
+.advanced-fold{margin-top:.45rem;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:.25rem .35rem}
+.advanced-fold>summary{cursor:pointer;list-style:none;color:var(--mem);font-size:.58rem;letter-spacing:.08em}
+.advanced-fold>summary::-webkit-details-marker{display:none}
+.advanced-fold>summary::before{content:'+';display:inline-block;margin-right:.35rem;color:var(--cpu)}
+.advanced-fold[open]>summary::before{content:'-'} 
+.advanced-stack{margin-top:.45rem;display:flex;flex-direction:column;gap:.35rem}
+.panel-insights{grid-column:2;}
+.insights-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;}
+.fold{background:var(--s1);border:1px solid var(--s3);border-radius:6px;padding:.35rem;}
+.fold summary{cursor:pointer;color:var(--cpu);font-size:.62rem;letter-spacing:.08em;margin-bottom:.4rem;}
+.fold[open] summary{color:var(--io);}
+.fold .log-panel{max-height:320px;}
+.compact-hud{display:none;position:fixed;left:12px;top:58px;z-index:1200;background:rgba(11,19,32,.94);border:1px solid var(--border);border-radius:8px;padding:.55rem .65rem;min-width:300px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.compact-hud-title{font-size:.56rem;letter-spacing:.12em;color:var(--cpu);margin-bottom:.35rem}
+.compact-hud-grid{display:grid;grid-template-columns:1fr 1fr;gap:.25rem .7rem}
+.compact-hud-item{font-size:.58rem;color:var(--text);line-height:1.35}
+.compact-hud-item span{color:var(--muted)}
+.view-switch{display:flex;gap:.35rem;align-items:center}
+.view-btn{padding:.18rem .5rem;border-radius:999px;border:1px solid var(--border);background:var(--s2);color:var(--muted);font-size:.56rem;letter-spacing:.08em;cursor:pointer}
+.view-btn.active{border-color:var(--cpu);color:var(--cpu);background:rgba(0,229,255,.08)}
+.compact-hud.visible{display:block}
+body.view-compact main{grid-template-columns:1fr;grid-template-rows:auto;min-height:calc(100vh - 46px)}
+body.view-compact .panel-left, body.view-compact .panel-right, body.view-compact .panel-workloads, body.view-compact .panel-insights, body.view-compact .panel-bottom{display:none !important}
+body.view-compact .panel-center{grid-column:1;grid-row:1;padding:.7rem .85rem}
+body.view-compact .panel-center .panel-title{margin-bottom:.45rem}
+body.hud-only{background:var(--bg);overflow:hidden}
+body.hud-only::before{display:none}
+body.hud-only header,body.hud-only main,body.hud-only #noTauriBanner{display:none !important}
+body.hud-only .compact-hud{display:block;left:8px;top:8px;right:8px;min-width:0;background:rgba(11,19,32,.90);pointer-events:none}
+body.hud-only.hud-edit .compact-hud{pointer-events:auto;border-color:var(--cpu);box-shadow:0 0 0 1px rgba(0,229,255,.35),0 8px 24px rgba(0,0,0,.35)}
+body.hud-only .compact-hud.hud-mini .compact-hud-grid{grid-template-columns:1fr 1fr;gap:.12rem .45rem}
+body.hud-only .compact-hud.hud-mini .compact-hud-item{font-size:.52rem}
+body.hud-only .compact-hud.hud-detailed .compact-hud-grid{grid-template-columns:1fr}
+body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
+.hud-badge{font-size:.5rem;color:var(--muted);margin-left:.35rem}
+</style>
+</head>
+<body>
+
+<div id="noTauriBanner" class="no-tauri-banner" style="display:none">
+  ⚠ Vous n'utilisez pas l'application Tauri — les métriques affichées sont à 0 / N/A. Lancez <strong>cargo tauri dev</strong> depuis la racine du projet pour ouvrir la fenêtre native et afficher les vraies métriques.
+</div>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">◉</div>
+    <div>
+      <div class="logo-text">SoulKernel</div>
+      <div class="logo-sub">PERFORMANCE DOME ORCHESTRATOR</div>
+    </div>
+  </div>
+  <div class="status-bar">
+  <div class="view-switch" title="Basculer la densite de vue">
+    <button type="button" class="view-btn" id="btnViewCompact">Compact</button>
+    <button type="button" class="view-btn active" id="btnViewDetailed">Detaille</button>
+    <button type="button" class="view-btn" id="btnHudToggle">HUD OFF</button>
+  </div>
+    <div class="platform-badge" id="platformBadge">Connecting…</div>
+    <div class="status-pill pill-ok" id="sysStatus">SYSTEM OK</div>
+    <div class="status-pill pill-off" id="domeStatus">DOME IDLE</div>
+    <div class="clock" id="clk">--:--:--</div>
+  </div>
+</header>
+
+<div class="compact-hud" id="compactHud">
+  <div class="compact-hud-title" id="hudDrag">HUD - CRUCIAL <span class="hud-badge" id="hudModeBadge">LOCK</span></div>
+  <div class="compact-hud-grid">
+    <div class="compact-hud-item"><span>Dome:</span> <strong id="hudDome">-</strong></div>
+    <div class="compact-hud-item"><span>Sigma:</span> <strong id="hudSigma">-</strong></div>
+    <div class="compact-hud-item"><span>Pi:</span> <strong id="hudPi">-</strong></div>
+    <div class="compact-hud-item"><span>CPU:</span> <strong id="hudCpu">-</strong></div>
+    <div class="compact-hud-item"><span>RAM:</span> <strong id="hudRam">-</strong></div>
+    <div class="compact-hud-item"><span>Cible:</span> <strong id="hudTarget">-</strong></div>
+    <div class="compact-hud-item"><span>Power:</span> <strong id="hudPower">-</strong></div>
+    <div class="compact-hud-item"><span>Energie:</span> <strong id="hudEnergy">-</strong></div>
+  </div>
+</div>
+
+<main>
+
+  <!-- LEFT -->
+  <div class="panel panel-left">
+    <div class="panel-title">HARDWARE r(t) · LIVE</div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--cpu)">C(t) · CPU</span>
+        <span class="res-val" style="color:var(--cpu)" id="vCPU">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-cpu" id="bCPU" style="width:0"></div></div>
+      <div class="res-label" id="lCPU">α<sub>C</sub> — polling…</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--mem)">M(t) · RAM</span>
+        <span class="res-val" style="color:var(--mem)" id="vMEM">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-mem" id="bMEM" style="width:0"></div></div>
+      <div class="res-label" id="lMEM">polling…</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--io)">Λ(t) · COMPRESSION</span>
+        <span class="res-val" style="color:var(--io)" id="vLAM">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-lam" id="bLAM" style="width:0"></div></div>
+      <div class="res-label" id="lLAM">zRAM / zSWAP ratio</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:var(--gpu)">B<sub>io</sub>(t) · I/O</span>
+        <span class="res-val" style="color:var(--gpu)" id="vIO">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-io" id="bIO" style="width:0"></div></div>
+      <div class="res-label" id="lIO">polling…</div>
+    </div>
+
+    <div class="resource-item">
+      <div class="res-header">
+        <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
+        <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bar-gpu" id="bGPU" style="width:0"></div></div>
+      <div class="res-label" id="lGPU">IOKit / sysfs / DXGI</div>
+    </div>
+
+    <div style="margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--s3)">
+      <div class="panel-title" style="margin-bottom:.4rem">RAW METRICS</div>
+      <div class="raw-grid">
+        <div class="raw-cell"><div class="raw-label">MEM used</div><div class="raw-val" id="rawMemUsed">—</div></div>
+        <div class="raw-cell"><div class="raw-label">MEM total</div><div class="raw-val" id="rawMemTotal">—</div></div>
+        <div class="raw-cell"><div class="raw-label">zRAM used</div><div class="raw-val" id="rawZram">—</div></div>
+        <div class="raw-cell"><div class="raw-label">PSI CPU</div><div class="raw-val" id="rawPsiCpu">—</div></div>
+        <div class="raw-cell"><div class="raw-label">PSI MEM</div><div class="raw-val" id="rawPsiMem">—</div></div>
+        <div class="raw-cell"><div class="raw-label">CPU %</div><div class="raw-val" id="rawCpuPct">—</div></div>
+        <div class="raw-cell"><div class="raw-label">I/O R/W</div><div class="raw-val" id="rawIoRw">—</div></div>
+        <div class="raw-cell"><div class="raw-label">GPU %</div><div class="raw-val" id="rawGpuPct">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Power (W)</div><div class="raw-val" id="rawPowerW">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Opt real (A/B)</div><div class="raw-val" id="rawOptReal">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Energy total</div><div class="raw-val" id="rawEnergyTotal">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Cost total</div><div class="raw-val" id="rawCostTotal">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Energy H/J/S/M/A</div><div class="raw-val" id="rawEnergyWindows">—</div></div>
+      </div>
+    </div>
+
+    <div style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--s3)">
+      <div class="panel-title" style="margin-bottom:.3rem">PLATFORM FEATURES</div>
+      <div class="feat-tags" id="featTags"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: FORMULA -->
+  <div class="panel panel-center">
+    <div class="panel-title">FORMULE UNIFIÉE π(t)</div>
+
+    <div class="formula-zone" id="fZone">
+      <div class="formula-main">
+        <span class="f-sym" style="font-size:1.1em">π</span><span class="f-op">(t) = (</span>
+        <span class="f-sym">𝒲</span><span class="f-op">·</span><span class="f-sym">r</span><span class="f-op">(t)) ·</span>
+        <span class="f-op">∏</span><sub style="font-size:.6em">k</sub>
+        <span class="f-op">(1−</span><span class="f-sym f-green">ε</span><sub style="font-size:.6em">k</sub><span class="f-op">)</span><sup style="font-size:.6em;color:var(--io)">α<sub>k</sub></sup>
+        <span class="f-op"> · </span>
+        <span class="f-red">e</span><sup style="font-size:.6em;color:var(--stress)">−κΣ(t)</sup>
+      </div>
+      <div class="eq-result" id="piVal">π = —</div>
+      <div class="formula-label">RENDEMENT INSTANTANÉ · HARDWARE LIVE</div>
+    </div>
+
+    <div class="formula-zone" id="dZone" style="margin-bottom:.6rem">
+      <div class="formula-main">
+        <span class="f-sym" style="font-size:1em">𝒟</span>
+        <span class="f-op">[τ₀,τ₁] = ∫π(t)dt −</span>
+        <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">setup</sub>
+        <span class="f-op">−</span>
+        <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">rb</sub>
+      </div>
+      <div class="eq-result" id="domeVal" style="font-size:1.1rem">𝒟 = —</div>
+      <div class="formula-label">GAIN NET DU DÔME</div>
+    </div>
+
+    <div class="dome-vis">
+      <div class="dome-title">ALLOCATION PAR DIMENSION · α · r(t)</div>
+      <div class="dome-bars">
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc0" style="height:0;background:var(--cpu)"></div>
+          <div class="dome-bar-label">CPU</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc1" style="height:0;background:var(--mem)"></div>
+          <div class="dome-bar-label">MEM</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc2" style="height:0;background:var(--io)"></div>
+          <div class="dome-bar-label">COMP</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc3" style="height:0;background:var(--gpu)"></div>
+          <div class="dome-bar-label">I/O</div>
+        </div>
+        <div class="dome-bar-wrap">
+          <div class="dome-bar-col" id="dc4" style="height:0;background:#ff6b6b"></div>
+          <div class="dome-bar-label">GPU</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics-row">
+      <div class="metric-cell"><div class="metric-val" id="mBrut">—</div><div class="metric-name">GAIN BRUT</div></div>
+      <div class="metric-cell"><div class="metric-val" id="mFric">—</div><div class="metric-name">FRICTION</div></div>
+      <div class="metric-cell"><div class="metric-val" id="mFrein">—</div><div class="metric-name">FREIN σ</div></div>
+      <div class="metric-cell"><div class="metric-val" id="mRenta">—</div><div class="metric-name">RENTABLE</div></div>
+    </div>
+  </div>
+
+  <!-- CENTER BOTTOM: WORKLOADS -->
+  <div class="panel panel-workloads">
+    <div class="panel-title">PROFIL WORKLOAD 𝒲</div>
+    <div class="workload-grid" id="wlGrid">
+      <div class="wl-btn active" data-wl="es">
+        <div class="wl-icon">🔍</div>
+        <div class="wl-name">ELASTICSEARCH</div>
+        <div class="wl-hint">α: 0.20/0.35/0.20/0.25/0</div>
+      </div>
+      <div class="wl-btn" data-wl="compile">
+        <div class="wl-icon">⚙️</div>
+        <div class="wl-name">COMPILATION</div>
+        <div class="wl-hint">α: 0.55/0.25/0.10/0.10/0</div>
+      </div>
+      <div class="wl-btn" data-wl="gamer">
+        <div class="wl-icon">G</div>
+        <div class="wl-name">GAMER PERF</div>
+        <div class="wl-hint">alpha: 0.45/0.20/0.05/0.05/0.25</div>
+      </div>
+      <div class="wl-btn" data-wl="ai">
+        <div class="wl-icon">🧠</div>
+        <div class="wl-name">AI INFERENCE</div>
+        <div class="wl-hint">α: 0.15/0.20/0.05/0.05/0.55</div>
+      </div>
+      <div class="wl-btn" data-wl="backup">
+        <div class="wl-icon">💾</div>
+        <div class="wl-name">BACKUP</div>
+        <div class="wl-hint">α: 0.15/0.15/0.30/0.40/0</div>
+      </div>
+      <div class="wl-btn" data-wl="sqlite">
+        <div class="wl-icon">🗃️</div>
+        <div class="wl-name">SQLITE</div>
+        <div class="wl-hint">α: 0.20/0.10/0.05/0.65/0</div>
+      </div>
+      <div class="wl-btn" data-wl="oracle">
+        <div class="wl-icon">🏛️</div>
+        <div class="wl-name">ORACLE</div>
+        <div class="wl-hint">α: 0.25/0.30/0.10/0.35/0</div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="panel panel-insights">
+    <div class="panel-title">SESSION � PREUVE / GAINS / LOG</div>
+    <div class="insights-grid">
+      <details class="fold" open>
+        <summary>Preuve avant/apr�s</summary>
+        <div class="proof-panel" id="proofPanel">
+          <div class="proof-placeholder" id="proofPlaceholder">Activer le dome pour afficher une comparaison lisible avant/apres.</div>
+          <div class="proof-compare" id="proofCompare" style="display:none">
+            <div class="proof-col"><div class="proof-label">Avant dome</div><div class="proof-metrics" id="proofBefore">�</div></div>
+            <div class="proof-arrow">-></div>
+            <div class="proof-col"><div class="proof-label">Maintenant</div><div class="proof-metrics" id="proofAfter">�</div></div>
+          </div>
+          <div class="proof-placeholder" id="proofSummary" style="display:none;margin-top:.35rem"></div>
+        </div>
+      </details>
+
+      <details class="fold" open>
+        <summary>Gains d�me</summary>
+        <div class="gains-panel">
+          <div class="gains-summary" id="gainsSummary">� Aucune activation encore</div>
+          <div class="gains-list" id="gainsList"></div>
+          <div class="gains-actions">
+            <button type="button" class="ctrl-btn btn-secondary" id="btnCopyGains" style="font-size:.7rem">Copier rapport complet</button>
+            <button type="button" class="ctrl-btn btn-secondary" id="btnExportGains" style="font-size:.7rem">Exporter (fichier)</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="fold" open>
+        <summary>Log kernel</summary>
+        <div class="log-panel" id="logPanel"></div>
+      </details>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="panel panel-right">
+    <div class="panel-title">STRESS GLOBAL Σ(t) · LIVE</div>
+    <div class="sigma-gauge">
+      <div class="sigma-fill" id="sigmaFill" style="height:0"></div>
+      <div class="sigma-val" id="sigmaVal">—</div>
+      <div class="sigma-label">PSI + STEAL + MEM PRESSURE</div>
+    </div>
+
+    <div class="panel-title">PARAMÈTRES</div>
+    <div class="pilotage-card">
+      <div class="pilotage-title">Pilotage intelligent</div>
+      <div class="kappa-ctrl">
+        <div class="kappa-row">
+          <span class="kappa-name" style="color:var(--io)">Policy moteur</span>
+          <span class="kappa-num" id="policyBadge" style="color:var(--io)">PRIVILEGED</span>
+        </div>
+        <select id="policyMode" class="target-select">
+          <option value="privileged">Privileged (max perf)</option>
+          <option value="safe">Safe (non-invasif)</option>
+        </select>
+        <div class="target-hint" id="policyStatusHint">admin: -- | reboot pending: --</div>
+      </div>
+
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name">κ · FREIN STABILITÉ</span>
+        <span class="kappa-num" id="kappaNum">2.0</span>
+      </div>
+      <input type="range" id="kappaSlider" min="0.5" max="5" step="0.1" value="2.0">
+    </div>
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name" style="color:var(--muted)">Σ<sub>max</sub></span>
+        <span class="kappa-num" id="sigmaMaxNum" style="color:var(--stress)">0.75</span>
+      </div>
+      <input type="range" class="mem-range" id="sigmaMaxSlider" min="0.3" max="0.95" step="0.05" value="0.75">
+    </div>
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name" style="color:var(--muted)">η · AJUSTEMENT</span>
+        <span class="kappa-num" id="etaNum" style="color:var(--io)">0.15</span>
+      </div>
+      <input type="range" class="io-range" id="etaSlider" min="0.01" max="0.5" step="0.01" value="0.15">
+    </div>
+
+    <div class="kappa-ctrl">
+      <div class="kappa-row">
+        <span class="kappa-name" style="color:var(--mem)">Processus cible</span>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnRefreshProcesses" style="font-size:.65rem;padding:.15rem .4rem">Rafraîchir</button>
+      </div>
+            <div class="target-tools">
+        <label class="target-auto">
+          <input type="checkbox" id="autoProcessTarget" checked>
+          Auto-cible (CPU max)
+        </label>
+        <span class="target-auto" id="processRefreshInfo">maj auto: --</span>
+      </div>
+      <select id="targetProcess" class="target-select">
+        <option value="">Ce processus (SoulKernel)</option>
+      </select>
+      <div class="target-hint">Si un processus est choisi, le dôme lui donne un maximum d’amplitude et de performance (tous les cœurs, priorité haute, working set 2–4 Go).</div>
+    </div>
+
+    <div class="advisor-panel">
+      <div class="advisor-title">Recommandation live</div>
+      <div class="advisor-text" id="tuningAdvice">En attente des metriques...</div>
+      <div class="advisor-actions">
+        <button type="button" class="ctrl-btn btn-secondary" id="btnApplyAdvice" style="font-size:.62rem;padding:.25rem .45rem">Appliquer</button>
+      </div>
+    </div>
+    <details class="advanced-fold" id="advancedFold">
+      <summary>Outils avances</summary>
+      <div class="advanced-stack">
+        <div class="kappa-ctrl" id="soulRamPanel">
+          <div class="kappa-row">
+            <span class="kappa-name" style="color:var(--io)">SoulRAM</span>
+            <span class="kappa-num" id="soulRamStatus" style="color:var(--stress)">OFF</span>
+          </div>
+          <div class="kappa-row" style="gap:.5rem;align-items:center">
+            <input type="range" id="soulRamPct" min="5" max="60" step="1" value="20" style="flex:1">
+            <span class="kappa-num" id="soulRamPctNum" style="color:var(--io)">20%</span>
+          </div>
+          <div class="gains-actions" style="margin-top:.35rem">
+            <button type="button" class="ctrl-btn btn-secondary" id="btnSoulRamOn" style="font-size:.62rem;padding:.25rem .45rem">Activer SoulRAM</button>
+            <button type="button" class="ctrl-btn btn-danger" id="btnSoulRamOff" style="font-size:.62rem;padding:.25rem .45rem">Desactiver SoulRAM</button>
+          </div>
+        </div>
+        <div class="advisor-panel" id="adaptivePanel" style="margin-top:.35rem">
+          <div class="advisor-title">Mode adaptatif (low overhead)</div>
+          <label class="target-auto"><input type="checkbox" id="adaptiveEnabled"> Adaptive engine</label>
+          <label class="target-auto" style="margin-top:.2rem"><input type="checkbox" id="adaptiveAutoDome" checked> Auto Dome</label>
+          <div class="advisor-text" id="adaptiveStatus" style="margin-top:.3rem">OFF</div>
+        </div>
+
+        <div class="advisor-panel" id="benchPanel" style="margin-top:.35rem">
+          <div class="advisor-title">KPI externe A/B</div>
+          <input id="kpiCommand" class="target-select" type="text" value="cargo" placeholder="Commande KPI">
+          <input id="kpiArgs" class="target-select" type="text" value="check" placeholder="Arguments KPI" style="margin-top:.25rem">
+          <div class="kappa-row" style="margin-top:.35rem;gap:.5rem">
+            <span class="kappa-name">Runs / etat</span>
+            <input id="kpiRuns" class="target-select" type="number" min="5" max="20" value="5" style="width:74px;padding:.2rem .35rem">
+          </div>
+          <div class="gains-actions" style="margin-top:.35rem">
+            <button type="button" class="ctrl-btn btn-secondary" id="btnRunAB" style="font-size:.62rem;padding:.25rem .45rem">Run A/B</button>
+            <button type="button" class="ctrl-btn btn-danger" id="btnClearAB" style="font-size:.62rem;padding:.25rem .45rem">Reset A/B</button>
+          </div>
+          <div class="advisor-text" id="kpiBenchSummary" style="margin-top:.35rem">Aucun benchmark A/B</div>
+          <div class="kappa-row" style="margin-top:.35rem;gap:.4rem"><span class="kappa-name">Prix electricite (EUR/kWh)</span><input id="energyPrice" class="target-select" type="text" inputmode="decimal" value="0.22" placeholder="0,194" title="Accepte 0,194 ou 0.194" style="width:110px;padding:.2rem .35rem"></div>
+          <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">CO2 (kg/kWh)</span><input id="energyCo2" class="target-select" type="text" inputmode="decimal" value="0.05" placeholder="0,024" title="Accepte 0,024 ou 0.024" style="width:110px;padding:.2rem .35rem"></div>
+          <button type="button" class="ctrl-btn btn-secondary" id="btnApplyEnergyPricing" style="font-size:.62rem;padding:.25rem .45rem;margin-top:.3rem">Appliquer tarif energie</button>
+          <div class="advisor-text" id="energyPricingStatus" style="margin-top:.3rem">Tarif actif: chargement...</div>
+          <div class="target-hint" style="margin-top:.2rem">Sauvegarde locale automatique (pricing.json). L'economie reelle s'affiche seulement si la puissance (W) est disponible.</div>
+        </div>
+
+        <div class="advisor-panel" id="hudPanel" style="margin-top:.35rem">
+          <div class="advisor-title">HUD Overlay V2</div>
+          <div class="gains-actions" style="margin-top:.2rem">
+            <button type="button" class="ctrl-btn btn-secondary" id="btnHudEdit" style="font-size:.62rem;padding:.25rem .45rem">Edition OFF</button>
+          </div>
+          <div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Ecran HUD</span><select id="hudDisplay" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="">Auto</option></select></div><div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Preset</span><select id="hudPreset" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="mini">Mini</option><option value="compact" selected>Compact</option><option value="detailed">Detaille</option></select></div>
+          <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">Opacite</span><input id="hudOpacity" type="range" min="0.30" max="1" step="0.05" value="0.82" style="width:130px"><span class="kappa-num" id="hudOpacityNum" style="color:var(--cpu)">82%</span></div>
+          <div class="target-hint" style="margin-top:.2rem">Hotkeys globales: Alt+Shift+H (toggle HUD), Alt+Shift+J (edition).</div>
+        </div>
+
+        <button class="ctrl-btn btn-secondary" id="btnInfo" type="button">Platform info</button>
+      </div>
+    </details>
+    </div>
+
+    <div class="controls controls-primary">
+      <button class="ctrl-btn btn-primary"   id="btnDome">ACTIVER DOME</button>
+      <button class="ctrl-btn btn-danger"    id="btnReset">ROLLBACK</button>
+    </div>
+</div>
+
+  <!-- BOTTOM -->
+  <div class="panel-bottom">
+    <div class="bottom-formula">
+      𝒟* = max<sub>P</sub>[∫π(t)dt − 𝒞<sub>setup</sub> − 𝒞<sub>rb</sub>]  ·  Σmax=<span id="smaxBot">0.75</span>
+    </div>
+    <div class="dome-badge" id="domeBadge">● DOME ACTIF · SoulKernel</div>
+  </div>
+</main>
+
+<script>
+// ─── Tauri bridge (v2: __TAURI__.core.invoke + tauriReady pour éviter race) ─────
+let hasTauri = false;
+let rawInvoke = (cmd, args) => fallbackInvoke(cmd, args);
+let invoke  = (cmd, args) => invokeWithAudit(cmd, args);
+const AUDIT_INTERNAL_CMDS = new Set(['audit_log_event', 'get_audit_log_path']);
+const HUD_ONLY = new URLSearchParams(window.location.search).get('hud') === '1';
+const AUDIT_HIGH_FREQ_CMDS = new Set([
+  'get_metrics',
+  'ingest_telemetry_sample',
+  'get_telemetry_summary',
+  'set_taskbar_gauge',
+  'list_processes',
+]);
+
+function truncateAuditString(s, max = 1200) {
+  if (typeof s !== 'string') return s;
+  if (s.length <= max) return s;
+  return s.slice(0, max) + '...';
+}
+
+function sanitizeAudit(value, depth = 0) {
+  if (value == null) return value;
+  if (depth > 3) return '[depth-limit]';
+  if (typeof value === 'string') return truncateAuditString(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 30).map(v => sanitizeAudit(v, depth + 1));
+  if (typeof value === 'object') {
+    const out = {};
+    const keys = Object.keys(value).slice(0, 40);
+    for (const k of keys) out[k] = sanitizeAudit(value[k], depth + 1);
+    return out;
+  }
+  return String(value);
+}
+
+async function auditEmit(category, action, level = 'info', data = null) {
+  if (!hasTauri) return;
+  try {
+    await rawInvoke('audit_log_event', {
+      category,
+      action,
+      level,
+      data: sanitizeAudit(data),
+    });
+  } catch (_) {}
+}
+
+async function invokeWithAudit(cmd, args) {
+  const start = Date.now();
+  try {
+    const result = await rawInvoke(cmd, args);
+    if (!AUDIT_INTERNAL_CMDS.has(cmd) && !AUDIT_HIGH_FREQ_CMDS.has(cmd)) {
+      auditEmit('invoke', cmd, 'ok', {
+        duration_ms: Date.now() - start,
+        args,
+      });
+    }
+    return result;
+  } catch (e) {
+    if (!AUDIT_INTERNAL_CMDS.has(cmd) && !AUDIT_HIGH_FREQ_CMDS.has(cmd)) {
+      auditEmit('invoke', cmd, 'err', {
+        duration_ms: Date.now() - start,
+        args,
+        error: String(e),
+      });
+    }
+    throw e;
+  }
+}
+
+function initTauri() {
+  const t = window.__TAURI__ || {};
+  const invokeFn = t?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
+  if (!invokeFn) return;
+  hasTauri = true;
+  rawInvoke = invokeFn;
+  const banner = document.getElementById('noTauriBanner');
+  if (banner) banner.style.display = 'none';
+  log('Tauri runtime connect� � m�triques r�elles', 'ok');
+  rawInvoke('get_audit_log_path').then(p => {
+    state.auditLogPath = p;
+    log('Audit JSONL: ' + p, 'ok');
+    auditEmit('audit', 'path_ready', 'ok', { path: p });
+  }).catch(e => log('Audit path error: ' + e, 'warn'));
+  loadPlatformInfo();
+  updateSystemStatus(null);
+}
+
+if (window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke) {
+  initTauri();
+} else {
+  window.addEventListener('tauriReady', initTauri);
+  setTimeout(() => {
+    if (!hasTauri && (window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke)) initTauri();
+    if (!hasTauri) document.getElementById('noTauriBanner').style.display = 'block';
+  }, 150);
+}
+
+// ─── Workload alpha table (mirrors Rust side) ─────────────────────────────────
+const WORKLOADS = {
+  es:      [0.20, 0.35, 0.20, 0.25, 0.00],
+  compile: [0.55, 0.25, 0.10, 0.10, 0.00],
+  gamer:   [0.45, 0.20, 0.05, 0.05, 0.25],
+  ai:      [0.15, 0.20, 0.05, 0.05, 0.55],
+  backup:  [0.15, 0.15, 0.30, 0.40, 0.00],
+  sqlite:  [0.20, 0.10, 0.05, 0.65, 0.00],
+  oracle:  [0.25, 0.30, 0.10, 0.35, 0.00],
+};
+
+let state = {
+  wl: 'es',
+  kappa: 2.0,
+  sigmaMax: 0.75,
+  eta: 0.15,
+  domeActive: false,
+  lastMetrics: null,
+  snapshotBefore: null,
+  targetPid: null,
+  domeHistory: [],
+  autoProcessTarget: true,
+  lastProcessRefreshTs: null,
+  lastProcessCount: 0,
+  pendingAdvice: null,
+  soulRamActive: false,
+  soulRamPercent: 20,
+  lastTaskbarPushTs: 0,
+  policyMode: 'privileged',
+  autoReapplyIntent: true,
+  rebootPending: false,
+  memoryCompressionEnabled: null,
+  soulRamNeedsReboot: false,
+  adaptiveEnabled: false,
+  adaptiveAutoDome: true,
+  adaptiveLastTickTs: 0,
+  adaptiveLastSystemApplyTs: 0,
+  adaptiveLastDomeSwitchTs: 0,
+  kpiBench: {
+    running: false,
+    sessions: [],
+    lastSummary: null,
+  },
+  lastPi: null,
+  lastDomeModel: null,
+  workloadLastSwitchTs: 0,
+  adaptiveWorkloadCandidate: null,
+  adaptiveWorkloadCandidateCount: 0,
+  adviceCandidateKey: null,
+  adviceCandidateCount: 0,
+  adviceCurrentKey: null,
+  adviceLastAcceptedTs: 0,
+  auditMetricSeq: 0,
+  auditLogPath: null,
+  naLabel: 'N/A',
+  telemetrySummary: null,
+  lastTelemetryIngestTs: 0,
+  lastTelemetryRefreshTs: 0,
+  viewMode: 'detailed',
+  hudVisible: false,
+  hudInteractive: false,
+  hudPreset: 'compact',
+  hudDisplayIndex: null,
+  hudOpacity: 0.82,
+};
+const MAX_DOME_HISTORY = 30;
+const PROCESS_REFRESH_MS = 7000;
+const ADAPTIVE_WORKLOAD_CONFIRM_CYCLES = 3;
+const ADAPTIVE_WORKLOAD_COOLDOWN_MS = 30000;
+const ADVICE_CONFIRM_CYCLES = 4;
+const ADVICE_COOLDOWN_MS = 12000;
+const POLL_FAST_MS = 700;
+const POLL_MEDIUM_MS = 1000;
+const POLL_SLOW_MS = 1400;
+const POLL_HIDDEN_MS = 2000;
+const METRICS_AUDIT_MS = 10000;
+let pollInFlight = false;
+let pollTimer = null;
+let pendingUiMetric = null;
+let uiFrameScheduled = false;
+let lastMetricsAuditTs = 0;
+
+// Polling loop (adaptive + low-overhead)
+
+function nextPollDelayMs() {
+  if (document.hidden) return POLL_HIDDEN_MS;
+  if (state.kpiBench.running) return POLL_MEDIUM_MS;
+  if (state.domeActive || state.adaptiveEnabled) return POLL_FAST_MS;
+  return POLL_SLOW_MS;
+}
+
+function scheduleNextPoll() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, nextPollDelayMs());
+}
+
+function scheduleMetricRender(m) {
+  pendingUiMetric = m;
+  if (uiFrameScheduled) return;
+  uiFrameScheduled = true;
+  requestAnimationFrame(() => {
+    uiFrameScheduled = false;
+    const mm = pendingUiMetric;
+    pendingUiMetric = null;
+    if (!mm) return;
+    renderMetrics(mm);
+    renderFormula(mm);
+    renderTuningAdvice(mm);
+    renderProofPanel();
+    renderCompactHud(mm);
+  });
+}
+let _metricsLoggedOnce = false;
+async function poll() {
+  if (pollInFlight) {
+    scheduleNextPoll();
+    return;
+  }
+  pollInFlight = true;
+  try {
+    const m = await invoke('get_metrics');
+    state.lastMetrics = m;
+    const now = Date.now();
+    if (now - lastMetricsAuditTs >= METRICS_AUDIT_MS) {
+      lastMetricsAuditTs = now;
+      state.auditMetricSeq += 1;
+      auditEmit('metrics', 'poll', 'info', {
+        seq: state.auditMetricSeq,
+        sigma: m.sigma,
+        epsilon: m.epsilon,
+        cpu: m.cpu,
+        mem: m.mem,
+        compression: m.compression,
+        io_bandwidth: m.io_bandwidth,
+        gpu: m.gpu,
+        raw: m.raw,
+      });
+    }
+    if (!_metricsLoggedOnce) {
+      _metricsLoggedOnce = true;
+      const r = m.raw;
+      const na = v => (v != null ? String(v) : 'N/A');
+      const memUsed = (r.mem_used_mb / 1024).toFixed(2);
+      const memTotal = (r.mem_total_mb / 1024).toFixed(2);
+      log(`M�triques r�cup�r�es � ${r.platform}`, 'ok');
+      log(`  CPU: ${r.cpu_pct.toFixed(1)}% | RAM: ${memUsed}/${memTotal} GB | swap: ${r.swap_used_mb}/${r.swap_total_mb} MB`, 'info');
+      log(`  zram: ${na(r.zram_used_mb)} MB | I/O R/W: ${na(r.io_read_mb_s)}/${na(r.io_write_mb_s)} MB/s | GPU: ${na(r.gpu_pct)}% | PSI cpu/mem: ${na(r.psi_cpu != null ? (r.psi_cpu*100).toFixed(1) : null)}%/${na(r.psi_mem != null ? (r.psi_mem*100).toFixed(1) : null)}%`, 'info');
+    }
+    scheduleMetricRender(m);
+    await runAdaptiveController(m);
+    pushTaskbarGauge(m.sigma);
+    await ingestTelemetry(m);
+    await refreshTelemetrySummary(false);
+  } catch(e) {
+    log(`Metrics error: ${e}`, 'err');
+  } finally {
+    pollInFlight = false;
+    scheduleNextPoll();
+  }
+}
+
+async function pushTaskbarGauge(sigma) {
+  if (!hasTauri) return;
+  const now = Date.now();
+  if (now - state.lastTaskbarPushTs < 900) return;
+  state.lastTaskbarPushTs = now;
+  try {
+    await invoke('set_taskbar_gauge', { value: sigma });
+  } catch (_) {}
+}
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function getDominantResource(m) {
+  const io = (m.io_bandwidth != null ? m.io_bandwidth : 0);
+  const gpu = (m.gpu != null ? m.gpu : 0);
+  const pairs = [
+    ['cpu', m.cpu || 0],
+    ['mem', m.mem || 0],
+    ['io', io],
+    ['gpu', gpu],
+  ];
+  pairs.sort((a, b) => b[1] - a[1]);
+  return pairs[0];
+}
+
+function setSlidersFromState() {
+  document.getElementById('kappaSlider').value = state.kappa.toFixed(1);
+  document.getElementById('kappaNum').textContent = state.kappa.toFixed(1);
+  document.getElementById('sigmaMaxSlider').value = state.sigmaMax.toFixed(2);
+  document.getElementById('sigmaMaxNum').textContent = state.sigmaMax.toFixed(2);
+  document.getElementById('smaxBot').textContent = state.sigmaMax.toFixed(2);
+  document.getElementById('etaSlider').value = state.eta.toFixed(2);
+  document.getElementById('etaNum').textContent = state.eta.toFixed(2);
+}
+
+
+function setWorkload(nextWl, sourceLabel = "auto") {
+  const wl = WORKLOADS[nextWl] ? nextWl : 'es';
+  if (state.wl === wl) return;
+  state.wl = wl;
+  state.workloadLastSwitchTs = Date.now();
+  state.adaptiveWorkloadCandidate = null;
+  state.adaptiveWorkloadCandidateCount = 0;
+  document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector(`.wl-btn[data-wl="${wl}"]`);
+  if (btn) btn.classList.add('active');
+  log(sourceLabel === 'manuel' ? ('Profil: ' + wl) : ('Profil auto: ' + wl + ' (' + sourceLabel + ')'), 'info');
+  if (state.lastMetrics) renderFormula(state.lastMetrics);
+}
+function renderTuningAdvice(m) {
+  const el = document.getElementById('tuningAdvice');
+  const applyBtn = document.getElementById('btnApplyAdvice');
+  if (!m || !m.raw || !el || !applyBtn) return;
+  applyBtn.textContent = 'Appliquer';
+  applyBtn.title = 'Appliquer la recommandation courante';
+
+  const memRatio = m.raw.mem_total_mb > 0 ? m.raw.mem_used_mb / m.raw.mem_total_mb : 0;
+  const [dominantKey, dominantVal] = getDominantResource(m);
+  const next = { kappa: state.kappa, sigmaMax: state.sigmaMax, eta: state.eta };
+  let reason = 'Reglage stable';
+
+  if (m.sigma >= 0.8 || memRatio >= 0.9) {
+    next.kappa = clamp(state.kappa + 0.3, 0.5, 5.0);
+    next.sigmaMax = clamp(state.sigmaMax - 0.05, 0.3, 0.95);
+    reason = 'Stress eleve: renforcer la stabilite';
+  } else if (dominantKey === 'cpu' && dominantVal >= 0.65) {
+    next.eta = clamp(state.eta + 0.03, 0.01, 0.5);
+    reason = 'CPU dominant: pousser eta pour plus de perf';
+  } else if (dominantKey === 'io' && dominantVal >= 0.55) {
+    next.eta = clamp(state.eta + 0.02, 0.01, 0.5);
+    reason = 'I/O dominant: augmenter eta moderement';
+  } else if (m.sigma <= 0.35 && state.sigmaMax < 0.9) {
+    next.sigmaMax = clamp(state.sigmaMax + 0.05, 0.3, 0.95);
+    reason = 'Stress faible: augmenter la marge sigma max';
+  } else {
+    reason = 'Ajustement non necessaire maintenant';
+  }
+
+  const changes = [];
+  if (next.kappa !== state.kappa) changes.push(`kappa ${state.kappa.toFixed(1)} -> ${next.kappa.toFixed(1)}`);
+  if (next.sigmaMax !== state.sigmaMax) changes.push(`sigmaMax ${state.sigmaMax.toFixed(2)} -> ${next.sigmaMax.toFixed(2)}`);
+  if (next.eta !== state.eta) changes.push(`eta ${state.eta.toFixed(2)} -> ${next.eta.toFixed(2)}`);
+
+  if (!changes.length) {
+    state.pendingAdvice = null;
+    state.adviceCandidateKey = null;
+    state.adviceCandidateCount = 0;
+    state.adviceCurrentKey = null;
+    applyBtn.disabled = true;
+    applyBtn.style.opacity = '.55';
+    el.textContent = `${reason}.`;
+    return;
+  }
+
+  const now = Date.now();
+  const candidatePayload = {
+    kappa: Number(next.kappa.toFixed(2)),
+    sigmaMax: Number(next.sigmaMax.toFixed(3)),
+    eta: Number(next.eta.toFixed(3)),
+  };
+  const candidateKey = JSON.stringify(candidatePayload);
+
+  if (state.adviceCandidateKey !== candidateKey) {
+    state.adviceCandidateKey = candidateKey;
+    state.adviceCandidateCount = 1;
+  } else {
+    state.adviceCandidateCount += 1;
+  }
+
+  const stableEnough = state.adviceCandidateCount >= ADVICE_CONFIRM_CYCLES;
+  const cooldownOk = (now - state.adviceLastAcceptedTs) >= ADVICE_COOLDOWN_MS;
+
+  if (stableEnough && cooldownOk) {
+    state.pendingAdvice = next;
+    state.adviceCurrentKey = candidateKey;
+    applyBtn.disabled = false;
+    applyBtn.style.opacity = '1';
+    el.textContent = `${reason}. Recommande: ${changes.join(', ')}.`;
+  } else if (state.pendingAdvice && state.adviceCurrentKey === candidateKey) {
+    applyBtn.disabled = false;
+    applyBtn.style.opacity = '1';
+    el.textContent = `${reason}. Recommande: ${changes.join(', ')}.`;
+  } else {
+    state.pendingAdvice = null;
+    applyBtn.disabled = true;
+    applyBtn.style.opacity = '.55';
+    el.textContent = `${reason}. Stabilisation en cours (${state.adviceCandidateCount}/${ADVICE_CONFIRM_CYCLES}).`;
+  }
+}
+
+function tokenizeArgs(raw) {
+  if (!raw || !raw.trim()) return [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    out.push(m[1] ?? m[2] ?? m[3]);
+  }
+  return out;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function percentile(values, p) {
+  if (!values || values.length === 0) return null;
+  const arr = [...values].sort((a, b) => a - b);
+  const idx = Math.ceil((p / 100) * arr.length) - 1;
+  return arr[Math.max(0, Math.min(arr.length - 1, idx))];
+}
+
+function computeAbSummary(samples) {
+  const off = samples.filter(s => s.phase === 'off' && s.success).map(s => s.duration_ms);
+  const on = samples.filter(s => s.phase === 'on' && s.success).map(s => s.duration_ms);
+  const medianOff = percentile(off, 50);
+  const medianOn = percentile(on, 50);
+  const p95Off = percentile(off, 95);
+  const p95On = percentile(on, 95);
+  let gainMedianPct = null;
+  let gainP95Pct = null;
+  if (medianOff != null && medianOn != null && medianOff > 0) {
+    gainMedianPct = ((medianOff - medianOn) / medianOff) * 100;
+  }
+  if (p95Off != null && p95On != null && p95Off > 0) {
+    gainP95Pct = ((p95Off - p95On) / p95Off) * 100;
+  }
+  return {
+    samples_off_ok: off.length,
+    samples_on_ok: on.length,
+    median_off_ms: medianOff,
+    median_on_ms: medianOn,
+    p95_off_ms: p95Off,
+    p95_on_ms: p95On,
+    gain_median_pct: gainMedianPct,
+    gain_p95_pct: gainP95Pct,
+  };
+}
+
+function renderAbSummary(summary) {
+  const el = document.getElementById('kpiBenchSummary');
+  if (!el) return;
+  if (!summary) {
+    el.textContent = 'Aucun benchmark A/B';
+    return;
+  }
+  const f = v => (v == null ? 'N/A' : v.toFixed(1));
+  el.textContent =
+    `OFF median=${f(summary.median_off_ms)}ms p95=${f(summary.p95_off_ms)}ms | ` +
+    `ON median=${f(summary.median_on_ms)}ms p95=${f(summary.p95_on_ms)}ms | ` +
+    `gain median=${f(summary.gain_median_pct)}% p95=${f(summary.gain_p95_pct)}%`;
+}
+
+
+
+async function ingestTelemetry(m) {
+  if (!hasTauri || !m || !m.raw) return;
+  const now = Date.now();
+  if (now - state.lastTelemetryIngestTs < 5000) return;
+  state.lastTelemetryIngestTs = now;
+  const gain = state.kpiBench?.lastSummary?.gain_median_pct;
+  try {
+    await invoke('ingest_telemetry_sample', {
+      sample: {
+        ts_ms: now,
+        power_watts: (m.raw.power_watts != null ? Number(m.raw.power_watts) : null),
+        dome_active: !!state.domeActive,
+        soulram_active: !!state.soulRamActive,
+        kpi_gain_median_pct: (gain != null ? Number(gain) : null),
+      }
+    });
+  } catch (_) {}
+}
+
+function renderTelemetrySummary(s) {
+  if (!s) return;
+  state.telemetrySummary = s;
+  const ccy = s.pricing?.currency || 'EUR';
+  const f = v => (v == null ? 'N/A' : Number(v).toFixed(3));
+  const fmtEnergy = (w, key) => (w?.has_power_data ? `${f(w?.[key])}` : 'N/A');
+  const gain = s.total?.kpi_gain_median_pct;
+  set('rawOptReal', gain == null ? 'N/A' : gain.toFixed(2) + '%');
+  set('rawEnergyTotal', fmtEnergy(s.total, 'energy_kwh') + ' kWh');
+  set('rawCostTotal', (s.total?.has_power_data ? f(s.total?.cost) : 'N/A') + ' ' + ccy);
+  set('rawEnergyWindows',
+    `H:${fmtEnergy(s.hour, 'energy_kwh')} | J:${fmtEnergy(s.day, 'energy_kwh')} | S:${fmtEnergy(s.week, 'energy_kwh')} | M:${fmtEnergy(s.month, 'energy_kwh')} | A:${fmtEnergy(s.year, 'energy_kwh')} kWh`
+  );
+
+  const ep = document.getElementById('energyPrice');
+  if (ep && s.pricing?.price_per_kwh != null) ep.value = Number(s.pricing.price_per_kwh).toFixed(3);
+  const eco2 = document.getElementById('energyCo2');
+  if (eco2 && s.pricing?.co2_kg_per_kwh != null) eco2.value = Number(s.pricing.co2_kg_per_kwh).toFixed(3);
+
+  const status = document.getElementById('energyPricingStatus');
+  if (status) {
+    const sensor = s.total?.has_power_data ? 'capteur puissance: detecte' : 'capteur puissance: indisponible';
+    status.textContent = 'Tarif actif: ' + f(s.pricing?.price_per_kwh) + ' ' + ccy + '/kWh | CO2: ' + f(s.pricing?.co2_kg_per_kwh) + ' kg/kWh | ' + sensor;
+    status.style.color = s.total?.has_power_data ? 'var(--io)' : 'var(--gpu)';
+  }
+}
+
+async function refreshTelemetrySummary(force = false) {
+  if (!hasTauri) return;
+  const now = Date.now();
+  if (!force && (now - state.lastTelemetryRefreshTs < 10000)) return;
+  state.lastTelemetryRefreshTs = now;
+  try {
+    const s = await invoke('get_telemetry_summary');
+    renderTelemetrySummary(s);
+  } catch (_) {}
+}
+
+async function setEnergyPricing(pricePerKwh, currency = 'EUR', co2KgPerKwh = 0.05) {
+  if (!hasTauri) return;
+  await invoke('set_energy_pricing', {
+    pricing: {
+      currency,
+      price_per_kwh: Number(pricePerKwh),
+      co2_kg_per_kwh: Number(co2KgPerKwh),
+    }
+  });
+  await refreshTelemetrySummary(true);
+  const status = document.getElementById('energyPricingStatus');
+  if (status) {
+    const now = new Date().toTimeString().slice(0, 8);
+    status.textContent = 'Tarif enregistre a ' + now + ' -> ' + Number(pricePerKwh).toFixed(3) + ' ' + currency + '/kWh | CO2 ' + Number(co2KgPerKwh).toFixed(3) + ' kg/kWh';
+    status.style.color = 'var(--io)';
+  }
+}
+
+async function setDomeStateAdaptive(shouldEnable, reason) {
+  if (shouldEnable === state.domeActive) return;
+  if (shouldEnable) {
+    const pidVal = document.getElementById('targetProcess').value;
+    state.targetPid = pidVal === '' ? null : parseInt(pidVal, 10);
+    const result = await invoke('activate_dome', {
+      workload: state.wl,
+      kappa: state.kappa,
+      sigmaMax: state.sigmaMax,
+      eta: state.eta,
+      targetPid: state.targetPid,
+      policyMode: state.policyMode,
+    });
+    state.domeActive = !!result.activated;
+    updateDomeBadge(state.domeActive);
+    log('Adaptive: dome ' + (state.domeActive ? 'ON' : 'blocked') + ' (' + reason + ')', state.domeActive ? 'ok' : 'warn');
+  } else {
+    const actions = await invoke('rollback_dome');
+    state.domeActive = false;
+    updateDomeBadge(false);
+    actions.forEach(a => log(a, (a.toLowerCase().includes('failed') || a.toLowerCase().includes('denied') || a.startsWith('[ko]')) ? 'warn' : 'ok'));
+    log('Adaptive: dome OFF (' + reason + ')', 'warn');
+  }
+  state.adaptiveLastDomeSwitchTs = Date.now();
+}
+
+function deriveAdaptiveTarget(m, currentWl) {
+  const sigma = Number(m.sigma || 0);
+  const cpu = Number(m.cpu || 0);
+  const gpu = Number(m.gpu || 0);
+  const io = Number(m.io_bandwidth || 0);
+  const memPressure = clamp(1.0 - Number(m.mem || 0), 0, 1);
+
+  let wl = currentWl || 'es';
+  if (gpu >= 0.52) wl = 'gamer';
+  else if (io >= 0.58) wl = 'backup';
+  else if (cpu >= 0.76) wl = 'compile';
+  else if (memPressure >= 0.82) wl = 'oracle';
+  else if (gpu <= 0.30 && io <= 0.35 && cpu <= 0.62 && memPressure <= 0.65) wl = 'es';
+
+  const kappa = clamp(1.0 + sigma * 3.2 + memPressure * 0.8, 0.8, 4.8);
+  const sigmaMax = clamp(0.86 - sigma * 0.22, 0.55, 0.9);
+  const eta = clamp(0.34 - sigma * 0.24 + (cpu >= 0.7 ? 0.05 : 0), 0.08, 0.4);
+  const policyMode = (sigma > 0.82 || memPressure > 0.88) ? 'safe' : 'privileged';
+  const soulRamPercent = clamp(Math.round(15 + memPressure * 35), 10, 55);
+
+  return { wl, kappa, sigmaMax, eta, policyMode, soulRamPercent, memPressure, sigma };
+}
+
+async function runAdaptiveController(m) {
+  if (!state.adaptiveEnabled || state.kpiBench.running) return;
+  const now = Date.now();
+  if (now - state.adaptiveLastTickTs < 2000) return;
+  state.adaptiveLastTickTs = now;
+
+  const t = deriveAdaptiveTarget(m, state.wl);
+
+  if (t.wl !== state.wl) {
+    if (state.adaptiveWorkloadCandidate !== t.wl) {
+      state.adaptiveWorkloadCandidate = t.wl;
+      state.adaptiveWorkloadCandidateCount = 1;
+    } else {
+      state.adaptiveWorkloadCandidateCount += 1;
+    }
+
+    const canSwitchByCooldown = (now - state.workloadLastSwitchTs) >= ADAPTIVE_WORKLOAD_COOLDOWN_MS;
+    const canSwitchByConfirm = state.adaptiveWorkloadCandidateCount >= ADAPTIVE_WORKLOAD_CONFIRM_CYCLES;
+    if (canSwitchByCooldown && canSwitchByConfirm) {
+      setWorkload(t.wl, 'adaptive');
+    }
+  } else {
+    state.adaptiveWorkloadCandidate = null;
+    state.adaptiveWorkloadCandidateCount = 0;
+  }
+
+  const kChanged = Math.abs(state.kappa - t.kappa) >= 0.1;
+  const sChanged = Math.abs(state.sigmaMax - t.sigmaMax) >= 0.03;
+  const eChanged = Math.abs(state.eta - t.eta) >= 0.02;
+  if (kChanged || sChanged || eChanged) {
+    state.kappa = t.kappa;
+    state.sigmaMax = t.sigmaMax;
+    state.eta = t.eta;
+    setSlidersFromState();
+    if (state.lastMetrics) renderFormula(state.lastMetrics);
+  }
+
+  if (now - state.adaptiveLastSystemApplyTs >= 15000) {
+    if (state.policyMode !== t.policyMode) {
+      try {
+        state.policyMode = await invoke('set_policy_mode', { mode: t.policyMode });
+        await loadPolicyStatus();
+        log('Adaptive: policy -> ' + state.policyMode, 'info');
+      } catch (e) {
+        log('Adaptive policy set error: ' + e, 'warn');
+      }
+    }
+
+    const srDelta = Math.abs(state.soulRamPercent - t.soulRamPercent);
+    if ((t.memPressure >= 0.78 && !state.soulRamActive) || (state.soulRamActive && srDelta >= 10)) {
+      try {
+        state.soulRamPercent = t.soulRamPercent;
+        const actions = await invoke('set_soulram', { enabled: true, percent: state.soulRamPercent });
+        state.soulRamActive = true;
+        updateSoulRamUi();
+        markSoulRamRebootRequirement(actions, 'Adaptive SoulRAM');
+        log('Adaptive: SoulRAM -> ' + state.soulRamPercent + '%', 'ok');
+      } catch (e) {
+        log('Adaptive SoulRAM error: ' + e, 'warn');
+      }
+    }
+    state.adaptiveLastSystemApplyTs = now;
+  }
+
+  const statusEl = document.getElementById('adaptiveStatus');
+  if (statusEl) {
+    statusEl.textContent =
+      `ON | wl=${state.wl} k=${state.kappa.toFixed(2)} sMax=${state.sigmaMax.toFixed(2)} ` +
+      `eta=${state.eta.toFixed(2)} policy=${state.policyMode}`;
+  }
+
+  if (state.adaptiveAutoDome && now - state.adaptiveLastDomeSwitchTs >= 10000) {
+    if (state.domeActive && m.sigma > state.sigmaMax + 0.08) {
+      await setDomeStateAdaptive(false, 'sigma guard');
+    } else if (!state.domeActive && m.sigma < state.sigmaMax - 0.12) {
+      await setDomeStateAdaptive(true, 'headroom available');
+    }
+  }
+}
+
+async function runAbBenchmark() {
+  if (state.kpiBench.running) return;
+  const runsInput = parseInt(document.getElementById('kpiRuns')?.value || '5', 10);
+  const runs = Math.max(5, Math.min(20, isNaN(runsInput) ? 5 : runsInput));
+  const command = (document.getElementById('kpiCommand')?.value || '').trim();
+  const args = tokenizeArgs(document.getElementById('kpiArgs')?.value || '');
+  if (!command) {
+    log('KPI command vide', 'err');
+    return;
+  }
+
+  const wasAdaptive = state.adaptiveEnabled;
+  state.kpiBench.running = true;
+  const runBtn = document.getElementById('btnRunAB');
+  if (runBtn) runBtn.disabled = true;
+  if (wasAdaptive) {
+    state.adaptiveEnabled = false;
+    const cb = document.getElementById('adaptiveEnabled');
+    if (cb) cb.checked = false;
+    const statusEl = document.getElementById('adaptiveStatus');
+    if (statusEl) statusEl.textContent = 'OFF (paused during benchmark)';
+  }
+
+  const session = {
+    started_at: new Date().toISOString(),
+    command,
+    args,
+    runs_per_state: runs,
+    samples: [],
+  };
+
+  try {
+    for (let i = 0; i < runs * 2; i += 1) {
+      const phase = (i % 2 === 0) ? 'off' : 'on';
+      await setDomeStateAdaptive(phase === 'on', 'ab-sequence');
+      await sleep(1200);
+      const res = await invoke('run_kpi_probe', { command, args, cwd: null });
+      const sample = {
+        idx: i + 1,
+        phase,
+        ts: new Date().toISOString(),
+        duration_ms: Number(res.duration_ms || 0),
+        success: !!res.success,
+        exit_code: res.exit_code,
+        dome_active: state.domeActive,
+        workload: state.wl,
+        kappa: state.kappa,
+        sigma_max: state.sigmaMax,
+        eta: state.eta,
+        sigma: state.lastMetrics ? state.lastMetrics.sigma : null,
+        pi: state.lastPi,
+        d_model: state.lastDomeModel,
+      };
+      session.samples.push(sample);
+      log(`A/B #${sample.idx} ${phase.toUpperCase()} -> ${sample.duration_ms} ms (exit=${sample.exit_code ?? 'null'})`, sample.success ? 'ok' : 'warn');
+    }
+
+    session.summary = computeAbSummary(session.samples);
+    state.kpiBench.sessions.unshift(session);
+    state.kpiBench.lastSummary = session.summary;
+    if (state.kpiBench.sessions.length > 20) state.kpiBench.sessions.pop();
+    renderAbSummary(session.summary);
+    log('A/B termine: gain median=' + (session.summary.gain_median_pct == null ? 'N/A' : session.summary.gain_median_pct.toFixed(1) + '%'), 'ok');
+  } catch (e) {
+    log('A/B error: ' + e, 'err');
+  } finally {
+    state.kpiBench.running = false;
+    if (runBtn) runBtn.disabled = false;
+    if (wasAdaptive) {
+      state.adaptiveEnabled = true;
+      const cb = document.getElementById('adaptiveEnabled');
+      if (cb) cb.checked = true;
+    }
+    saveRuntimeSettings();
+    saveStartupIntent();
+  }
+}
+function pickAutoProcess(list, selectedValue) {
+  if (!Array.isArray(list) || list.length === 0) return '';
+  const excluded = /^(soulkernel(\.exe)?|system|system idle process|idle)$/i;
+  const candidates = list.filter(p => {
+    const n = String(p.name || '').trim().toLowerCase();
+    return !excluded.test(n) && !n.includes('soulkernel');
+  });
+  const pool = candidates.length ? candidates : list;
+  if (selectedValue && pool.some(p => String(p.pid) === String(selectedValue))) return String(selectedValue);
+  const firstHot = pool.find(p => (p.cpu_usage || 0) >= 1.0);
+  const chosen = firstHot || pool[0];
+  return chosen ? String(chosen.pid) : '';
+}
+
+function inferWorkloadFromProcess(proc, metrics) {
+  const name = String(proc?.name || '').toLowerCase();
+  if (!name) return null;
+
+  if (/(bf|battlefield|cod|mw2|mw3|warzone|cs2|valorant|fortnite|apex|overwatch|pubg|rocketleague|dota|leagueoflegends|r5apex|eldenring|cyberpunk|witcher)/.test(name)) {
+    return 'gamer';
+  }
+  if (/(cl|clang|gcc|rustc|cargo|msbuild|ninja|cmake|link\.exe|javac|gradle|mvn|go\s|go\.exe|dotnet|node|tsc|webpack)/.test(name)) {
+    return 'compile';
+  }
+  if (/(python|ollama|llama|stable\s?diffusion|pytorch|tensorflow|cuda)/.test(name)) {
+    return 'ai';
+  }
+  if (/(oracle|tns|sqlplus|sqlservr|postgres|mysql|mariadb)/.test(name)) {
+    return 'oracle';
+  }
+  if (/(sqlite|dbbrowser|litecli)/.test(name)) {
+    return 'sqlite';
+  }
+  if (/(backup|veeam|acronis|robocopy|rsync|sync|onedrive|dropbox)/.test(name)) {
+    return 'backup';
+  }
+  if (/(elastic|kibana|logstash)/.test(name)) {
+    return 'es';
+  }
+
+  const cpu = Number(metrics?.raw?.cpu_pct || 0);
+  const gpuNorm = Number(metrics?.gpu ?? 0);
+  if (cpu >= 70 && gpuNorm >= 0.30) return 'gamer';
+  if (cpu >= 80) return 'compile';
+  return null;
+}
+function setProcessRefreshInfo() {
+  const info = document.getElementById('processRefreshInfo');
+  if (!info) return;
+  if (!state.lastProcessRefreshTs) {
+    info.textContent = 'maj auto: --';
+    return;
+  }
+  info.textContent = `maj auto: ${state.lastProcessRefreshTs}`;
+}
+
+async function refreshProcesses(options = {}) {
+  const userInitiated = options.userInitiated === true;
+  try {
+    const list = await invoke('list_processes');
+    const sel = document.getElementById('targetProcess');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Ce processus (SoulKernel)</option>';
+    list.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.pid;
+      opt.textContent = `${p.name} (PID ${p.pid}) - ${p.cpu_usage.toFixed(1)}% CPU`;
+      sel.appendChild(opt);
+    });
+    if (state.autoProcessTarget) {
+      const pick = pickAutoProcess(list, current);
+      if (pick) sel.value = pick;
+      const chosen = list.find(p => String(p.pid) === String(sel.value));
+      if (!state.adaptiveEnabled) {
+        const inferred = inferWorkloadFromProcess(chosen, state.lastMetrics);
+        if (inferred) setWorkload(inferred, 'process:' + (chosen?.name || 'n/a'));
+      }
+    } else if (current) {
+      sel.value = current;
+    }
+    const now = new Date();
+    state.lastProcessRefreshTs = now.toTimeString().slice(0, 8);
+    setProcessRefreshInfo();
+
+    if (userInitiated || list.length !== state.lastProcessCount) {
+      log(`Liste processus: ${list.length} entrees`, 'ok');
+    }
+    state.lastProcessCount = list.length;
+  } catch (e) {
+    if (userInitiated) log(`list_processes: ${e}`, 'err');
+  }
+}
+function updateSoulRamUi() {
+  const st = document.getElementById('soulRamStatus');
+  const pct = document.getElementById('soulRamPctNum');
+  if (st) {
+    st.textContent = state.soulRamActive ? 'ON' : 'OFF';
+    st.style.color = state.soulRamActive ? 'var(--io)' : 'var(--stress)';
+  }
+  if (pct) pct.textContent = `${state.soulRamPercent}%`;
+}
+
+async function syncSoulRamStatus() {
+  try {
+    const s = await invoke('get_soulram_status');
+    state.soulRamActive = !!s.active;
+    state.soulRamPercent = Number(s.percent || 20);
+    const slider = document.getElementById('soulRamPct');
+    if (slider) slider.value = String(state.soulRamPercent);
+    updateSoulRamUi();
+    if (s.backend) log(`SoulRAM backend: ${s.backend}`, 'info');
+  } catch (_) {}
+}
+
+function saveRuntimeSettings() {
+  try {
+    localStorage.setItem('soulkernel.runtime_settings', JSON.stringify({
+      policyMode: state.policyMode,
+      autoReapplyIntent: state.autoReapplyIntent,
+      adaptiveEnabled: state.adaptiveEnabled,
+      adaptiveAutoDome: state.adaptiveAutoDome,
+      kpiCommand: (document.getElementById('kpiCommand')?.value || 'cargo'),
+      kpiArgs: (document.getElementById('kpiArgs')?.value || 'check'),
+      kpiRuns: parseInt(document.getElementById('kpiRuns')?.value || '5', 10) || 5,
+      viewMode: state.viewMode,
+      hudVisible: !!state.hudVisible,
+      hudInteractive: !!state.hudInteractive,
+      hudPreset: state.hudPreset,
+      hudDisplayIndex: state.hudDisplayIndex,
+      hudOpacity: Number(state.hudOpacity || 0.82),
+    }));
+  } catch (_) {}
+}
+
+function loadRuntimeSettings() {
+  try {
+    const raw = localStorage.getItem('soulkernel.runtime_settings');
+    if (!raw) return;
+    const cfg = JSON.parse(raw);
+    if (cfg.policyMode === 'safe' || cfg.policyMode === 'privileged') {
+      state.policyMode = cfg.policyMode;
+    }
+    if (typeof cfg.autoReapplyIntent === 'boolean') {
+      state.autoReapplyIntent = cfg.autoReapplyIntent;
+    }
+    if (typeof cfg.adaptiveEnabled === 'boolean') state.adaptiveEnabled = cfg.adaptiveEnabled;
+    if (typeof cfg.adaptiveAutoDome === 'boolean') state.adaptiveAutoDome = cfg.adaptiveAutoDome;
+    if (typeof cfg.kpiCommand === 'string') { const el = document.getElementById('kpiCommand'); if (el) el.value = cfg.kpiCommand; }
+    if (typeof cfg.kpiArgs === 'string') { const el = document.getElementById('kpiArgs'); if (el) el.value = cfg.kpiArgs; }
+    if (typeof cfg.kpiRuns === 'number') { const el = document.getElementById('kpiRuns'); if (el) el.value = String(Math.max(5, Math.min(20, Math.floor(cfg.kpiRuns)))); }
+    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed') state.viewMode = cfg.viewMode;
+    if (typeof cfg.hudVisible === 'boolean') state.hudVisible = cfg.hudVisible;
+    if (typeof cfg.hudInteractive === 'boolean') state.hudInteractive = cfg.hudInteractive;
+    if (cfg.hudPreset === 'mini' || cfg.hudPreset === 'compact' || cfg.hudPreset === 'detailed') state.hudPreset = cfg.hudPreset;
+    if (typeof cfg.hudDisplayIndex === 'number' || cfg.hudDisplayIndex === null) state.hudDisplayIndex = cfg.hudDisplayIndex;
+    if (typeof cfg.hudOpacity === 'number') state.hudOpacity = Math.max(0.3, Math.min(1.0, cfg.hudOpacity));
+  } catch (_) {}
+}
+
+function saveStartupIntent() {
+  try {
+    localStorage.setItem('soulkernel.startup_intent', JSON.stringify({
+      wl: state.wl,
+      kappa: state.kappa,
+      sigmaMax: state.sigmaMax,
+      eta: state.eta,
+      policyMode: state.policyMode,
+      targetPid: state.targetPid,
+      domeActive: state.domeActive,
+      soulRamActive: state.soulRamActive,
+      soulRamPercent: state.soulRamPercent,
+      adaptiveEnabled: state.adaptiveEnabled,
+      adaptiveAutoDome: state.adaptiveAutoDome,
+      updatedAt: new Date().toISOString(),
+    }));
+  } catch (_) {}
+}
+
+function loadStartupIntent() {
+  try {
+    const raw = localStorage.getItem('soulkernel.startup_intent');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+
+async function loadPolicyStatus() {
+  const sel = document.getElementById('policyMode');
+  const badge = document.getElementById('policyBadge');
+  const hint = document.getElementById('policyStatusHint');
+  if (!sel || !badge || !hint) return;
+  sel.value = state.policyMode;
+  try {
+    const status = await invoke('get_policy_status');
+    if (status?.mode) {
+      state.policyMode = status.mode;
+      sel.value = state.policyMode;
+    }
+    badge.textContent = state.policyMode.toUpperCase();
+    badge.style.color = state.policyMode === 'safe' ? 'var(--gpu)' : 'var(--io)';
+    hint.textContent = 'admin: ' + (status?.is_admin ? 'oui' : 'non') + ' | reboot pending: ' + (status?.reboot_pending ? 'oui' : 'non');
+    state.rebootPending = !!status?.reboot_pending;
+    state.memoryCompressionEnabled = (status?.memory_compression_enabled ?? null);
+    state.soulRamNeedsReboot = !!(state.rebootPending && state.memoryCompressionEnabled !== true);
+    if (state.soulRamNeedsReboot) {
+      log('Redemarrage Windows requis pour finaliser SoulRAM (Memory Compression).', 'warn');
+    }
+  } catch (e) {
+    hint.textContent = 'admin/reboot status indisponible';
+    log('Policy status: ' + e, 'warn');
+  }
+}
+
+function markSoulRamRebootRequirement(actions, contextLabel) {
+  const joined = Array.isArray(actions) ? actions.join(' | ').toLowerCase() : '';
+  const explicitRestart = joined.includes('restart may be required') || joined.includes('restart pending') || joined.includes('reboot pending');
+  const policyRestart = state.rebootPending && state.memoryCompressionEnabled !== true;
+  const nextNeeds = !!(explicitRestart || policyRestart);
+  const changedToTrue = !state.soulRamNeedsReboot && nextNeeds;
+  state.soulRamNeedsReboot = nextNeeds;
+  if (changedToTrue) {
+    log((contextLabel || 'SoulRAM') + ': redemarrage requis pour stabiliser la compression memoire.', 'warn');
+  }
+}
+async function applyStartupIntentIfAny() {
+  if (!state.autoReapplyIntent) return;
+  const intent = loadStartupIntent();
+  if (!intent) return;
+  if (intent.policyMode === 'safe' || intent.policyMode === 'privileged') {
+    state.policyMode = intent.policyMode;
+    const sel = document.getElementById('policyMode');
+    if (sel) sel.value = state.policyMode;
+    try { await invoke('set_policy_mode', { mode: state.policyMode }); } catch (_) {}
+  }
+  if (typeof intent.adaptiveEnabled === 'boolean') state.adaptiveEnabled = intent.adaptiveEnabled;
+  if (typeof intent.adaptiveAutoDome === 'boolean') state.adaptiveAutoDome = intent.adaptiveAutoDome;
+  if (typeof intent.kappa === 'number') state.kappa = intent.kappa;
+  if (typeof intent.sigmaMax === 'number') state.sigmaMax = intent.sigmaMax;
+  if (typeof intent.eta === 'number') state.eta = intent.eta;
+  if (typeof intent.wl === 'string' && WORKLOADS[intent.wl]) {
+    state.wl = intent.wl;
+    const btn = document.querySelector(`.wl-btn[data-wl="${state.wl}"]`);
+    if (btn) {
+      document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+  }
+  setSlidersFromState();
+  if (intent.soulRamActive) {
+    state.soulRamPercent = Number(intent.soulRamPercent || state.soulRamPercent || 20);
+    try {
+      const actions = await invoke('set_soulram', { enabled: true, percent: state.soulRamPercent });
+      state.soulRamActive = true;
+      updateSoulRamUi();
+      actions.forEach(a => log(a, a.startsWith('[ok]') ? 'ok' : 'warn'));
+      await loadPolicyStatus();
+      markSoulRamRebootRequirement(actions, 'Startup SoulRAM');
+    } catch (e) {
+      log('Startup SoulRAM: ' + e, 'warn');
+    }
+  }
+  if (intent.domeActive) {
+    try {
+      const result = await invoke('activate_dome', {
+        workload: state.wl,
+        kappa: state.kappa,
+        sigmaMax: state.sigmaMax,
+        eta: state.eta,
+        targetPid: state.targetPid,
+        policyMode: state.policyMode,
+      });
+      state.domeActive = !!result.activated;
+      updateDomeBadge(state.domeActive);
+      result.actions.forEach(a => log(a, a.startsWith('\u2713') ? 'ok' : 'warn'));
+      log('Startup reapply dome: ' + result.message, state.domeActive ? 'ok' : 'warn');
+    } catch (e) {
+      log('Startup reapply dome error: ' + e, 'warn');
+    }
+  }
+  if (state.lastMetrics) renderFormula(state.lastMetrics);
+  log('Intention session reappliquee au lancement', 'info');
+}
+
+
+function updateSystemStatus(m = null) {
+  const el = document.getElementById('sysStatus');
+  if (!el) return;
+  if (!hasTauri) {
+    el.textContent = 'NO BACKEND';
+    el.className = 'status-pill pill-warn';
+    el.title = 'Backend Tauri indisponible';
+    return;
+  }
+  if (!m || !m.raw) {
+    el.textContent = 'CONNECTED';
+    el.className = 'status-pill pill-ok';
+    el.title = 'Connexion backend OK';
+    return;
+  }
+
+  const isWindows = String(m.raw.platform || '').toLowerCase().includes('windows');
+  const hasCore = (m.cpu != null) && (m.mem != null);
+  const hasIoOrGpu = (m.io_bandwidth != null) || (m.gpu != null);
+
+  if (!hasCore || !hasIoOrGpu) {
+    el.textContent = 'PARTIAL DATA';
+    el.className = 'status-pill pill-warn';
+    el.title = 'Certaines metriques live sont absentes';
+    return;
+  }
+
+  el.textContent = 'SYSTEM OK';
+  el.className = 'status-pill pill-ok';
+  el.title = isWindows
+    ? 'Windows: PSI/compression peuvent etre indisponibles via API'
+    : 'Metriques principales disponibles';
+}
+function renderMetrics(m) {
+  const isWindows = String(m?.raw?.platform || '').toLowerCase().includes('windows');
+  const na = isWindows ? 'N/A (Windows API)' : 'N/A';
+  state.naLabel = na;
+  const opt = (v, fmt) => (v != null ? fmt(v) : na);
+
+  // r(t) bars — val/label optionnels : pas de simulation, on affiche N/A si pas de donnée
+  setBar('CPU', m.cpu, m.raw.cpu_pct.toFixed(1)+'%');
+  setBar('MEM', m.mem, (m.raw.mem_used_mb/1024).toFixed(1)+' GB used');
+  setBar('LAM', m.compression, m.compression != null ? 'Λ(t)' : na);
+  setBar('IO',  m.io_bandwidth, (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null)
+    ? (m.raw.io_read_mb_s.toFixed(0)+' + '+m.raw.io_write_mb_s.toFixed(0)+' MB/s') : na);
+  setBar('GPU', m.gpu, opt(m.raw.gpu_pct, v => v.toFixed(1)+'%'));
+
+  // labels
+  document.getElementById('lCPU').textContent = `α_C=${WORKLOADS[state.wl][0]} · cpu=${m.raw.cpu_pct.toFixed(1)}%`;
+  document.getElementById('lMEM').textContent = `${(m.raw.mem_used_mb/1024).toFixed(1)}/${(m.raw.mem_total_mb/1024).toFixed(1)} GB`;
+  document.getElementById('lIO').textContent  = (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null)
+    ? `R:${m.raw.io_read_mb_s.toFixed(0)} W:${m.raw.io_write_mb_s.toFixed(0)} MB/s` : na;
+
+  // sigma
+  document.getElementById('sigmaFill').style.height = (m.sigma * 100) + '%';
+  document.getElementById('sigmaVal').textContent    = m.sigma.toFixed(3);
+
+  // raw metrics — uniquement valeurs réelles, N/A si indisponible
+  set('rawMemUsed',  (m.raw.mem_used_mb/1024).toFixed(2)+' GB');
+  set('rawMemTotal', (m.raw.mem_total_mb/1024).toFixed(2)+' GB');
+  set('rawZram',     opt(m.raw.zram_used_mb, v => v + ' MB'));
+  set('rawPsiCpu',   opt(m.raw.psi_cpu, v => (v*100).toFixed(1)+'%'));
+  set('rawPsiMem',   opt(m.raw.psi_mem, v => (v*100).toFixed(1)+'%'));
+  set('rawCpuPct',   m.raw.cpu_pct.toFixed(1)+'%');
+  set('rawIoRw',     (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null) ? `${m.raw.io_read_mb_s.toFixed(3)}/${m.raw.io_write_mb_s.toFixed(3)} MB/s` : na);
+  set('rawGpuPct',   opt(m.raw.gpu_pct, v => v.toFixed(2)+'%'));
+  set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W'));
+  updateSystemStatus(m);
+}
+
+function setBar(id, val, _label) {
+  const vEl = document.getElementById('v'+id);
+  const bEl = document.getElementById('b'+id);
+  const num = (val != null && typeof val === 'number') ? val : 0;
+  vEl.textContent = val != null ? num.toFixed(3) : (state.naLabel || 'N/A');
+  bEl.style.width = (num * 100).toFixed(1) + '%';
+}
+
+function renderFormula(m) {
+  const alpha = WORKLOADS[state.wl];
+  const r     = [m.cpu, m.mem, m.compression ?? 0, m.io_bandwidth ?? 0, m.gpu ?? 0];
+  const eps   = m.epsilon;
+
+  const brut    = alpha.reduce((s,a,i) => s + a*r[i], 0);
+  const fric    = alpha.reduce((p,a,i) => p * Math.pow(Math.max(0,1-eps[i]), a), 1);
+  const brake   = Math.exp(-state.kappa * m.sigma);
+  const pi      = brut * fric * brake;
+
+  const T       = { es:60, compile:120, gamer:90, ai:30, backup:300, sqlite:20, oracle:180 }[state.wl] || 60;
+  const dGain   = pi * T - 0.04 - 0.02;
+  state.lastPi = pi;
+  state.lastDomeModel = dGain;
+  const deltaK  = [0.9,0.85,0.95,0.8,0.7];
+  const bIdle   = alpha.reduce((s,a,i) => s + a*(1-r[i]*0.7)*deltaK[i], 0);
+
+  const piEl = document.getElementById('piVal');
+  piEl.textContent = 'π = ' + pi.toFixed(5);
+  piEl.className   = 'eq-result' + (pi>.5?' high':pi<.2?' low':'');
+
+  document.getElementById('domeVal').textContent = state.domeActive
+    ? '𝒟 = ' + dGain.toFixed(4)
+    : '𝒟 = —';
+
+  set('mBrut',  brut.toFixed(4));
+  set('mFric',  fric.toFixed(4));
+  set('mFrein', brake.toFixed(4));
+  const rEl = document.getElementById('mRenta');
+  rEl.textContent = dGain > 0 ? 'OUI ✓' : 'NON ✗';
+  rEl.style.color = dGain > 0 ? 'var(--io)' : 'var(--stress)';
+
+  // dome bars = α_i · r_i · 50px
+  alpha.forEach((a,i) => {
+    document.getElementById('dc'+i).style.height = (a * r[i] * 50).toFixed(1)+'px';
+  });
+}
+
+// ─── Platform info ────────────────────────────────────────────────────────────
+async function loadPlatformInfo() {
+  try {
+    const info = await invoke('platform_info');
+    const badge = document.getElementById('platformBadge');
+    if (hasTauri) {
+      badge.textContent = info.os + ' · ' + info.kernel;
+      badge.title = 'Métriques réelles (runtime Tauri)';
+    } else {
+      badge.textContent = info.os + ' · ' + info.kernel;
+      badge.title = 'Hors Tauri : lancez "cargo tauri dev" ou l\'exécutable pour les métriques réelles.';
+    }
+    const tags = document.getElementById('featTags');
+    tags.innerHTML = '';
+    info.features.forEach(f => {
+      const t = document.createElement('span');
+      t.className = 'feat-tag active';
+      t.textContent = f;
+      tags.appendChild(t);
+    });
+    log(`Platform: ${info.os} · cgroups-v2:${info.has_cgroups_v2} · zRAM:${info.has_zram} · root:${info.is_root}`, 'ok');
+  } catch(e) {
+    document.getElementById('platformBadge').textContent = hasTauri ? 'Connected' : 'Hors Tauri — lancez l\'app native';
+    document.getElementById('platformBadge').title = hasTauri ? '' : 'Ouvrez via cargo tauri dev pour les métriques réelles.';
+    log(hasTauri ? `platform_info error: ${e}` : 'Mode navigateur — pas de métriques réelles (lancez cargo tauri dev)', 'warn');
+  }
+}
+
+// ─── Dome activation ──────────────────────────────────────────────────────────
+document.getElementById('btnDome').addEventListener('click', async () => {
+  try {
+    const pidVal = document.getElementById('targetProcess').value;
+    state.targetPid = pidVal === '' ? null : parseInt(pidVal, 10);
+    log('Activation dome: workload=' + state.wl + ' kappa=' + state.kappa + ' sigmaMax=' + state.sigmaMax.toFixed(2) + (state.targetPid ? ' -> PID ' + state.targetPid : ''), 'info');
+    const result = await invoke('activate_dome', {
+      workload:  state.wl,
+      kappa:     state.kappa,
+      sigmaMax:  state.sigmaMax,
+      eta:       state.eta,
+      targetPid: state.targetPid,
+      policyMode: state.policyMode,
+    });
+    state.domeActive = result.activated;
+    if (result.activated) {
+      try { state.snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) { state.snapshotBefore = null; }
+      state.domeHistory.unshift({
+        ts: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        workload: state.wl,
+        pi: result.pi,
+        domeGain: result.dome_gain,
+        targetPid: state.targetPid,
+      });
+      if (state.domeHistory.length > MAX_DOME_HISTORY) state.domeHistory.pop();
+      renderGainsHistory();
+    }
+    log(result.message, result.activated ? 'ok' : 'warn');
+    result.actions.forEach(a => log(a, a.startsWith('✓') ? 'ok' : 'warn'));
+    updateDomeBadge(result.activated);
+    document.getElementById('fZone').classList.toggle('active', result.activated);
+    document.getElementById('dZone').classList.toggle('active', result.activated);
+    renderProofPanel();
+    renderCompactHud(state.lastMetrics);
+    saveStartupIntent();
+  } catch(e) {
+    log(`Dome error: ${e}`, 'err');
+  }
+});
+
+// ─── Rollback ─────────────────────────────────────────────────────────────────
+document.getElementById('btnReset').addEventListener('click', async () => {
+  try {
+    const actions = await invoke('rollback_dome');
+    state.domeActive = false;
+    actions.forEach(a => log(a, a.startsWith('✓') ? 'ok' : 'warn'));
+    state.snapshotBefore = null;
+    log('ROLLBACK — kernel params restored', 'ok');
+    updateDomeBadge(false);
+    document.getElementById('fZone').classList.remove('active');
+    document.getElementById('dZone').classList.remove('active');
+    renderProofPanel();
+    renderCompactHud(state.lastMetrics);
+    saveStartupIntent();
+  } catch(e) {
+    log(`Rollback error: ${e}`, 'err');
+  }
+});
+
+document.getElementById('btnInfo').addEventListener('click', loadPlatformInfo);
+
+function formatMetricsShort(m) {
+  if (!m || !m.raw) return '�';
+  const r = m.raw;
+  const mem = (r.mem_used_mb / 1024).toFixed(1) + '/' + (r.mem_total_mb / 1024).toFixed(1) + ' GB';
+  return 'CPU ' + r.cpu_pct.toFixed(1) + '% | RAM ' + mem + ' | sigma ' + m.sigma.toFixed(3);
+}
+
+function formatDelta(delta, unit, invertGood) {
+  if (unit == null) unit = '';
+  if (invertGood == null) invertGood = false;
+  if (delta == null || !Number.isFinite(delta)) return 'N/A';
+  const sign = delta > 0 ? '+' : '';
+  const val = sign + delta.toFixed(2) + unit;
+  const better = invertGood ? (delta < 0) : (delta > 0);
+  if (Math.abs(delta) < 0.01) return val + ' (stable)';
+  return val + (better ? ' (mieux)' : ' (moins bien)');
+}
+
+function renderProofPanel() {
+  const placeholder = document.getElementById('proofPlaceholder');
+  const compare = document.getElementById('proofCompare');
+  const beforeEl = document.getElementById('proofBefore');
+  const afterEl = document.getElementById('proofAfter');
+  const summaryEl = document.getElementById('proofSummary');
+  if (!compare || !placeholder || !beforeEl || !afterEl || !summaryEl) return;
+
+  if (state.domeActive && state.snapshotBefore && state.lastMetrics) {
+    const b = state.snapshotBefore;
+    const a = state.lastMetrics;
+
+    const cpuDelta = Number(a.raw.cpu_pct || 0) - Number(b.raw.cpu_pct || 0);
+    const memBeforeGb = Number(b.raw.mem_used_mb || 0) / 1024;
+    const memAfterGb = Number(a.raw.mem_used_mb || 0) / 1024;
+    const memDelta = memAfterGb - memBeforeGb;
+    const sigmaDelta = Number(a.sigma || 0) - Number(b.sigma || 0);
+
+    placeholder.style.display = 'none';
+    compare.style.display = 'flex';
+    summaryEl.style.display = 'block';
+
+    beforeEl.textContent = formatMetricsShort(b);
+    afterEl.textContent =
+      formatMetricsShort(a) +
+      ' | delta CPU ' + formatDelta(cpuDelta, '%', true) +
+      ' | delta RAM ' + formatDelta(memDelta, ' GB', true) +
+      ' | delta sigma ' + formatDelta(sigmaDelta, '', true);
+
+    let verdict = 'Impact limite (lecture instantanee).';
+    let score = 0;
+    if (cpuDelta <= -2.0) score += 1;
+    if (memDelta <= -0.2) score += 1;
+    if (sigmaDelta <= -0.02) score += 1;
+    if (cpuDelta >= 2.0) score -= 1;
+    if (memDelta >= 0.2) score -= 1;
+    if (sigmaDelta >= 0.02) score -= 1;
+
+    if (score >= 2) verdict = 'Tendance favorable apres activation du dome.';
+    else if (score <= -2) verdict = 'Tendance defavorable: verifier profil/cible.';
+
+    summaryEl.textContent = verdict + ' Cette preuve reste instantanee; le benchmark A/B fait foi pour la performance reelle.';
+  } else {
+    placeholder.style.display = 'block';
+    compare.style.display = 'none';
+    summaryEl.style.display = 'none';
+  }
+}
+function renderGainsHistory() {
+  const summary = document.getElementById('gainsSummary');
+  const listEl = document.getElementById('gainsList');
+  if (state.domeHistory.length === 0) {
+    summary.textContent = '- Aucune activation encore';
+    listEl.innerHTML = '';
+    return;
+  }
+  const n = state.domeHistory.length;
+  const avgD = state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / n;
+  summary.textContent = `Session: ${n} dome(s) - D moyen = ${avgD.toFixed(2)}`;
+  listEl.innerHTML = state.domeHistory.map(e =>
+    `<div class="gains-row"><span>${e.ts}</span><span>${e.workload}</span><span class="gains-pi">pi=${e.pi.toFixed(4)}</span><span class="gains-d">D=${e.domeGain.toFixed(2)}</span><span>${e.targetPid ? 'PID ' + e.targetPid : '-'}</span></div>`
+  ).join('');
+}
+
+function collectVisibleLogLines() {
+  const panel = document.getElementById('logPanel');
+  if (!panel) return [];
+  return Array.from(panel.querySelectorAll('.log-entry'))
+    .map(el => (el.textContent || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function buildSessionReportText() {
+  const now = new Date().toISOString();
+  const selectedTarget = document.getElementById('targetProcess');
+  const selectedTargetText = selectedTarget && selectedTarget.selectedIndex >= 0
+    ? selectedTarget.options[selectedTarget.selectedIndex].text
+    : 'Ce processus (SoulKernel)';
+  const avgD = state.domeHistory.length
+    ? state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length
+    : 0;
+  const lines = [];
+
+  lines.push('SoulKernel - Rapport complet de session');
+  lines.push('Export: ' + now);
+  lines.push('');
+
+  lines.push('Parametres actifs');
+  lines.push('Workload: ' + state.wl);
+  lines.push('kappa: ' + state.kappa.toFixed(2) + ' | sigmaMax: ' + state.sigmaMax.toFixed(2) + ' | eta: ' + state.eta.toFixed(2));
+  lines.push('Dome actif: ' + (state.domeActive ? 'oui' : 'non'));
+  lines.push('Cible: ' + selectedTargetText);
+  lines.push('Auto-cible: ' + (state.autoProcessTarget ? 'on' : 'off'));
+  lines.push('SoulRAM: ' + (state.soulRamActive ? 'on' : 'off') + ' (' + state.soulRamPercent + '%)');
+  lines.push('SoulRAM reboot requis: ' + (state.soulRamNeedsReboot ? 'oui' : 'non'));
+  lines.push('Adaptive: ' + (state.adaptiveEnabled ? 'on' : 'off') + ' | auto-dome: ' + (state.adaptiveAutoDome ? 'on' : 'off'));
+  lines.push('Audit JSONL: ' + (state.auditLogPath || 'N/A')); 
+
+  if (state.lastMetrics && state.lastMetrics.raw) {
+    const r = state.lastMetrics.raw;
+    const na = v => (v != null ? String(v) : 'N/A');
+    lines.push('');
+    lines.push('Metriques');
+    lines.push('CPU: ' + r.cpu_pct.toFixed(1) + '% | RAM: ' + (r.mem_used_mb / 1024).toFixed(2) + '/' + (r.mem_total_mb / 1024).toFixed(2) + ' GB');
+    lines.push('Swap: ' + r.swap_used_mb + '/' + r.swap_total_mb + ' MB | Sigma: ' + state.lastMetrics.sigma.toFixed(3));
+    lines.push('Plateforme: ' + r.platform);
+
+    lines.push('');
+    lines.push('Hardware r(t) detail');
+    lines.push('C(t) CPU: ' + (state.lastMetrics.cpu != null ? state.lastMetrics.cpu.toFixed(3) : 'N/A') + ' | alpha_C=0.2 | cpu=' + r.cpu_pct.toFixed(1) + '%');
+    lines.push('M(t) RAM: ' + (state.lastMetrics.mem != null ? state.lastMetrics.mem.toFixed(3) : 'N/A') + ' | ' + (r.mem_used_mb / 1024).toFixed(1) + '/' + (r.mem_total_mb / 1024).toFixed(1) + ' GB');
+    lines.push('Lambda(t) Compression: ' + (state.lastMetrics.compression != null ? state.lastMetrics.compression.toFixed(3) : 'N/A') + ' | zRAM/zSWAP=' + na(r.zram_used_mb));
+    lines.push('Bio(t) I/O: ' + (state.lastMetrics.io_bandwidth != null ? state.lastMetrics.io_bandwidth.toFixed(3) : 'N/A') + ' | R/W=' + na(r.io_read_mb_s) + '/' + na(r.io_write_mb_s) + ' MB/s');
+    lines.push('G(t) GPU: ' + (state.lastMetrics.gpu != null ? state.lastMetrics.gpu.toFixed(3) : 'N/A') + ' | gpu=' + na(r.gpu_pct) + '%');
+    lines.push('PSI cpu/mem: ' + na(r.psi_cpu != null ? (r.psi_cpu * 100).toFixed(1) : null) + '%/' + na(r.psi_mem != null ? (r.psi_mem * 100).toFixed(1) : null) + '%');
+  }
+
+  lines.push('');
+  lines.push('Gains dome');
+  lines.push('Heure\tWorkload\tpi\tD\tCible');
+  if (state.domeHistory.length === 0) {
+    lines.push('Aucune activation');
+  } else {
+    state.domeHistory.forEach(e => {
+      lines.push(e.ts + '\t' + e.workload + '\t' + e.pi.toFixed(4) + '\t' + e.domeGain.toFixed(2) + '\t' + (e.targetPid || '-'));
+    });
+    lines.push('Session: ' + state.domeHistory.length + ' activation(s), D moyen = ' + avgD.toFixed(2));
+  }
+
+  if (state.kpiBench.lastSummary) {
+    const s = state.kpiBench.lastSummary;
+    const f = v => (v == null ? 'N/A' : v.toFixed(1));
+    lines.push('');
+    lines.push('A/B KPI (dernier run)');
+    lines.push('OFF median/p95: ' + f(s.median_off_ms) + '/' + f(s.p95_off_ms) + ' ms');
+    lines.push('ON  median/p95: ' + f(s.median_on_ms) + '/' + f(s.p95_on_ms) + ' ms');
+    lines.push('Gain median/p95: ' + f(s.gain_median_pct) + '% / ' + f(s.gain_p95_pct) + '%');
+  }
+
+
+  if (state.telemetrySummary) {
+    const t = state.telemetrySummary;
+    const f = v => (v == null ? 'N/A' : Number(v).toFixed(3));
+    const ccy = t.pricing?.currency || 'EUR';
+    lines.push('');
+    lines.push('Telemetry energie (reelle si Power Meter disponible)');
+    lines.push('Prix electricite: ' + f(t.pricing?.price_per_kwh) + ' ' + ccy + '/kWh | CO2: ' + f(t.pricing?.co2_kg_per_kwh) + ' kg/kWh');
+    lines.push('Power live: ' + (t.live_power_w == null ? 'N/A' : Number(t.live_power_w).toFixed(1) + ' W'));
+    if (t.total?.has_power_data) {
+      lines.push('Total: ' + f(t.total?.energy_kwh) + ' kWh | cout=' + f(t.total?.cost) + ' ' + ccy + ' | CO2=' + f(t.total?.co2_kg) + ' kg');
+      lines.push('Fenetres kWh H/J/S/M/A: ' + [f(t.hour?.energy_kwh), f(t.day?.energy_kwh), f(t.week?.energy_kwh), f(t.month?.energy_kwh), f(t.year?.energy_kwh)].join('/'));
+    } else {
+      lines.push('Total: N/A (aucune mesure de puissance reelle)');
+      lines.push('Fenetres kWh H/J/S/M/A: N/A');
+    }
+    lines.push('Optimisation reelle mediane A/B: ' + (t.total?.kpi_gain_median_pct == null ? 'N/A' : Number(t.total.kpi_gain_median_pct).toFixed(2) + '%'));
+    lines.push('Clean passif (h): ' + f(t.total?.passive_clean_h) + ' | ratio dome actif: ' + f((t.total?.dome_active_ratio ?? 0) * 100) + '%');
+  }
+  const logs = collectVisibleLogLines();
+  lines.push('');
+  lines.push('Logs (' + logs.length + ')');
+  if (logs.length === 0) {
+    lines.push('Aucun log');
+  } else {
+    logs.forEach(l => lines.push(l));
+  }
+
+  return lines.join('\n');
+}
+
+document.getElementById('btnCopyGains').addEventListener('click', () => {
+  const report = buildSessionReportText();
+  navigator.clipboard.writeText(report).then(() => {
+    log('Rapport complet copie dans le presse-papier', 'ok');
+  }).catch(() => log('Copie echouee', 'err'));
+});
+
+document.getElementById('btnExportGains').addEventListener('click', async () => {
+  try {
+    let snapshotBefore = state.snapshotBefore;
+    if (state.domeActive && !snapshotBefore) {
+      try { snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) {}
+    }
+    const payload = {
+      exported_at: new Date().toISOString(),
+      product: 'SoulKernel',
+      version: '0.1.0',
+      dome_active: state.domeActive,
+      snapshot_before: snapshotBefore,
+      history: state.domeHistory,
+      adaptive: { enabled: state.adaptiveEnabled, auto_dome: state.adaptiveAutoDome },
+      audit_log_path: state.auditLogPath,
+      kpi_bench_sessions: state.kpiBench.sessions,
+      telemetry_summary: state.telemetrySummary,
+      session_summary: state.domeHistory.length ? {
+        count: state.domeHistory.length,
+        avg_dome_gain: state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length,
+      } : null,
+    };
+    const path = await invoke('export_gains_to_file', { content: JSON.stringify(payload, null, 2) });
+    log('Export enregistré : ' + path, 'ok');
+  } catch (e) {
+    if (String(e).includes('Annulé')) return;
+    log('Export : ' + e, 'err');
+  }
+});
+
+document.getElementById('btnRefreshProcesses').addEventListener('click', () => {
+  refreshProcesses({ userInitiated: true });
+});
+
+document.getElementById('autoProcessTarget').addEventListener('change', e => {
+  state.autoProcessTarget = !!e.target.checked;
+  log(state.autoProcessTarget ? 'Auto-cible active' : 'Auto-cible desactivee', 'info');
+  refreshProcesses({ userInitiated: false });
+});
+
+document.getElementById('targetProcess').addEventListener('change', e => {
+  if (state.autoProcessTarget && e.target.value) {
+    state.autoProcessTarget = false;
+    document.getElementById('autoProcessTarget').checked = false;
+    log('Selection manuelle detectee: auto-cible desactivee', 'info');
+  }
+});
+
+
+const policyModeSel = document.getElementById('policyMode');
+if (policyModeSel) {
+  policyModeSel.addEventListener('change', async e => {
+    const next = (e.target.value === 'safe') ? 'safe' : 'privileged';
+    state.policyMode = next;
+    saveRuntimeSettings();
+    saveStartupIntent();
+    try {
+      const applied = await invoke('set_policy_mode', { mode: next });
+      state.policyMode = applied || next;
+      await loadPolicyStatus();
+      log('Policy moteur -> ' + state.policyMode, 'info');
+    } catch (err) {
+      log('Policy set error: ' + err, 'warn');
+    }
+  });
+}
+
+const btnApplyAdvice = document.getElementById('btnApplyAdvice');
+if (btnApplyAdvice) {
+  btnApplyAdvice.addEventListener('click', () => {
+    if (!state.pendingAdvice) {
+      log('Aucun ajustement recommande pour l instant', 'warn');
+      return;
+    }
+    state.kappa = state.pendingAdvice.kappa;
+    state.sigmaMax = state.pendingAdvice.sigmaMax;
+    state.eta = state.pendingAdvice.eta;
+    setSlidersFromState();
+    if (state.lastMetrics) renderFormula(state.lastMetrics);
+    log('Reglage recommande applique', 'ok');
+    state.adviceLastAcceptedTs = Date.now();
+    state.pendingAdvice = null;
+    state.adviceCandidateKey = null;
+    state.adviceCandidateCount = 0;
+    state.adviceCurrentKey = null;
+    saveStartupIntent();
+  });
+}
+const adaptiveEnabledEl = document.getElementById('adaptiveEnabled');
+if (adaptiveEnabledEl) {
+  adaptiveEnabledEl.checked = !!state.adaptiveEnabled;
+  adaptiveEnabledEl.addEventListener('change', e => {
+    state.adaptiveEnabled = !!e.target.checked;
+    const statusEl = document.getElementById('adaptiveStatus');
+    if (statusEl) statusEl.textContent = state.adaptiveEnabled ? 'ON (warming up...)' : 'OFF';
+    log('Adaptive mode ' + (state.adaptiveEnabled ? 'active' : 'desactive'), 'info');
+    saveRuntimeSettings();
+    saveStartupIntent();
+  });
+}
+
+const adaptiveAutoDomeEl = document.getElementById('adaptiveAutoDome');
+if (adaptiveAutoDomeEl) {
+  adaptiveAutoDomeEl.checked = !!state.adaptiveAutoDome;
+  adaptiveAutoDomeEl.addEventListener('change', e => {
+    state.adaptiveAutoDome = !!e.target.checked;
+    log('Adaptive auto-dome ' + (state.adaptiveAutoDome ? 'on' : 'off'), 'info');
+    saveRuntimeSettings();
+    saveStartupIntent();
+  });
+}
+
+const btnRunAB = document.getElementById('btnRunAB');
+if (btnRunAB) {
+  btnRunAB.addEventListener('click', () => {
+    runAbBenchmark();
+  });
+}
+
+const btnClearAB = document.getElementById('btnClearAB');
+if (btnClearAB) {
+  btnClearAB.addEventListener('click', () => {
+    state.kpiBench.sessions = [];
+    state.kpiBench.lastSummary = null;
+    renderAbSummary(null);
+    log('A/B history reset', 'info');
+  });
+}
+const soulRamPct = document.getElementById('soulRamPct');
+if (soulRamPct) {
+  soulRamPct.addEventListener('input', e => {
+    state.soulRamPercent = parseInt(e.target.value, 10) || 20;
+    updateSoulRamUi();
+  });
+}
+
+
+
+const btnApplyEnergyPricing = document.getElementById('btnApplyEnergyPricing');
+if (btnApplyEnergyPricing) {
+  btnApplyEnergyPricing.addEventListener('click', async () => {
+    const status = document.getElementById('energyPricingStatus');
+    const normNum = v => String(v ?? '').trim().replace(',', '.');
+    const p = parseFloat(normNum(document.getElementById('energyPrice')?.value || '0.22'));
+    const co2 = parseFloat(normNum(document.getElementById('energyCo2')?.value || '0.05'));
+    if (!Number.isFinite(p) || p < 0 || !Number.isFinite(co2) || co2 < 0) {
+      if (status) {
+        status.textContent = 'Tarif invalide: utiliser des nombres >= 0 (ex: 0,194 et 0,024).';
+        status.style.color = 'var(--stress)';
+      }
+      log('Tarif energie invalide', 'warn');
+      return;
+    }
+    try {
+      await setEnergyPricing(p, 'EUR', co2);
+      log('Tarif energie applique: ' + p.toFixed(3) + ' EUR/kWh | CO2 ' + co2.toFixed(3) + ' kg/kWh', 'ok');
+    } catch (e) {
+      if (status) {
+        status.textContent = 'Erreur enregistrement tarif energie';
+        status.style.color = 'var(--stress)';
+      }
+      log('Tarif energie error: ' + e, 'err');
+    }
+  });
+}
+const btnSoulRamOn = document.getElementById('btnSoulRamOn');
+if (btnSoulRamOn) {
+  btnSoulRamOn.addEventListener('click', async () => {
+    const requestedPct = parseInt(document.getElementById('soulRamPct')?.value, 10) || state.soulRamPercent || 20;
+    state.soulRamPercent = requestedPct;
+    updateSoulRamUi();
+    btnSoulRamOn.disabled = true;
+    try {
+      const actions = await invoke('set_soulram', { enabled: true, percent: requestedPct });
+      state.soulRamActive = true;
+      updateSoulRamUi();
+      actions.forEach(a => log(a, a.startsWith('[ok]') ? 'ok' : 'warn'));
+      await loadPolicyStatus();
+      markSoulRamRebootRequirement(actions, 'SoulRAM');
+      log('SoulRAM active (' + requestedPct + '%)', 'ok');
+    saveStartupIntent();
+    } catch (e) {
+      log('SoulRAM on: ' + e, 'err');
+    } finally {
+      btnSoulRamOn.disabled = false;
+    }
+  });
+}
+
+const btnSoulRamOff = document.getElementById('btnSoulRamOff');
+if (btnSoulRamOff) {
+  btnSoulRamOff.addEventListener('click', async () => {
+    try {
+      const actions = await invoke('set_soulram', { enabled: false, percent: null });
+      state.soulRamActive = false;
+      updateSoulRamUi();
+      actions.forEach(a => log(a, a.startsWith('[ok]') ? 'ok' : 'warn'));
+      log('SoulRAM desactive', 'ok');
+    saveStartupIntent();
+    } catch (e) {
+      log(`SoulRAM off: ${e}`, 'err');
+    }
+  });
+}
+
+
+
+
+
+
+const btnViewCompact = document.getElementById('btnViewCompact');
+if (btnViewCompact) {
+  btnViewCompact.addEventListener('click', () => setViewMode('compact'));
+}
+const btnViewDetailed = document.getElementById('btnViewDetailed');
+if (btnViewDetailed) {
+  btnViewDetailed.addEventListener('click', () => setViewMode('detailed'));
+}
+const btnHudToggle = document.getElementById('btnHudToggle');
+if (btnHudToggle) {
+  btnHudToggle.addEventListener('click', () => setHudVisible(!state.hudVisible));
+}
+const btnHudEdit = document.getElementById('btnHudEdit');
+if (btnHudEdit) {
+  btnHudEdit.addEventListener('click', () => setHudInteractive(!state.hudInteractive));
+}
+const hudPresetEl = document.getElementById('hudPreset');
+if (hudPresetEl) {
+  hudPresetEl.addEventListener('change', e => {
+    state.hudPreset = e.target.value;
+    applyHudPresentation();
+  });
+}
+const hudOpacityEl = document.getElementById('hudOpacity');
+if (hudOpacityEl) {
+  hudOpacityEl.addEventListener('input', e => {
+    state.hudOpacity = Math.max(0.3, Math.min(1.0, parseFloat(e.target.value) || 0.82));
+    applyHudPresentation();
+  });
+}
+const hudDisplayEl = document.getElementById('hudDisplay');
+if (hudDisplayEl) {
+  hudDisplayEl.addEventListener('change', async e => {
+    const raw = e.target.value;
+    state.hudDisplayIndex = (raw === '' ? null : Number(raw));
+    if (hasTauri && state.hudVisible) {
+      try { await invoke('set_system_hud_display', { display_index: state.hudDisplayIndex }); } catch (_) {}
+    }
+    saveRuntimeSettings();
+  });
+}
+// ─── Sliders ──────────────────────────────────────────────────────────────────
+document.getElementById('wlGrid').addEventListener('click', e => {
+  const btn = e.target.closest('.wl-btn');
+  if (!btn) return;
+  setWorkload(btn.dataset.wl, 'manuel');
+});
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('button, .wl-btn, input[type="checkbox"]');
+  if (!el) return;
+  const id = el.id || null;
+  const txt = truncateAuditString((el.textContent || '').trim(), 120);
+  auditEmit('interaction', 'click', 'info', { id, text: txt, class: el.className || null });
+});
+
+if (!HUD_ONLY && window.__TAURI__?.event?.listen) {
+  window.__TAURI__.event.listen('soulkernel://hud-state', ev => {
+    state.hudVisible = !!ev.payload;
+    const hud = document.getElementById('compactHud');
+    if (hud) hud.classList.toggle('visible', HUD_ONLY && state.hudVisible);
+    const bHud = document.getElementById('btnHudToggle');
+    if (bHud) {
+      bHud.classList.toggle('active', state.hudVisible);
+      bHud.textContent = state.hudVisible ? 'HUD ON' : 'HUD OFF';
+    }
+    saveRuntimeSettings();
+  }).catch(e => log('HUD event.listen blocked: ' + e, 'warn'));
+  window.__TAURI__.event.listen('soulkernel://hud-interactive', ev => {
+    setHudInteractive(!!ev.payload);
+  }).catch(e => log('HUD event.listen blocked: ' + e, 'warn'));
+}
+document.addEventListener('change', e => {
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) return;
+  const id = el.id || null;
+  let value = null;
+  if (el instanceof HTMLInputElement && el.type === 'checkbox') value = !!el.checked;
+  else value = truncateAuditString(String(el.value ?? ''), 200);
+  auditEmit('interaction', 'change', 'info', { id, tag: el.tagName.toLowerCase(), value });
+});
+document.getElementById('kappaSlider').addEventListener('input', e => {
+  state.kappa = parseFloat(e.target.value);
+  document.getElementById('kappaNum').textContent = state.kappa.toFixed(1);
+});
+document.getElementById('sigmaMaxSlider').addEventListener('input', e => {
+  state.sigmaMax = parseFloat(e.target.value);
+  document.getElementById('sigmaMaxNum').textContent = state.sigmaMax.toFixed(2);
+  document.getElementById('smaxBot').textContent = state.sigmaMax.toFixed(2);
+});
+document.getElementById('etaSlider').addEventListener('input', e => {
+  state.eta = parseFloat(e.target.value);
+  document.getElementById('etaNum').textContent = state.eta.toFixed(2);
+});
+
+async function setHudVisible(on) {
+  state.hudVisible = !!on;
+  const hud = document.getElementById('compactHud');
+  if (hud) hud.classList.toggle('visible', HUD_ONLY && state.hudVisible);
+  const bHud = document.getElementById('btnHudToggle');
+  if (bHud) {
+    bHud.classList.toggle('active', state.hudVisible);
+    bHud.textContent = state.hudVisible ? 'HUD ON' : 'HUD OFF';
+  }
+
+  if (!HUD_ONLY && hasTauri) {
+    try {
+      if (state.hudVisible) {
+        await invoke('open_system_hud');
+        await invoke('set_system_hud_display', { display_index: state.hudDisplayIndex });
+      }
+      else await invoke('close_system_hud');
+    } catch (e) {
+      log('HUD overlay: ' + e, 'warn');
+    }
+  } else if (!HUD_ONLY && !hasTauri) {
+    log('HUD indisponible: runtime Tauri non detecte', 'warn');
+  }
+
+  if (state.hudVisible && state.lastMetrics) renderCompactHud(state.lastMetrics);
+  saveRuntimeSettings();
+}
+
+let lastHudPushTs = 0;
+
+async function pushSystemHudData(payload) {
+  if (HUD_ONLY || !hasTauri || !state.hudVisible) return;
+  const now = Date.now();
+  if (now - lastHudPushTs < 220) return;
+  lastHudPushTs = now;
+  try { await invoke('set_system_hud_data', { payload }); } catch (_) {}
+}
+
+function applyHudPayload(payload) {
+  if (!payload) return;
+  set('hudDome', payload.dome ?? 'N/A');
+  set('hudSigma', payload.sigma ?? 'N/A');
+  set('hudPi', payload.pi ?? 'N/A');
+  set('hudCpu', payload.cpu ?? 'N/A');
+  set('hudRam', payload.ram ?? 'N/A');
+  set('hudTarget', payload.target ?? 'N/A');
+  set('hudPower', payload.power ?? 'N/A');
+  set('hudEnergy', payload.energy ?? 'N/A');
+}
+
+async function initHudOnlyMode() {
+  document.body.classList.add('hud-only');
+  const hud = document.getElementById('compactHud');
+  if (hud) {
+    hud.classList.add('visible');
+    applyHudPresetClass(hud, state.hudPreset);
+  }
+  const drag = document.getElementById('hudDrag');
+  const t = window.__TAURI__;
+  if (drag && t?.window?.getCurrentWindow) {
+    drag.addEventListener('mousedown', async (ev) => {
+      if (!state.hudInteractive) return;
+      if (ev.button !== 0) return;
+      try { await t.window.getCurrentWindow().startDragging(); } catch (_) {}
+    });
+  }
+  if (t?.event?.listen) {
+    try {
+      await t.event.listen('soulkernel://hud', (ev) => applyHudPayload(ev.payload || {}));
+    } catch (e) {
+      log('HUD event.listen blocked: ' + e, 'warn');
+    }
+    try {
+      await t.event.listen('soulkernel://hud-config', (ev) => {
+        const cfg = ev.payload || {};
+        if (cfg.preset) state.hudPreset = cfg.preset;
+        if (typeof cfg.interactive === 'boolean') state.hudInteractive = cfg.interactive;
+        if (typeof cfg.opacity === 'number') state.hudOpacity = cfg.opacity;
+        document.body.classList.toggle('hud-edit', !!state.hudInteractive);
+        const mode = document.getElementById('hudModeBadge');
+        if (mode) mode.textContent = state.hudInteractive ? 'EDIT' : 'LOCK';
+        applyHudPresetClass(document.getElementById('compactHud'), state.hudPreset);
+      });
+    } catch (e) {
+      log('HUD event.listen blocked: ' + e, 'warn');
+    }
+  }
+}
+function applyHudPresetClass(target, preset) {
+  if (!target) return;
+  target.classList.remove('hud-mini', 'hud-compact', 'hud-detailed');
+  target.classList.add(preset === 'mini' ? 'hud-mini' : (preset === 'detailed' ? 'hud-detailed' : 'hud-compact'));
+}
+
+async function refreshHudDisplays() {
+  const sel = document.getElementById('hudDisplay');
+  if (!sel) return;
+  try {
+    const list = await invoke('list_displays');
+    const prev = state.hudDisplayIndex;
+    sel.innerHTML = '<option value="">Auto</option>';
+    (list || []).forEach(d => {
+      const o = document.createElement('option');
+      o.value = String(d.index);
+      const primary = d.is_primary ? ' *' : '';
+      o.textContent = d.name + ' (' + d.width + 'x' + d.height + ')' + primary;
+      sel.appendChild(o);
+    });
+    sel.value = (prev == null ? '' : String(prev));
+    if (sel.value === '' && prev != null) state.hudDisplayIndex = null;
+  } catch (_) {}
+}
+async function applyHudPresentation() {
+  state.hudPreset = (state.hudPreset === 'mini' || state.hudPreset === 'detailed') ? state.hudPreset : 'compact';
+  state.hudOpacity = Math.max(0.3, Math.min(1.0, Number(state.hudOpacity || 0.82)));
+
+  const h = document.getElementById('compactHud');
+  applyHudPresetClass(h, state.hudPreset);
+  if (h && !HUD_ONLY) h.style.opacity = String(state.hudOpacity);
+
+  const p = document.getElementById('hudPreset'); if (p) p.value = state.hudPreset;
+  const o = document.getElementById('hudOpacity'); if (o) o.value = String(state.hudOpacity.toFixed(2));
+  const on = document.getElementById('hudOpacityNum'); if (on) on.textContent = Math.round(state.hudOpacity * 100) + '%';
+
+  if (!HUD_ONLY && hasTauri && state.hudVisible) {
+    try {
+      await invoke('set_system_hud_preset', { preset: state.hudPreset, opacity: state.hudOpacity });
+    } catch (_) {}
+  }
+  saveRuntimeSettings();
+}
+
+async function setHudInteractive(on) {
+  state.hudInteractive = !!on;
+  document.body.classList.toggle('hud-edit', state.hudInteractive);
+  const m = document.getElementById('hudModeBadge');
+  if (m) m.textContent = state.hudInteractive ? 'EDIT' : 'LOCK';
+  const b = document.getElementById('btnHudEdit');
+  if (b) {
+    b.textContent = state.hudInteractive ? 'Edition ON' : 'Edition OFF';
+    b.classList.toggle('active', state.hudInteractive);
+  }
+  if (!HUD_ONLY && hasTauri && state.hudVisible) {
+    try { await invoke('set_system_hud_interactive', { interactive: state.hudInteractive }); } catch (_) {}
+  }
+  saveRuntimeSettings();
+}
+function setViewMode(mode) {
+  state.viewMode = (mode === 'compact') ? 'compact' : 'detailed';
+  document.body.classList.toggle('view-compact', state.viewMode === 'compact');
+  document.body.classList.toggle('view-detailed', state.viewMode !== 'compact');
+
+  const bCompact = document.getElementById('btnViewCompact');
+  const bDetailed = document.getElementById('btnViewDetailed');
+  if (bCompact) bCompact.classList.toggle('active', state.viewMode === 'compact');
+  if (bDetailed) bDetailed.classList.toggle('active', state.viewMode !== 'compact');
+
+  if (state.lastMetrics) renderCompactHud(state.lastMetrics);
+  saveRuntimeSettings();
+}
+
+function renderCompactHud(m) {
+  if (!m || !m.raw) return;
+  const t = state.telemetrySummary || null;
+  const ccy = (t && t.pricing && t.pricing.currency) ? t.pricing.currency : 'EUR';
+  const targetSel = document.getElementById('targetProcess');
+  const targetTxt = (targetSel && targetSel.selectedIndex >= 0)
+    ? (targetSel.options[targetSel.selectedIndex].text || 'Auto')
+    : 'Auto';
+
+  set('hudDome', state.domeActive ? 'ACTIF' : 'IDLE');
+  const sigmaTxt = Number(m.sigma || 0).toFixed(3);
+  const piTxt = state.lastPi == null ? 'N/A' : Number(state.lastPi).toFixed(4);
+  const cpuTxt = Number(m.raw.cpu_pct || 0).toFixed(1) + '%';
+  const ramTxt = (Number(m.raw.mem_used_mb || 0) / 1024).toFixed(1) + '/' + (Number(m.raw.mem_total_mb || 0) / 1024).toFixed(1) + ' GB';
+  const targetOut = targetTxt.replace(/\s+/g, ' ').slice(0, 42);
+  const powerTxt = m.raw.power_watts == null ? 'N/A' : Number(m.raw.power_watts).toFixed(1) + ' W';
+
+  set('hudSigma', sigmaTxt);
+  set('hudPi', piTxt);
+  set('hudCpu', cpuTxt);
+  set('hudRam', ramTxt);
+  set('hudTarget', targetOut);
+  set('hudPower', powerTxt);
+
+  let energyTxt = 'N/A';
+  if (t && t.total && t.total.has_power_data) {
+    energyTxt = Number(t.day && t.day.energy_kwh || 0).toFixed(3) + ' kWh/j (' + ccy + ')';
+  }
+  set('hudEnergy', energyTxt);
+
+  pushSystemHudData({
+    dome: state.domeActive ? 'ACTIF' : 'IDLE',
+    sigma: sigmaTxt,
+    pi: piTxt,
+    cpu: cpuTxt,
+    ram: ramTxt,
+    target: targetOut,
+    power: powerTxt,
+    energy: energyTxt,
+  });
+}
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function set(id, txt) { const el=document.getElementById(id); if(el) el.textContent=txt; }
+function updateDomeBadge(on) {
+  document.getElementById('domeStatus').textContent = on ? 'DOME ACTIF' : 'DOME IDLE';
+  document.getElementById('domeStatus').className   = 'status-pill ' + (on ? 'pill-run' : 'pill-off');
+  document.getElementById('domeBadge').classList.toggle('show', on);
+}
+setInterval(() => {
+  document.getElementById('clk').textContent = new Date().toTimeString().slice(0,8);
+}, 1000);
+
+function log(msg, lvl='info') {
+  const panel = document.getElementById('logPanel');
+  const ts = new Date().toTimeString().slice(0,8);
+  const clsMap = {ok:'lvl-ok',warn:'lvl-warn',info:'lvl-info',err:'lvl-err'};
+  const lblMap = {ok:'OK ',warn:'WRN',info:'INF',err:'ERR'};
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = `<span class="log-ts">${ts}</span><span class="log-lvl ${clsMap[lvl]}">${lblMap[lvl]}</span><span class="log-msg">${msg}</span>`;
+  panel.prepend(entry);
+  while (panel.children.length > 60) panel.removeChild(panel.lastChild);
+  auditEmit('ui_log', 'panel', lvl, { message: String(msg) });
+}
+
+// ─── Mode navigateur (hors Tauri) : pas de métriques réelles, pas de simulation ──
+// Quand la page est ouverte en direct dans le navigateur, il n'y a pas de backend Rust.
+// Il faut lancer l'app avec "cargo tauri dev" (ou l'exécutable) pour avoir les vraies métriques.
+function fallbackInvoke(cmd, args) {
+  if (cmd === 'get_metrics') {
+    return Promise.resolve({
+      cpu: 0, mem: 0,
+      compression: null, io_bandwidth: null, gpu: null,
+      sigma: 0, epsilon: [0,0,0,0,0],
+      raw: {
+        cpu_pct: 0, mem_used_mb: 0, mem_total_mb: 0,
+        swap_used_mb: 0, swap_total_mb: 0,
+        zram_used_mb: null, io_read_mb_s: null, io_write_mb_s: null,
+        gpu_pct: null, power_watts: null, psi_cpu: null, psi_mem: null,
+        platform: 'Hors Tauri — lancez cargo tauri dev',
+      }
+      });
+  }
+  if (cmd === 'platform_info') return Promise.resolve({
+    os: 'Hors Tauri', kernel: 'lancez l\'app native',
+    features: ['pas de métriques réelles'],
+    has_cgroups_v2: false, has_zram: false, has_gpu_sysfs: false, is_root: false
+  });
+  if (cmd === 'list_processes') return Promise.resolve([]);
+  if (cmd === 'list_displays') return Promise.resolve([{ index: 0, name: 'Primary', width: 1920, height: 1080, x: 0, y: 0, scale_factor: 1.0, is_primary: true }]);
+  if (cmd === 'activate_dome') return Promise.resolve({
+    activated: false, pi: 0, dome_gain: 0, b_idle: 0,
+    message: 'Non disponible hors Tauri.',
+    actions: []
+  });
+  if (cmd === 'rollback_dome') return Promise.resolve(['Non disponible hors Tauri.']);
+  if (cmd === 'get_snapshot_before_dome') return Promise.resolve(null);
+  if (cmd === 'set_soulram') return Promise.resolve(['[ko] Non disponible hors Tauri.']);
+  if (cmd === 'get_soulram_status') return Promise.resolve({ active: false, percent: 20, backend: 'Hors Tauri' });
+  if (cmd === 'set_policy_mode') return Promise.resolve('privileged');
+  if (cmd === 'get_policy_status') return Promise.resolve({ mode: state.policyMode || 'privileged', is_admin: false, reboot_pending: false, memory_compression_enabled: null });
+  if (cmd === 'set_taskbar_gauge') return Promise.resolve(null);
+  if (cmd === 'run_kpi_probe') return Promise.resolve({ command: args?.command || 'demo', args: args?.args || [], cwd: args?.cwd || null, duration_ms: 1200, success: true, exit_code: 0, stdout_tail: 'fallback', stderr_tail: ' ' });
+  if (cmd === 'export_gains_to_file') return Promise.reject('Export fichier disponible uniquement dans l’app native.');
+  if (cmd === 'audit_log_event') return Promise.resolve(null);
+  if (cmd === 'get_audit_log_path') return Promise.resolve('Hors Tauri');
+  if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
+  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: {}, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false });
+  if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
+  if (cmd === 'set_energy_pricing') return Promise.resolve(null);
+  if (cmd === 'open_system_hud') return Promise.resolve(null);
+  if (cmd === 'close_system_hud') return Promise.resolve(null);
+  if (cmd === 'set_system_hud_data') return Promise.resolve(null);
+  if (cmd === 'set_system_hud_interactive') return Promise.resolve(null);
+  if (cmd === 'set_system_hud_preset') return Promise.resolve(null);
+  if (cmd === 'set_system_hud_display') return Promise.resolve(null);
+  return Promise.reject('unknown command');
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+(async () => {
+  if (HUD_ONLY) {
+    await initHudOnlyMode();
+    return;
+  }
+  loadRuntimeSettings();
+  setViewMode(state.viewMode);
+  applyHudPresentation();
+  setHudInteractive(!!state.hudInteractive);
+  setHudVisible(!!state.hudVisible);
+  try { await invoke('set_policy_mode', { mode: state.policyMode }); } catch (_) {}
+  log('SoulKernel demarre - ' + (hasTauri ? 'Tauri runtime (metriques reelles)' : 'Hors Tauri - lancez cargo tauri dev pour les metriques'), hasTauri ? 'ok' : 'warn');
+  loadPlatformInfo();
+  updateSystemStatus(null);
+  poll();
+  refreshProcesses({ userInitiated: false });
+  await syncSoulRamStatus();
+  await loadPolicyStatus();
+  await applyStartupIntentIfAny();
+  await refreshTelemetrySummary(true);
+  updateSoulRamUi();
+  const ad = document.getElementById('adaptiveEnabled'); if (ad) ad.checked = !!state.adaptiveEnabled;
+  const aad = document.getElementById('adaptiveAutoDome'); if (aad) aad.checked = !!state.adaptiveAutoDome;
+  const ast = document.getElementById('adaptiveStatus'); if (ast && !state.adaptiveEnabled) ast.textContent = 'OFF';
+  renderAbSummary(state.kpiBench.lastSummary);
+  saveRuntimeSettings();
+  scheduleNextPoll();
+  setInterval(() => refreshProcesses({ userInitiated: false }), PROCESS_REFRESH_MS);
+})();
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
