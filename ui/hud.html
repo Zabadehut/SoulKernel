@@ -90,6 +90,7 @@ async function refreshHud() {
         lastCfgSig = sig;
         setPreset(cfg.preset);
         setInteractive(!!cfg.interactive);
+        if (cfg.opacity != null) root.style.opacity = cfg.opacity;
       }
     }
   } catch (_) {}

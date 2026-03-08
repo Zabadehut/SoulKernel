@@ -221,6 +221,7 @@ fn apply_hud_window_mode(
     let _ = w.set_always_on_top(true);
     let _ = w.set_ignore_cursor_events(!interactive);
     let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+    let _ = w.set_opacity(clamped_opacity);
     let _ = w.emit(
         "soulkernel://hud-config",
         HudConfigEvent {
