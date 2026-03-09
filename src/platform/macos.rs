@@ -161,6 +161,32 @@ pub fn gpu_utilisation() -> Option<f64> {
     None
 }
 
+pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {
+    let ram_clock_mhz = std::process::Command::new("system_profiler")
+        .arg("SPMemoryDataType")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|txt| parse_macos_memory_speed(&txt));
+    // macOS does not expose stable GPU core/memory clocks without privileged tooling.
+    (ram_clock_mhz, None, None)
+}
+
+fn parse_macos_memory_speed(txt: &str) -> Option<f64> {
+    for line in txt.lines() {
+        let l = line.trim();
+        if !(l.starts_with("Speed:") || l.starts_with("Memory Speed:")) {
+            continue;
+        }
+        let rhs = l.split(':').nth(1)?.trim();
+        let num = rhs.split_whitespace().next()?.parse::<f64>().ok()?;
+        if num > 0.0 {
+            return Some(num);
+        }
+    }
+    None
+}
+
 // ─── macOS primitives ─────────────────────────────────────────────────────────
 
 /// Real power in Watts when available on macOS.

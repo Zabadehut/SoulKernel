@@ -32,8 +32,12 @@ pub struct ResourceState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMetrics {
     pub cpu_pct: f64,
+    /// Average CPU clock in MHz when available.
+    pub cpu_clock_mhz: Option<f64>,
     pub mem_used_mb: u64,
     pub mem_total_mb: u64,
+    /// Effective RAM speed in MHz when available.
+    pub ram_clock_mhz: Option<f64>,
     pub swap_used_mb: u64,
     pub swap_total_mb: u64,
     /// Linux zRAM only. None = no zram / not Linux.
@@ -43,6 +47,10 @@ pub struct RawMetrics {
     pub io_write_mb_s: Option<f64>,
     /// None = GPU metric unavailable.
     pub gpu_pct: Option<f64>,
+    /// GPU core clock in MHz when available.
+    pub gpu_core_clock_mhz: Option<f64>,
+    /// GPU memory clock in MHz when available.
+    pub gpu_mem_clock_mhz: Option<f64>,
     /// System power draw from host power meter (Watts). None = unavailable.
     pub power_watts: Option<f64>,
     /// Linux PSI only. None = unavailable.
@@ -63,6 +71,19 @@ pub fn collect() -> Result<ResourceState> {
     let cpu_pct = sys.cpus().iter().map(|c| c.cpu_usage() as f64).sum::<f64>()
         / sys.cpus().len().max(1) as f64;
     let cpu = (cpu_pct / 100.0).clamp(0.0, 1.0);
+    let cpu_clock_mhz = {
+        let vals: Vec<f64> = sys
+            .cpus()
+            .iter()
+            .map(|c| c.frequency() as f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .collect();
+        if vals.is_empty() {
+            None
+        } else {
+            Some(vals.iter().sum::<f64>() / vals.len() as f64)
+        }
+    };
 
     // Memory (native only)
     #[cfg(target_os = "windows")]
@@ -135,6 +156,22 @@ pub fn collect() -> Result<ResourceState> {
     let gpu_pct = crate::platform::macos::gpu_utilisation();
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     let gpu_pct: Option<f64> = None;
+
+    #[cfg(target_os = "windows")]
+    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz) =
+        crate::platform::windows::sample_hardware_clocks();
+    #[cfg(target_os = "linux")]
+    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz) =
+        crate::platform::linux::sample_hardware_clocks();
+    #[cfg(target_os = "macos")]
+    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz) =
+        crate::platform::macos::sample_hardware_clocks();
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz): (
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    ) = (None, None, None);
 
     // Normalisation for B_io(t): 1500 MB/s reference cap.
     let io_bandwidth = io_read_mb_s
@@ -213,14 +250,18 @@ pub fn collect() -> Result<ResourceState> {
         epsilon,
         raw: RawMetrics {
             cpu_pct,
+            cpu_clock_mhz,
             mem_used_mb: mem_used / 1024 / 1024,
             mem_total_mb: mem_total / 1024 / 1024,
+            ram_clock_mhz,
             swap_used_mb: swap_used / 1024 / 1024,
             swap_total_mb: swap_total / 1024 / 1024,
             zram_used_mb: zram_mb,
             io_read_mb_s,
             io_write_mb_s,
             gpu_pct,
+            gpu_core_clock_mhz,
+            gpu_mem_clock_mhz,
             power_watts,
             psi_cpu,
             psi_mem,

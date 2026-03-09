@@ -4,6 +4,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod audit;
+mod benchmark;
 mod formula;
 mod hud;
 mod metrics;
@@ -11,9 +12,8 @@ mod orchestrator;
 mod platform;
 mod telemetry;
 
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
 use tokio::sync::mpsc;
@@ -38,6 +38,7 @@ pub struct SoulKernelState {
 
 type SharedState = Arc<Mutex<SoulKernelState>>;
 type SharedTelemetry = Arc<Mutex<telemetry::TelemetryState>>;
+type SharedBenchmark = Arc<Mutex<benchmark::BenchmarkState>>;
 
 #[derive(serde::Serialize)]
 pub struct SoulRamStatusResponse {
@@ -51,18 +52,6 @@ pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
     pub cpu_usage: f64,
-}
-
-#[derive(serde::Serialize)]
-pub struct KpiProbeResult {
-    pub command: String,
-    pub args: Vec<String>,
-    pub cwd: Option<String>,
-    pub duration_ms: u64,
-    pub success: bool,
-    pub exit_code: Option<i32>,
-    pub stdout_tail: String,
-    pub stderr_tail: String,
 }
 
 // ─── Tauri commands ───────────────────────────────────────────────────────────
@@ -113,6 +102,27 @@ async fn activate_dome(
     policy_mode: Option<String>,
     shared: State<'_, SharedState>,
 ) -> Result<orchestrator::DomeResult, String> {
+    activate_dome_inner(
+        workload,
+        kappa,
+        sigma_max,
+        eta,
+        target_pid,
+        policy_mode,
+        &shared,
+    )
+    .await
+}
+
+async fn activate_dome_inner(
+    workload: String,
+    kappa: f64,
+    sigma_max: f64,
+    eta: f64,
+    target_pid: Option<u32>,
+    policy_mode: Option<String>,
+    shared: &SharedState,
+) -> Result<orchestrator::DomeResult, String> {
     let profile = formula::WorkloadProfile::from_name(&workload)
         .ok_or_else(|| format!("Unknown workload: {}", workload))?;
 
@@ -158,6 +168,10 @@ async fn activate_dome(
 
 #[tauri::command]
 async fn rollback_dome(shared: State<'_, SharedState>) -> Result<Vec<String>, String> {
+    rollback_dome_inner(&shared).await
+}
+
+async fn rollback_dome_inner(shared: &SharedState) -> Result<Vec<String>, String> {
     let (snapshot, target_pid) = {
         let mut s = shared.lock().unwrap();
         s.dome_active = false;
@@ -274,50 +288,144 @@ fn set_taskbar_gauge(window: tauri::Window, value: f64) -> Result<(), String> {
     Ok(())
 }
 
-fn tail_text(buf: &[u8], max_chars: usize) -> String {
-    let s = String::from_utf8_lossy(buf);
-    let v: Vec<char> = s.chars().collect();
-    let start = v.len().saturating_sub(max_chars);
-    v[start..].iter().collect::<String>()
-}
-
 #[tauri::command]
 async fn run_kpi_probe(
     command: String,
     args: Vec<String>,
     cwd: Option<String>,
-) -> Result<KpiProbeResult, String> {
-    let trimmed = command.trim();
-    if trimmed.is_empty() {
-        return Err("kpi command is empty".to_string());
-    }
+) -> Result<benchmark::KpiProbeResult, String> {
+    benchmark::execute_probe(command, args, cwd).await
+}
 
-    let mut cmd = tokio::process::Command::new(trimmed);
-    cmd.args(args.clone());
-    if let Some(c) = cwd.as_ref() {
-        let ctrim = c.trim();
-        if !ctrim.is_empty() {
-            cmd.current_dir(ctrim);
+#[tauri::command]
+async fn run_ab_benchmark(
+    request: benchmark::BenchmarkRequest,
+    shared: State<'_, SharedState>,
+    benchmark_state: State<'_, SharedBenchmark>,
+) -> Result<benchmark::BenchmarkSession, String> {
+    let runs_per_state = request.runs_per_state.clamp(3, 30);
+    let settle_ms = request.settle_ms.clamp(250, 10_000);
+    let initial = {
+        let s = shared.lock().map_err(|e| e.to_string())?;
+        (
+            s.dome_active,
+            s.current_workload.clone(),
+            s.target_pid,
+            s.policy_mode.as_name().to_string(),
+        )
+    };
+
+    let mut samples = Vec::with_capacity(runs_per_state * 2);
+    let started_at = chrono::Utc::now().to_rfc3339();
+
+    let bench_result = async {
+        for idx in 0..(runs_per_state * 2) {
+            let phase = if idx % 2 == 0 {
+                benchmark::BenchmarkPhase::Off
+            } else {
+                benchmark::BenchmarkPhase::On
+            };
+
+            match phase {
+                benchmark::BenchmarkPhase::Off => {
+                    rollback_dome_inner(&shared).await?;
+                }
+                benchmark::BenchmarkPhase::On => {
+                    let activated = activate_dome_inner(
+                        request.workload.clone(),
+                        request.kappa,
+                        request.sigma_max,
+                        request.eta,
+                        request.target_pid,
+                        request.policy_mode.clone(),
+                        &shared,
+                    )
+                    .await?;
+                    if !activated.activated {
+                        return Err(format!("benchmark ON phase blocked: {}", activated.message));
+                    }
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(settle_ms)).await;
+
+            let before = metrics::collect().ok();
+            let probe = benchmark::execute_probe(
+                request.command.clone(),
+                request.args.clone(),
+                request.cwd.clone(),
+            )
+            .await?;
+            let after = metrics::collect().ok();
+            let dome_active = shared.lock().map_err(|e| e.to_string())?.dome_active;
+
+            samples.push(benchmark::BenchmarkSample {
+                idx: idx + 1,
+                phase,
+                ts: chrono::Utc::now().to_rfc3339(),
+                duration_ms: probe.duration_ms,
+                success: probe.success,
+                exit_code: probe.exit_code,
+                dome_active,
+                workload: request.workload.clone(),
+                kappa: request.kappa,
+                sigma_max: request.sigma_max,
+                eta: request.eta,
+                sigma_before: before.as_ref().map(|m| m.sigma),
+                sigma_after: after.as_ref().map(|m| m.sigma),
+                cpu_before_pct: before.as_ref().map(|m| m.raw.cpu_pct),
+                cpu_after_pct: after.as_ref().map(|m| m.raw.cpu_pct),
+                mem_before_gb: before.as_ref().map(|m| m.raw.mem_used_mb as f64 / 1024.0),
+                mem_after_gb: after.as_ref().map(|m| m.raw.mem_used_mb as f64 / 1024.0),
+                stdout_tail: probe.stdout_tail,
+                stderr_tail: probe.stderr_tail,
+            });
+        }
+
+        Ok::<_, String>(benchmark::BenchmarkSession {
+            started_at,
+            finished_at: chrono::Utc::now().to_rfc3339(),
+            command: request.command.clone(),
+            args: request.args.clone(),
+            cwd: request.cwd.clone(),
+            runs_per_state,
+            settle_ms,
+            workload: request.workload.clone(),
+            kappa: request.kappa,
+            sigma_max: request.sigma_max,
+            eta: request.eta,
+            target_pid: request.target_pid,
+            policy_mode: request.policy_mode.clone(),
+            summary: benchmark::compute_summary(&samples),
+            samples,
+        })
+    }
+    .await;
+
+    match initial.0 {
+        true => {
+            let _ = activate_dome_inner(
+                initial.1,
+                request.kappa,
+                request.sigma_max,
+                request.eta,
+                initial.2,
+                Some(initial.3),
+                &shared,
+            )
+            .await;
+        }
+        false => {
+            let _ = rollback_dome_inner(&shared).await;
         }
     }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
 
-    let start = Instant::now();
-    let out = cmd.output().await.map_err(|e| e.to_string())?;
-    let duration_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    if let Ok(session) = &bench_result {
+        let mut history = benchmark_state.lock().map_err(|e| e.to_string())?;
+        history.record_session(session.clone())?;
+    }
 
-    Ok(KpiProbeResult {
-        command: trimmed.to_string(),
-        args,
-        cwd,
-        duration_ms,
-        success: out.status.success(),
-        exit_code: out.status.code(),
-        stdout_tail: tail_text(&out.stdout, 600),
-        stderr_tail: tail_text(&out.stderr, 600),
-    })
+    bench_result
 }
 
 #[tauri::command]
@@ -326,6 +434,18 @@ fn export_gains_to_file(content: String) -> Result<String, String> {
     let path = rfd::FileDialog::new()
         .add_filter("JSON", &["json"])
         .set_file_name(&format!("soulkernel_gains_{}.json", ts))
+        .save_file()
+        .ok_or_else(|| "Annule ou aucun chemin choisi".to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn export_benchmark_to_file(content: String) -> Result<String, String> {
+    let ts = now_ms_local() / 1000;
+    let path = rfd::FileDialog::new()
+        .add_filter("JSON", &["json"])
+        .set_file_name(&format!("soulkernel_benchmark_{}.json", ts))
         .save_file()
         .ok_or_else(|| "Annule ou aucun chemin choisi".to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
@@ -376,6 +496,20 @@ fn default_telemetry_lifetime_path() -> std::path::PathBuf {
         .join("soulkernel_lifetime_gains.json")
 }
 
+fn default_benchmark_history_path() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return std::path::PathBuf::from(appdata)
+            .join("SoulKernel")
+            .join("benchmark")
+            .join("ab_sessions.jsonl");
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("soulkernel_ab_sessions.jsonl")
+}
+
 #[tauri::command]
 fn ingest_telemetry_sample(
     sample: telemetry::TelemetryIngestRequest,
@@ -418,6 +552,40 @@ fn get_lifetime_gains(
     Ok(t.lifetime())
 }
 
+#[derive(serde::Deserialize)]
+struct BenchmarkHistoryQuery {
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    cwd: Option<String>,
+    workload: Option<String>,
+}
+
+#[tauri::command]
+fn get_benchmark_history(
+    query: Option<BenchmarkHistoryQuery>,
+    benchmark_state: State<'_, SharedBenchmark>,
+) -> Result<benchmark::BenchmarkHistoryResponse, String> {
+    let history = benchmark_state.lock().map_err(|e| e.to_string())?;
+    let query = query.unwrap_or(BenchmarkHistoryQuery {
+        command: None,
+        args: None,
+        cwd: None,
+        workload: None,
+    });
+    Ok(history.history(
+        query.command.as_deref(),
+        query.args.as_deref(),
+        query.cwd.as_deref(),
+        query.workload.as_deref(),
+    ))
+}
+
+#[tauri::command]
+fn clear_benchmark_history(benchmark_state: State<'_, SharedBenchmark>) -> Result<(), String> {
+    let mut history = benchmark_state.lock().map_err(|e| e.to_string())?;
+    history.clear()
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
@@ -450,6 +618,9 @@ fn main() {
         default_telemetry_path(),
         default_telemetry_pricing_path(),
         default_telemetry_lifetime_path(),
+    )));
+    let benchmark_state: SharedBenchmark = Arc::new(Mutex::new(benchmark::BenchmarkState::new(
+        default_benchmark_history_path(),
     )));
 
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntimeState {
@@ -530,6 +701,7 @@ fn main() {
         .manage(state)
         .manage(audit)
         .manage(telemetry_state)
+        .manage(benchmark_state)
         .manage(hud_state)
         .manage(hud_tx_state)
         .manage(hud_data_state)
@@ -683,6 +855,7 @@ fn main() {
             platform_info,
             get_snapshot_before_dome,
             export_gains_to_file,
+            export_benchmark_to_file,
             set_soulram,
             get_soulram_status,
             set_policy_mode,
@@ -706,6 +879,9 @@ fn main() {
             get_energy_pricing,
             set_energy_pricing,
             get_lifetime_gains,
+            run_ab_benchmark,
+            get_benchmark_history,
+            clear_benchmark_history,
         ])
         .run(tauri::generate_context!())
         .expect("SoulKernel: failed to start Tauri runtime");

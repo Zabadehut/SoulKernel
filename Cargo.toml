@@ -25,6 +25,7 @@ anyhow       = "1"
 log          = "0.4"
 env_logger   = "0.11"
 rfd          = "0.14"
+chrono       = { version = "0.4", features = ["clock"] }
 
 # Cross-platform hardware metrics (CPU, RAM, I/O)
 sysinfo      = "0.30"
@@ -60,5 +61,4 @@ opt-level = 3
 lto       = true
 codegen-units = 1
 strip     = true
-
 

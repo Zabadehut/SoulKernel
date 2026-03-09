@@ -216,6 +216,18 @@ input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
 .view-switch{display:flex;gap:.35rem;align-items:center}
 .view-btn{padding:.18rem .5rem;border-radius:999px;border:1px solid var(--border);background:var(--s2);color:var(--muted);font-size:.56rem;letter-spacing:.08em;cursor:pointer}
 .view-btn.active{border-color:var(--cpu);color:var(--cpu);background:rgba(0,229,255,.08)}
+.benchmark-view{display:none;padding:0 14px 18px}
+.benchmark-shell{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
+.benchmark-column{display:flex;flex-direction:column;gap:12px}
+.bench-top-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.bench-top-item{border:1px solid var(--border);border-radius:6px;padding:.45rem .55rem;background:var(--s2)}
+.bench-top-title{font-size:.58rem;color:var(--cpu);letter-spacing:.06em}
+.bench-top-meta{font-size:.56rem;color:var(--text);line-height:1.45;margin-top:.18rem}
+body.view-benchmark main{display:none}
+body.view-benchmark .benchmark-view{display:block}
+@media (max-width: 900px){
+  .benchmark-shell{grid-template-columns:1fr}
+}
 .compact-hud.visible{display:block}
 body.view-compact main{grid-template-columns:1fr;grid-template-rows:auto;min-height:calc(100vh - 46px)}
 body.view-compact .panel-left, body.view-compact .panel-right, body.view-compact .panel-workloads, body.view-compact .panel-insights, body.view-compact .panel-bottom{display:none !important}
@@ -269,6 +281,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   <div class="view-switch" title="Basculer la densite de vue">
     <button type="button" class="view-btn" id="btnViewCompact">Compact</button>
     <button type="button" class="view-btn active" id="btnViewDetailed">Detaille</button>
+    <button type="button" class="view-btn" id="btnViewBenchmark">Benchmark</button>
     <button type="button" class="view-btn" id="btnHudToggle">HUD OFF</button>
   </div>
     <div class="platform-badge" id="platformBadge">Connecting…</div>
@@ -361,8 +374,12 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <div class="raw-cell"><div class="raw-label">PSI CPU</div><div class="raw-val" id="rawPsiCpu">—</div></div>
         <div class="raw-cell"><div class="raw-label">PSI MEM</div><div class="raw-val" id="rawPsiMem">—</div></div>
         <div class="raw-cell"><div class="raw-label">CPU %</div><div class="raw-val" id="rawCpuPct">—</div></div>
+        <div class="raw-cell"><div class="raw-label">CPU clock</div><div class="raw-val" id="rawCpuClock">—</div></div>
+        <div class="raw-cell"><div class="raw-label">RAM speed</div><div class="raw-val" id="rawRamClock">—</div></div>
         <div class="raw-cell"><div class="raw-label">I/O R/W</div><div class="raw-val" id="rawIoRw">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU %</div><div class="raw-val" id="rawGpuPct">—</div></div>
+        <div class="raw-cell"><div class="raw-label">GPU core</div><div class="raw-val" id="rawGpuCoreClock">—</div></div>
+        <div class="raw-cell"><div class="raw-label">GPU mem</div><div class="raw-val" id="rawGpuMemClock">—</div></div>
         <div class="raw-cell"><div class="raw-label">Power (W)</div><div class="raw-val" id="rawPowerW">—</div></div>
         <div class="raw-cell"><div class="raw-label">Opt real (A/B)</div><div class="raw-val" id="rawOptReal">—</div></div>
         <div class="raw-cell"><div class="raw-label">Energy total</div><div class="raw-val" id="rawEnergyTotal">—</div></div>
@@ -648,26 +665,6 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
           <div class="advisor-text" id="adaptiveStatus" style="margin-top:.3rem">OFF</div>
         </div>
 
-        <div class="advisor-panel" id="benchPanel" style="margin-top:.35rem">
-          <div class="advisor-title">KPI externe A/B</div>
-          <input id="kpiCommand" class="target-select" type="text" value="cargo" placeholder="Commande KPI">
-          <input id="kpiArgs" class="target-select" type="text" value="check" placeholder="Arguments KPI" style="margin-top:.25rem">
-          <div class="kappa-row" style="margin-top:.35rem;gap:.5rem">
-            <span class="kappa-name">Runs / etat</span>
-            <input id="kpiRuns" class="target-select" type="number" min="5" max="20" value="5" style="width:74px;padding:.2rem .35rem">
-          </div>
-          <div class="gains-actions" style="margin-top:.35rem">
-            <button type="button" class="ctrl-btn btn-secondary" id="btnRunAB" style="font-size:.62rem;padding:.25rem .45rem">Run A/B</button>
-            <button type="button" class="ctrl-btn btn-danger" id="btnClearAB" style="font-size:.62rem;padding:.25rem .45rem">Reset A/B</button>
-          </div>
-          <div class="advisor-text" id="kpiBenchSummary" style="margin-top:.35rem">Aucun benchmark A/B</div>
-          <div class="kappa-row" style="margin-top:.35rem;gap:.4rem"><span class="kappa-name">Prix electricite (EUR/kWh)</span><input id="energyPrice" class="target-select" type="text" inputmode="decimal" value="0.22" placeholder="0,194" title="Accepte 0,194 ou 0.194" style="width:110px;padding:.2rem .35rem"></div>
-          <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">CO2 (kg/kWh)</span><input id="energyCo2" class="target-select" type="text" inputmode="decimal" value="0.05" placeholder="0,024" title="Accepte 0,024 ou 0.024" style="width:110px;padding:.2rem .35rem"></div>
-          <button type="button" class="ctrl-btn btn-secondary" id="btnApplyEnergyPricing" style="font-size:.62rem;padding:.25rem .45rem;margin-top:.3rem">Appliquer tarif energie</button>
-          <div class="advisor-text" id="energyPricingStatus" style="margin-top:.3rem">Tarif actif: chargement...</div>
-          <div class="target-hint" style="margin-top:.2rem">Sauvegarde locale automatique (pricing.json). L'economie reelle s'affiche seulement si la puissance (W) est disponible.</div>
-        </div>
-
         <div class="advisor-panel" id="hudPanel" style="margin-top:.35rem">
           <div class="advisor-title">HUD Overlay V2</div>
           <div class="gains-actions" style="margin-top:.2rem">
@@ -697,6 +694,53 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="dome-badge" id="domeBadge">● DOME ACTIF · SoulKernel</div>
   </div>
 </main>
+
+<section class="benchmark-view" id="benchmarkView">
+  <div class="benchmark-shell">
+    <div class="benchmark-column">
+      <div class="advisor-panel" id="benchPanel">
+        <div class="advisor-title">KPI externe A/B</div>
+        <input id="kpiCommand" class="target-select" type="text" value="cargo" placeholder="Commande KPI">
+        <input id="kpiArgs" class="target-select" type="text" value="check" placeholder="Arguments KPI" style="margin-top:.25rem">
+        <div class="kappa-row" style="margin-top:.35rem;gap:.5rem">
+          <span class="kappa-name">Runs / etat</span>
+          <input id="kpiRuns" class="target-select" type="number" min="5" max="20" value="5" style="width:74px;padding:.2rem .35rem">
+        </div>
+        <div class="gains-actions" style="margin-top:.35rem">
+          <button type="button" class="ctrl-btn btn-secondary" id="btnRunAB" style="font-size:.62rem;padding:.25rem .45rem">Run A/B</button>
+          <button type="button" class="ctrl-btn btn-secondary" id="btnExportAB" style="font-size:.62rem;padding:.25rem .45rem">Exporter A/B</button>
+          <button type="button" class="ctrl-btn btn-danger" id="btnClearAB" style="font-size:.62rem;padding:.25rem .45rem">Reset A/B</button>
+        </div>
+        <div class="advisor-text" id="kpiBenchSummary" style="margin-top:.35rem">Aucun benchmark A/B</div>
+        <div class="advisor-text" id="kpiBenchLearned" style="margin-top:.25rem">Apprentissage benchmark: aucun historique pertinent</div>
+      </div>
+      <div class="advisor-panel">
+        <div class="advisor-title">Base appliquee a l'application</div>
+        <div class="advisor-text">Le meilleur benchmark connu devient la base par defaut des reglages de l'application pour ce workload et cette commande KPI. La recommandation live ne part plus de zero: elle ajuste autour de cette base selon la charge reelle.</div>
+      </div>
+    </div>
+    <div class="benchmark-column">
+      <div class="advisor-panel">
+        <div class="advisor-title">Energie benchmark</div>
+        <div class="kappa-row" style="margin-top:.1rem;gap:.4rem"><span class="kappa-name">Prix electricite (EUR/kWh)</span><input id="energyPrice" class="target-select" type="text" inputmode="decimal" value="0.22" placeholder="0,194" title="Accepte 0,194 ou 0.194" style="width:110px;padding:.2rem .35rem"></div>
+        <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">CO2 (kg/kWh)</span><input id="energyCo2" class="target-select" type="text" inputmode="decimal" value="0.05" placeholder="0,024" title="Accepte 0,024 ou 0.024" style="width:110px;padding:.2rem .35rem"></div>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnApplyEnergyPricing" style="font-size:.62rem;padding:.25rem .45rem;margin-top:.3rem">Appliquer tarif energie</button>
+        <div class="advisor-text" id="energyPricingStatus" style="margin-top:.3rem">Tarif actif: chargement...</div>
+        <div class="target-hint" style="margin-top:.2rem">Sauvegarde locale automatique (pricing.json). L'economie reelle s'affiche seulement si la puissance (W) est disponible.</div>
+      </div>
+      <div class="advisor-panel">
+        <div class="advisor-title">Verdict benchmark</div>
+        <div class="advisor-text" id="benchmarkVerdict">Aucun benchmark charge.</div>
+      </div>
+      <div class="advisor-panel">
+        <div class="advisor-title">Top benchmark</div>
+        <div class="bench-top-list" id="benchmarkTopList">
+          <div class="advisor-text">Aucun classement disponible.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <script>
 // ─── Tauri bridge (v2: __TAURI__.core.invoke + tauriReady pour éviter race) ─────
@@ -839,6 +883,8 @@ let state = {
     running: false,
     sessions: [],
     lastSummary: null,
+    tuningAdvice: null,
+    topSessions: [],
   },
   lastPi: null,
   lastDomeModel: null,
@@ -1025,6 +1071,7 @@ function setWorkload(nextWl, sourceLabel = "auto") {
   if (btn) btn.classList.add('active');
   log(sourceLabel === 'manuel' ? ('Profil: ' + wl) : ('Profil auto: ' + wl + ' (' + sourceLabel + ')'), 'info');
   if (state.lastMetrics) renderFormula(state.lastMetrics);
+  loadBenchmarkHistory(true).catch(() => {});
 }
 function renderTuningAdvice(m) {
   const el = document.getElementById('tuningAdvice');
@@ -1035,30 +1082,63 @@ function renderTuningAdvice(m) {
 
   const memRatio = m.raw.mem_total_mb > 0 ? m.raw.mem_used_mb / m.raw.mem_total_mb : 0;
   const [dominantKey, dominantVal] = getDominantResource(m);
-  const next = { kappa: state.kappa, sigmaMax: state.sigmaMax, eta: state.eta };
-  let reason = 'Reglage stable';
+  const learned = state.kpiBench?.tuningAdvice || null;
+  const base = learned ? {
+    kappa: Number(learned.recommended_kappa),
+    sigmaMax: Number(learned.recommended_sigma_max),
+    eta: Number(learned.recommended_eta),
+  } : {
+    kappa: state.kappa,
+    sigmaMax: state.sigmaMax,
+    eta: state.eta,
+  };
+  const next = { ...base };
+  let reason = learned
+    ? 'Base benchmark active: ajustement autour du meilleur profil appris'
+    : 'Reglage stable';
 
   if (m.sigma >= 0.8 || memRatio >= 0.9) {
-    next.kappa = clamp(state.kappa + 0.3, 0.5, 5.0);
-    next.sigmaMax = clamp(state.sigmaMax - 0.05, 0.3, 0.95);
-    reason = 'Stress eleve: renforcer la stabilite';
+    next.kappa = clamp(Math.max(state.kappa, base.kappa) + 0.3, 0.5, 5.0);
+    next.sigmaMax = clamp(Math.min(state.sigmaMax, base.sigmaMax) - 0.05, 0.3, 0.95);
+    reason = learned
+      ? 'Stress eleve: durcir temporairement le profil benchmark'
+      : 'Stress eleve: renforcer la stabilite';
   } else if (dominantKey === 'cpu' && dominantVal >= 0.65) {
-    next.eta = clamp(state.eta + 0.03, 0.01, 0.5);
-    reason = 'CPU dominant: pousser eta pour plus de perf';
+    next.eta = clamp(Math.max(state.eta, base.eta) + 0.03, 0.01, 0.5);
+    reason = learned
+      ? 'CPU dominant: pousser eta au-dessus de la base benchmark'
+      : 'CPU dominant: pousser eta pour plus de perf';
   } else if (dominantKey === 'io' && dominantVal >= 0.55) {
-    next.eta = clamp(state.eta + 0.02, 0.01, 0.5);
-    reason = 'I/O dominant: augmenter eta moderement';
-  } else if (m.sigma <= 0.35 && state.sigmaMax < 0.9) {
+    next.eta = clamp(Math.max(state.eta, base.eta) + 0.02, 0.01, 0.5);
+    reason = learned
+      ? 'I/O dominant: depasser moderement la base benchmark'
+      : 'I/O dominant: augmenter eta moderement';
+  } else if (learned && (
+      Math.abs(state.kappa - base.kappa) >= 0.11 ||
+      Math.abs(state.sigmaMax - base.sigmaMax) >= 0.031 ||
+      Math.abs(state.eta - base.eta) >= 0.011
+    )) {
+    reason = 'Revenir au meilleur benchmark connu pour ce workload';
+  } else if (!learned && m.sigma <= 0.35 && state.sigmaMax < 0.9) {
     next.sigmaMax = clamp(state.sigmaMax + 0.05, 0.3, 0.95);
     reason = 'Stress faible: augmenter la marge sigma max';
   } else {
-    reason = 'Ajustement non necessaire maintenant';
+    reason = learned
+      ? 'Profil benchmark deja optimal pour la charge actuelle'
+      : 'Ajustement non necessaire maintenant';
   }
 
   const changes = [];
   if (next.kappa !== state.kappa) changes.push(`kappa ${state.kappa.toFixed(1)} -> ${next.kappa.toFixed(1)}`);
   if (next.sigmaMax !== state.sigmaMax) changes.push(`sigmaMax ${state.sigmaMax.toFixed(2)} -> ${next.sigmaMax.toFixed(2)}`);
   if (next.eta !== state.eta) changes.push(`eta ${state.eta.toFixed(2)} -> ${next.eta.toFixed(2)}`);
+  const learnedTxt = learned
+    ? ` Base benchmark ${base.kappa.toFixed(1)}/${base.sigmaMax.toFixed(2)}/${base.eta.toFixed(2)}${
+        learned.expected_gain_median_pct == null ? '' : ` | gain median ${Number(learned.expected_gain_median_pct).toFixed(1)}%`
+      }${
+        learned.expected_gain_p95_pct == null ? '' : ` | p95 ${Number(learned.expected_gain_p95_pct).toFixed(1)}%`
+      }.`
+    : '';
 
   if (!changes.length) {
     state.pendingAdvice = null;
@@ -1067,7 +1147,7 @@ function renderTuningAdvice(m) {
     state.adviceCurrentKey = null;
     applyBtn.disabled = true;
     applyBtn.style.opacity = '.55';
-    el.textContent = `${reason}.`;
+    el.textContent = `${reason}.${learnedTxt}`;
     return;
   }
 
@@ -1094,16 +1174,16 @@ function renderTuningAdvice(m) {
     state.adviceCurrentKey = candidateKey;
     applyBtn.disabled = false;
     applyBtn.style.opacity = '1';
-    el.textContent = `${reason}. Recommande: ${changes.join(', ')}.`;
+    el.textContent = `${reason}. Recommande: ${changes.join(', ')}.${learnedTxt}`;
   } else if (state.pendingAdvice && state.adviceCurrentKey === candidateKey) {
     applyBtn.disabled = false;
     applyBtn.style.opacity = '1';
-    el.textContent = `${reason}. Recommande: ${changes.join(', ')}.`;
+    el.textContent = `${reason}. Recommande: ${changes.join(', ')}.${learnedTxt}`;
   } else {
     state.pendingAdvice = null;
     applyBtn.disabled = true;
     applyBtn.style.opacity = '.55';
-    el.textContent = `${reason}. Stabilisation en cours (${state.adviceCandidateCount}/${ADVICE_CONFIRM_CYCLES}).`;
+    el.textContent = `${reason}. Stabilisation en cours (${state.adviceCandidateCount}/${ADVICE_CONFIRM_CYCLES}).${learnedTxt}`;
   }
 }
 
@@ -1161,6 +1241,8 @@ function renderAbSummary(summary) {
   if (!el) return;
   if (!summary) {
     el.textContent = 'Aucun benchmark A/B';
+    const verdictEl = document.getElementById('benchmarkVerdict');
+    if (verdictEl) verdictEl.textContent = 'Aucun benchmark charge.';
     return;
   }
   const f = v => (v == null ? 'N/A' : v.toFixed(1));
@@ -1168,6 +1250,67 @@ function renderAbSummary(summary) {
     `OFF median=${f(summary.median_off_ms)}ms p95=${f(summary.p95_off_ms)}ms | ` +
     `ON median=${f(summary.median_on_ms)}ms p95=${f(summary.p95_on_ms)}ms | ` +
     `gain median=${f(summary.gain_median_pct)}% p95=${f(summary.gain_p95_pct)}%`;
+  const verdictEl = document.getElementById('benchmarkVerdict');
+  if (verdictEl) {
+    const gain = Number(summary.gain_median_pct ?? 0);
+    const verdict = gain > 3 ? 'Gain net' : (gain < -3 ? 'Regression' : 'Neutre');
+    verdictEl.textContent = `${verdict} | median=${f(summary.gain_median_pct)}% | p95=${f(summary.gain_p95_pct)}%`;
+  }
+}
+
+function renderBenchmarkLearning(advice) {
+  const el = document.getElementById('kpiBenchLearned');
+  if (!el) return;
+  if (!advice) {
+    el.textContent = 'Apprentissage benchmark: aucun historique pertinent';
+    return;
+  }
+  const gain = advice.expected_gain_median_pct == null ? 'N/A' : Number(advice.expected_gain_median_pct).toFixed(1) + '%';
+  const gainP95 = advice.expected_gain_p95_pct == null ? 'N/A' : Number(advice.expected_gain_p95_pct).toFixed(1) + '%';
+  const conf = Math.round(Number(advice.confidence || 0) * 100);
+  el.textContent =
+    `Apprentissage benchmark: κ=${Number(advice.recommended_kappa).toFixed(1)} ` +
+    `Σmax=${Number(advice.recommended_sigma_max).toFixed(2)} ` +
+    `η=${Number(advice.recommended_eta).toFixed(2)} | ` +
+    `gain median=${gain} | p95=${gainP95} | score=${Number(advice.composite_score || 0).toFixed(2)} | confiance=${conf}% | echantillons=${advice.sample_size}`;
+}
+
+function renderBenchmarkTop(topSessions) {
+  const el = document.getElementById('benchmarkTopList');
+  if (!el) return;
+  const top = Array.isArray(topSessions) ? topSessions : [];
+  if (!top.length) {
+    el.innerHTML = '<div class="advisor-text">Aucun classement disponible.</div>';
+    return;
+  }
+  const f = v => (v == null ? 'N/A' : Number(v).toFixed(1) + '%');
+  el.innerHTML = top.map(item => (
+    `<div class="bench-top-item">` +
+      `<div class="bench-top-title">#${item.rank} score=${Number(item.composite_score || 0).toFixed(2)} | ${item.started_at}</div>` +
+      `<div class="bench-top-meta">gain median=${f(item.gain_median_pct)} | p95=${f(item.gain_p95_pct)} | runs=${item.runs_per_state}/etat</div>` +
+      `<div class="bench-top-meta">κ=${Number(item.kappa).toFixed(1)} | Σmax=${Number(item.sigma_max).toFixed(2)} | η=${Number(item.eta).toFixed(2)} | wl=${item.workload}</div>` +
+    `</div>`
+  )).join('');
+}
+
+function applyBenchmarkLearning(advice, sourceLabel = 'benchmark-history') {
+  if (!advice) return;
+  state.kpiBench.tuningAdvice = advice;
+  state.kappa = Number(advice.recommended_kappa);
+  state.sigmaMax = Number(advice.recommended_sigma_max);
+  state.eta = Number(advice.recommended_eta);
+  setSlidersFromState();
+  if (state.lastMetrics) renderFormula(state.lastMetrics);
+  renderBenchmarkLearning(advice);
+  log(
+    'Benchmark learning applique: κ=' + state.kappa.toFixed(1) +
+    ' sigmaMax=' + state.sigmaMax.toFixed(2) +
+    ' eta=' + state.eta.toFixed(2) +
+    ' (' + sourceLabel + ')',
+    'info'
+  );
+  saveRuntimeSettings();
+  saveStartupIntent();
 }
 
 
@@ -1477,51 +1620,50 @@ async function runAbBenchmark() {
     if (statusEl) statusEl.textContent = 'OFF (paused during benchmark)';
   }
 
-  const session = {
-    started_at: new Date().toISOString(),
-    command,
-    args,
-    runs_per_state: runs,
-    samples: [],
-  };
-
   try {
-    for (let i = 0; i < runs * 2; i += 1) {
-      const phase = (i % 2 === 0) ? 'off' : 'on';
-      await setDomeStateAdaptive(phase === 'on', 'ab-sequence');
-      await sleep(1200);
-      const res = await invoke('run_kpi_probe', { command, args, cwd: null });
-      const sample = {
-        idx: i + 1,
-        phase,
-        ts: new Date().toISOString(),
-        duration_ms: Number(res.duration_ms || 0),
-        success: !!res.success,
-        exit_code: res.exit_code,
-        dome_active: state.domeActive,
+    const session = await invoke('run_ab_benchmark', {
+      request: {
+        command,
+        args,
+        cwd: null,
+        runs_per_state: runs,
         workload: state.wl,
         kappa: state.kappa,
         sigma_max: state.sigmaMax,
         eta: state.eta,
-        sigma: state.lastMetrics ? state.lastMetrics.sigma : null,
-        pi: state.lastPi,
-        d_model: state.lastDomeModel,
-      };
-      session.samples.push(sample);
-      log(`A/B #${sample.idx} ${phase.toUpperCase()} -> ${sample.duration_ms} ms (exit=${sample.exit_code ?? 'null'})`, sample.success ? 'ok' : 'warn');
-    }
-
-    session.summary = computeAbSummary(session.samples);
+        target_pid: state.targetPid,
+        policy_mode: state.policyMode,
+        settle_ms: 1200,
+      },
+    });
+    (session.samples || []).forEach(sample => {
+      const phase = String(sample.phase || '').toUpperCase();
+      const extra = [];
+      if (sample.sigma_before != null) extra.push('sigma=' + Number(sample.sigma_before).toFixed(3));
+      if (sample.cpu_before_pct != null) extra.push('cpu=' + Number(sample.cpu_before_pct).toFixed(1) + '%');
+      log(
+        `A/B #${sample.idx} ${phase} -> ${sample.duration_ms} ms (exit=${sample.exit_code ?? 'null'})` +
+        (extra.length ? ' | ' + extra.join(' | ') : ''),
+        sample.success ? 'ok' : 'warn'
+      );
+    });
     state.kpiBench.sessions.unshift(session);
     state.kpiBench.lastSummary = session.summary;
     if (state.kpiBench.sessions.length > 20) state.kpiBench.sessions.pop();
     renderAbSummary(session.summary);
     log('A/B termine: gain median=' + (session.summary.gain_median_pct == null ? 'N/A' : session.summary.gain_median_pct.toFixed(1) + '%'), 'ok');
+    await loadBenchmarkHistory(true);
   } catch (e) {
     log('A/B error: ' + e, 'err');
   } finally {
     state.kpiBench.running = false;
     if (runBtn) runBtn.disabled = false;
+    try {
+      if (hasTauri) {
+        const s = await invoke('get_soulram_status');
+        state.soulRamActive = !!s?.active;
+      }
+    } catch (_) {}
     if (wasAdaptive) {
       state.adaptiveEnabled = true;
       const cb = document.getElementById('adaptiveEnabled');
@@ -1529,6 +1671,35 @@ async function runAbBenchmark() {
     }
     saveRuntimeSettings();
     saveStartupIntent();
+  }
+}
+
+async function loadBenchmarkHistory(applyAdvice = true) {
+  try {
+    const command = (document.getElementById('kpiCommand')?.value || '').trim();
+    const args = tokenizeArgs(document.getElementById('kpiArgs')?.value || '');
+    const history = await invoke('get_benchmark_history', {
+      query: {
+        command: command || null,
+        args,
+        cwd: null,
+        workload: state.wl,
+      },
+    });
+    state.kpiBench.sessions = Array.isArray(history?.sessions) ? history.sessions : [];
+    state.kpiBench.lastSummary = history?.last_summary || (state.kpiBench.sessions[0]?.summary ?? null);
+    state.kpiBench.tuningAdvice = history?.advice || null;
+    state.kpiBench.topSessions = Array.isArray(history?.top_sessions) ? history.top_sessions : [];
+    renderAbSummary(state.kpiBench.lastSummary);
+    renderBenchmarkLearning(state.kpiBench.tuningAdvice);
+    renderBenchmarkTop(state.kpiBench.topSessions);
+    if (applyAdvice && state.kpiBench.tuningAdvice) {
+      applyBenchmarkLearning(state.kpiBench.tuningAdvice);
+    }
+  } catch (e) {
+    renderBenchmarkLearning(null);
+    renderBenchmarkTop([]);
+    log('Benchmark history: ' + e, 'warn');
   }
 }
 function pickAutoProcess(list, selectedValue) {
@@ -1681,7 +1852,7 @@ function loadRuntimeSettings() {
     if (typeof cfg.kpiCommand === 'string') { const el = document.getElementById('kpiCommand'); if (el) el.value = cfg.kpiCommand; }
     if (typeof cfg.kpiArgs === 'string') { const el = document.getElementById('kpiArgs'); if (el) el.value = cfg.kpiArgs; }
     if (typeof cfg.kpiRuns === 'number') { const el = document.getElementById('kpiRuns'); if (el) el.value = String(Math.max(5, Math.min(20, Math.floor(cfg.kpiRuns)))); }
-    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed') state.viewMode = cfg.viewMode;
+    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed' || cfg.viewMode === 'benchmark') state.viewMode = cfg.viewMode;
     if (typeof cfg.hudVisible === 'boolean') state.hudVisible = cfg.hudVisible;
     if (typeof cfg.hudInteractive === 'boolean') state.hudInteractive = cfg.hudInteractive;
     if (cfg.hudPreset === 'mini' || cfg.hudPreset === 'compact' || cfg.hudPreset === 'detailed') state.hudPreset = cfg.hudPreset;
@@ -1905,8 +2076,12 @@ function renderMetrics(m) {
   set('rawPsiCpu',   opt(m.raw.psi_cpu, v => (v*100).toFixed(1)+'%'));
   set('rawPsiMem',   opt(m.raw.psi_mem, v => (v*100).toFixed(1)+'%'));
   set('rawCpuPct',   m.raw.cpu_pct.toFixed(1)+'%');
+  set('rawCpuClock', opt(m.raw.cpu_clock_mhz, v => v.toFixed(0)+' MHz'));
+  set('rawRamClock', opt(m.raw.ram_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawIoRw',     (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null) ? `${m.raw.io_read_mb_s.toFixed(3)}/${m.raw.io_write_mb_s.toFixed(3)} MB/s` : na);
   set('rawGpuPct',   opt(m.raw.gpu_pct, v => v.toFixed(2)+'%'));
+  set('rawGpuCoreClock', opt(m.raw.gpu_core_clock_mhz, v => v.toFixed(0)+' MHz'));
+  set('rawGpuMemClock', opt(m.raw.gpu_mem_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W'));
 
   // Activity state in raw metrics
@@ -2249,6 +2424,7 @@ function buildSessionReportText() {
     lines.push('Metriques');
     lines.push('CPU: ' + r.cpu_pct.toFixed(1) + '% | RAM: ' + (r.mem_used_mb / 1024).toFixed(2) + '/' + (r.mem_total_mb / 1024).toFixed(2) + ' GB');
     lines.push('Swap: ' + r.swap_used_mb + '/' + r.swap_total_mb + ' MB | Sigma: ' + state.lastMetrics.sigma.toFixed(3));
+    lines.push('Clocks: CPU=' + (r.cpu_clock_mhz != null ? Number(r.cpu_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | RAM=' + (r.ram_clock_mhz != null ? Number(r.ram_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | GPU core=' + (r.gpu_core_clock_mhz != null ? Number(r.gpu_core_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | GPU mem=' + (r.gpu_mem_clock_mhz != null ? Number(r.gpu_mem_clock_mhz).toFixed(0) + ' MHz' : 'N/A'));
     lines.push('Plateforme: ' + r.platform);
 
     lines.push('');
@@ -2257,7 +2433,7 @@ function buildSessionReportText() {
     lines.push('M(t) RAM: ' + (state.lastMetrics.mem != null ? state.lastMetrics.mem.toFixed(3) : 'N/A') + ' | ' + (r.mem_used_mb / 1024).toFixed(1) + '/' + (r.mem_total_mb / 1024).toFixed(1) + ' GB');
     lines.push('Lambda(t) Compression: ' + (state.lastMetrics.compression != null ? state.lastMetrics.compression.toFixed(3) : 'N/A') + ' | zRAM/zSWAP=' + na(r.zram_used_mb));
     lines.push('Bio(t) I/O: ' + (state.lastMetrics.io_bandwidth != null ? state.lastMetrics.io_bandwidth.toFixed(3) : 'N/A') + ' | R/W=' + na(r.io_read_mb_s) + '/' + na(r.io_write_mb_s) + ' MB/s');
-    lines.push('G(t) GPU: ' + (state.lastMetrics.gpu != null ? state.lastMetrics.gpu.toFixed(3) : 'N/A') + ' | gpu=' + na(r.gpu_pct) + '%');
+    lines.push('G(t) GPU: ' + (state.lastMetrics.gpu != null ? state.lastMetrics.gpu.toFixed(3) : 'N/A') + ' | gpu=' + na(r.gpu_pct) + '% | core=' + (r.gpu_core_clock_mhz != null ? Number(r.gpu_core_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | mem=' + (r.gpu_mem_clock_mhz != null ? Number(r.gpu_mem_clock_mhz).toFixed(0) + ' MHz' : 'N/A'));
     lines.push('PSI cpu/mem: ' + na(r.psi_cpu != null ? (r.psi_cpu * 100).toFixed(1) : null) + '%/' + na(r.psi_mem != null ? (r.psi_mem * 100).toFixed(1) : null) + '%');
   }
 
@@ -2454,13 +2630,76 @@ if (btnRunAB) {
   });
 }
 
+const btnExportAB = document.getElementById('btnExportAB');
+if (btnExportAB) {
+  btnExportAB.addEventListener('click', async () => {
+    try {
+      const command = (document.getElementById('kpiCommand')?.value || '').trim();
+      const args = tokenizeArgs(document.getElementById('kpiArgs')?.value || '');
+      const payload = await invoke('get_benchmark_history', {
+        query: {
+          command: command || null,
+          args,
+          cwd: null,
+          workload: state.wl,
+        },
+      });
+      const path = await invoke('export_benchmark_to_file', {
+        content: JSON.stringify({
+          exported_at: new Date().toISOString(),
+          product: 'SoulKernel',
+          workload: state.wl,
+          command,
+          args,
+          current_params: {
+            kappa: state.kappa,
+            sigma_max: state.sigmaMax,
+            eta: state.eta,
+            policy_mode: state.policyMode,
+            target_pid: state.targetPid,
+          },
+          benchmark_history: payload,
+          benchmark_top: payload?.top_sessions || [],
+        }, null, 2),
+      });
+      log('Export benchmark enregistre : ' + path, 'ok');
+    } catch (e) {
+      if (String(e).includes('Annule')) return;
+      log('Export benchmark: ' + e, 'err');
+    }
+  });
+}
+
 const btnClearAB = document.getElementById('btnClearAB');
 if (btnClearAB) {
-  btnClearAB.addEventListener('click', () => {
-    state.kpiBench.sessions = [];
-    state.kpiBench.lastSummary = null;
-    renderAbSummary(null);
-    log('A/B history reset', 'info');
+  btnClearAB.addEventListener('click', async () => {
+    try {
+      await invoke('clear_benchmark_history');
+      state.kpiBench.sessions = [];
+      state.kpiBench.lastSummary = null;
+      state.kpiBench.tuningAdvice = null;
+      state.kpiBench.topSessions = [];
+      renderAbSummary(null);
+      renderBenchmarkLearning(null);
+      renderBenchmarkTop([]);
+      log('A/B history reset', 'info');
+    } catch (e) {
+      log('A/B history reset error: ' + e, 'err');
+    }
+  });
+}
+const kpiCommandEl = document.getElementById('kpiCommand');
+if (kpiCommandEl) {
+  kpiCommandEl.addEventListener('change', () => {
+    loadBenchmarkHistory(true).catch(() => {});
+    saveRuntimeSettings();
+  });
+}
+const kpiArgsEl = document.getElementById('kpiArgs');
+if (kpiArgsEl) {
+  kpiArgsEl.addEventListener('change', () => {
+    loadBenchmarkHistory(true).catch(() => {});
+    saveRuntimeSettings();
   });
 }
 const soulRamPct = document.getElementById('soulRamPct');
@@ -2552,6 +2791,10 @@ if (btnViewCompact) {
 const btnViewDetailed = document.getElementById('btnViewDetailed');
 if (btnViewDetailed) {
   btnViewDetailed.addEventListener('click', () => setViewMode('detailed'));
+}
+const btnViewBenchmark = document.getElementById('btnViewBenchmark');
+if (btnViewBenchmark) {
+  btnViewBenchmark.addEventListener('click', () => setViewMode('benchmark'));
 }
 const btnHudToggle = document.getElementById('btnHudToggle');
 if (btnHudToggle) {
@@ -2798,14 +3041,17 @@ async function setHudInteractive(on) {
   saveRuntimeSettings();
 }
 function setViewMode(mode) {
-  state.viewMode = (mode === 'compact') ? 'compact' : 'detailed';
+  state.viewMode = (mode === 'compact' || mode === 'benchmark') ? mode : 'detailed';
   document.body.classList.toggle('view-compact', state.viewMode === 'compact');
-  document.body.classList.toggle('view-detailed', state.viewMode !== 'compact');
+  document.body.classList.toggle('view-detailed', state.viewMode === 'detailed');
+  document.body.classList.toggle('view-benchmark', state.viewMode === 'benchmark');
 
   const bCompact = document.getElementById('btnViewCompact');
   const bDetailed = document.getElementById('btnViewDetailed');
+  const bBenchmark = document.getElementById('btnViewBenchmark');
   if (bCompact) bCompact.classList.toggle('active', state.viewMode === 'compact');
-  if (bDetailed) bDetailed.classList.toggle('active', state.viewMode !== 'compact');
+  if (bDetailed) bDetailed.classList.toggle('active', state.viewMode === 'detailed');
+  if (bBenchmark) bBenchmark.classList.toggle('active', state.viewMode === 'benchmark');
 
   if (state.lastMetrics) renderCompactHud(state.lastMetrics);
   saveRuntimeSettings();
@@ -2924,10 +3170,10 @@ function fallbackInvoke(cmd, args) {
       compression: null, io_bandwidth: null, gpu: null,
       sigma: 0, epsilon: [0,0,0,0,0],
       raw: {
-        cpu_pct: 0, mem_used_mb: 0, mem_total_mb: 0,
+        cpu_pct: 0, cpu_clock_mhz: null, mem_used_mb: 0, mem_total_mb: 0, ram_clock_mhz: null,
         swap_used_mb: 0, swap_total_mb: 0,
         zram_used_mb: null, io_read_mb_s: null, io_write_mb_s: null,
-        gpu_pct: null, power_watts: null, psi_cpu: null, psi_mem: null,
+        gpu_pct: null, gpu_core_clock_mhz: null, gpu_mem_clock_mhz: null, power_watts: null, psi_cpu: null, psi_mem: null,
         platform: 'Hors Tauri — lancez cargo tauri dev',
       }
       });
@@ -2952,6 +3198,63 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'get_policy_status') return Promise.resolve({ mode: state.policyMode || 'privileged', is_admin: false, reboot_pending: false, memory_compression_enabled: null });
   if (cmd === 'set_taskbar_gauge') return Promise.resolve(null);
   if (cmd === 'run_kpi_probe') return Promise.resolve({ command: args?.command || 'demo', args: args?.args || [], cwd: args?.cwd || null, duration_ms: 1200, success: true, exit_code: 0, stdout_tail: 'fallback', stderr_tail: ' ' });
+  if (cmd === 'run_ab_benchmark') {
+    const request = args?.request || {};
+    const samples = [];
+    const runs = Math.max(1, Number(request.runs_per_state || 5));
+    for (let i = 0; i < runs * 2; i += 1) {
+      const off = i % 2 === 0;
+      samples.push({
+        idx: i + 1,
+        phase: off ? 'off' : 'on',
+        ts: new Date().toISOString(),
+        duration_ms: off ? 1200 + i * 10 : 1050 + i * 10,
+        success: true,
+        exit_code: 0,
+        dome_active: !off,
+        workload: request.workload || 'es',
+        kappa: Number(request.kappa || 2),
+        sigma_max: Number(request.sigma_max || 0.8),
+        eta: Number(request.eta || 0.2),
+        sigma_before: off ? 0.28 : 0.24,
+        sigma_after: off ? 0.29 : 0.25,
+        cpu_before_pct: off ? 42 : 36,
+        cpu_after_pct: off ? 44 : 37,
+        mem_before_gb: off ? 8.5 : 8.8,
+        mem_after_gb: off ? 8.6 : 8.9,
+        stdout_tail: 'fallback',
+        stderr_tail: '',
+      });
+    }
+    return Promise.resolve({
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      command: request.command || 'demo',
+      args: request.args || [],
+      cwd: request.cwd || null,
+      runs_per_state: runs,
+      settle_ms: Number(request.settle_ms || 1200),
+      workload: request.workload || 'es',
+      kappa: Number(request.kappa || 2),
+      sigma_max: Number(request.sigma_max || 0.8),
+      eta: Number(request.eta || 0.2),
+      target_pid: request.target_pid || null,
+      policy_mode: request.policy_mode || 'privileged',
+      samples,
+      summary: computeAbSummary(samples),
+    });
+  }
+  if (cmd === 'get_benchmark_history') {
+    const sessions = state.kpiBench.sessions || [];
+    return Promise.resolve({
+      sessions,
+      last_summary: state.kpiBench.lastSummary || (sessions[0]?.summary ?? null),
+      advice: state.kpiBench.tuningAdvice || null,
+      top_sessions: state.kpiBench.topSessions || [],
+    });
+  }
+  if (cmd === 'clear_benchmark_history') return Promise.resolve(null);
+  if (cmd === 'export_benchmark_to_file') return Promise.reject('Export benchmark disponible uniquement dans l’app native.');
   if (cmd === 'export_gains_to_file') return Promise.reject('Export fichier disponible uniquement dans l’app native.');
   if (cmd === 'audit_log_event') return Promise.resolve(null);
   if (cmd === 'get_audit_log_path') return Promise.resolve('Hors Tauri');
@@ -2990,12 +3293,14 @@ function fallbackInvoke(cmd, args) {
   await syncSoulRamStatus();
   await loadPolicyStatus();
   await applyStartupIntentIfAny();
+  await loadBenchmarkHistory(true);
   await refreshTelemetrySummary(true);
   updateSoulRamUi();
   const ad = document.getElementById('adaptiveEnabled'); if (ad) ad.checked = !!state.adaptiveEnabled;
   const aad = document.getElementById('adaptiveAutoDome'); if (aad) aad.checked = !!state.adaptiveAutoDome;
   const ast = document.getElementById('adaptiveStatus'); if (ast && !state.adaptiveEnabled) ast.textContent = 'OFF';
   renderAbSummary(state.kpiBench.lastSummary);
+  renderBenchmarkLearning(state.kpiBench.tuningAdvice);
   saveRuntimeSettings();
   scheduleNextPoll();
   setInterval(() => refreshProcesses({ userInitiated: false }), PROCESS_REFRESH_MS);
@@ -3003,45 +3308,6 @@ function fallbackInvoke(cmd, args) {
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

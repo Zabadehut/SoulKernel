@@ -139,6 +139,76 @@ pub fn gpu_utilisation() -> Option<f64> {
     None
 }
 
+pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {
+    let ram_clock_mhz = None;
+    let gpu_core_clock_mhz = read_gpu_clock_mhz(&[
+        "/sys/class/drm/card0/device/pp_dpm_sclk",
+        "/sys/class/drm/card1/device/pp_dpm_sclk",
+        "/sys/class/drm/card0/gt_cur_freq_mhz",
+        "/sys/class/drm/card1/gt_cur_freq_mhz",
+    ]);
+    let gpu_mem_clock_mhz = read_gpu_clock_mhz(&[
+        "/sys/class/drm/card0/device/pp_dpm_mclk",
+        "/sys/class/drm/card1/device/pp_dpm_mclk",
+    ]);
+    (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz)
+}
+
+fn read_gpu_clock_mhz(paths: &[&str]) -> Option<f64> {
+    for path in paths {
+        if let Some(v) = read_active_mhz_from_file(path) {
+            return Some(v);
+        }
+        if let Some(v) = read_scalar_mhz_from_file(path) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn read_active_mhz_from_file(path: &str) -> Option<f64> {
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        if !line.contains('*') {
+            continue;
+        }
+        let mhz = line
+            .split_whitespace()
+            .find_map(parse_mhz_token)
+            .filter(|v| *v > 0.0);
+        if mhz.is_some() {
+            return mhz;
+        }
+    }
+    None
+}
+
+fn read_scalar_mhz_from_file(path: &str) -> Option<f64> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let val = raw.trim().parse::<f64>().ok()?;
+    if path.ends_with("_freq") || path.contains("cur_freq") {
+        if val > 10_000.0 {
+            Some(val / 1000.0)
+        } else {
+            Some(val)
+        }
+    } else if val > 0.0 {
+        Some(val)
+    } else {
+        None
+    }
+}
+
+fn parse_mhz_token(token: &str) -> Option<f64> {
+    let cleaned = token
+        .trim()
+        .trim_end_matches('*')
+        .trim_end_matches("Mhz")
+        .trim_end_matches("MHz")
+        .trim_end_matches("mhz");
+    cleaned.parse::<f64>().ok()
+}
+
 // ─── Dome activation ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]

@@ -396,6 +396,39 @@ pub fn gpu_utilisation() -> Option<f64> {
     let (_, _, gpu_pct, _, _) = sample_realtime_metrics();
     gpu_pct
 }
+
+pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {
+    let ram_clock_mhz = query_windows_numeric_lines("wmic", &["memorychip", "get", "speed"])
+        .and_then(|vals| vals.into_iter().filter(|v| *v > 0.0).reduce(f64::max));
+    (ram_clock_mhz, None, None)
+}
+
+fn query_windows_numeric_lines(program: &str, args: &[&str]) -> Option<Vec<f64>> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = command_hidden(program).args(args).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let txt = String::from_utf8(out.stdout).ok()?;
+        let vals = txt
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| l.parse::<f64>().ok())
+            .collect::<Vec<_>>();
+        if vals.is_empty() {
+            None
+        } else {
+            Some(vals)
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (program, args);
+        None
+    }
+}
 // ─── Win32 write primitives ───────────────────────────────────────────────────
 
 fn set_power_plan(guid: &str) -> (String, bool) {
