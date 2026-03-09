@@ -273,6 +273,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   </div>
     <div class="platform-badge" id="platformBadge">Connecting…</div>
     <div class="status-pill pill-ok" id="sysStatus">SYSTEM OK</div>
+    <div class="status-pill pill-warn" id="activityBadge" style="display:none">ACTIF</div>
     <div class="status-pill pill-off" id="domeStatus">DOME IDLE</div>
     <div class="clock" id="clk">--:--:--</div>
   </div>
@@ -282,11 +283,17 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   <div class="compact-hud-title" id="hudDrag">HUD - CRUCIAL <span class="hud-badge" id="hudModeBadge">LOCK</span></div>
   <div class="compact-hud-grid">
     <div class="compact-hud-item"><span>Dome:</span> <strong id="hudDome">-</strong></div>
+    <div class="compact-hud-item"><span>Activite:</span> <strong id="hudActivity">ACTIF</strong></div>
     <div class="compact-hud-item"><span>Sigma:</span> <strong id="hudSigma">-</strong></div>
     <div class="compact-hud-item"><span>Pi:</span> <strong id="hudPi">-</strong></div>
     <div class="compact-hud-item"><span>CPU:</span> <strong id="hudCpu">-</strong></div>
     <div class="compact-hud-item"><span>RAM:</span> <strong id="hudRam">-</strong></div>
+    <div class="compact-hud-item"><span>I/O:</span> <strong id="hudIo">-</strong></div>
+    <div class="compact-hud-item"><span>GPU:</span> <strong id="hudGpu">-</strong></div>
+    <div class="compact-hud-item"><span>Workload:</span> <strong id="hudWl">-</strong></div>
     <div class="compact-hud-item"><span>Cible:</span> <strong id="hudTarget">-</strong></div>
+    <div class="compact-hud-item"><span>D reel:</span> <strong id="hudDreal">-</strong></div>
+    <div class="compact-hud-item"><span>Rentable:</span> <strong id="hudRenta">-</strong></div>
     <div class="compact-hud-item"><span>Power:</span> <strong id="hudPower">-</strong></div>
     <div class="compact-hud-item"><span>Energie:</span> <strong id="hudEnergy">-</strong></div>
     <div class="compact-hud-item"><span>CO₂ evite:</span> <strong id="hudCo2">-</strong></div>
@@ -361,6 +368,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <div class="raw-cell"><div class="raw-label">Energy total</div><div class="raw-val" id="rawEnergyTotal">—</div></div>
         <div class="raw-cell"><div class="raw-label">Cost total</div><div class="raw-val" id="rawCostTotal">—</div></div>
         <div class="raw-cell"><div class="raw-label">Energy H/J/S/M/A</div><div class="raw-val" id="rawEnergyWindows">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Activite</div><div class="raw-val" id="rawActivity">—</div></div>
       </div>
     </div>
 
@@ -396,7 +404,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">rb</sub>
       </div>
       <div class="eq-result" id="domeVal" style="font-size:1.1rem">𝒟 = —</div>
-      <div class="formula-label">GAIN NET DU DÔME</div>
+      <div class="formula-label">∫π(t)dt RÉELLE — GAIN NET MESURÉ</div>
     </div>
 
     <div class="dome-vis">
@@ -551,7 +559,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="sigma-gauge">
       <div class="sigma-fill" id="sigmaFill" style="height:0"></div>
       <div class="sigma-val" id="sigmaVal">—</div>
-      <div class="sigma-label">PSI + STEAL + MEM PRESSURE</div>
+    <div class="sigma-label" id="sigmaSubLabel">PSI + STEAL + MEM PRESSURE</div>
     </div>
 
     <div class="panel-title">PARAMÈTRES</div>
@@ -834,6 +842,11 @@ let state = {
   },
   lastPi: null,
   lastDomeModel: null,
+  machineActivity: 'active',
+  domeActionsOk: 0,
+  domeActionsTotal: 0,
+  domeRealIntegral: 0,
+  domeRealLastTs: null,
   workloadLastSwitchTs: 0,
   adaptiveWorkloadCandidate: null,
   adaptiveWorkloadCandidateCount: 0,
@@ -936,6 +949,19 @@ async function poll() {
       log(`M�triques r�cup�r�es � ${r.platform}`, 'ok');
       log(`  CPU: ${r.cpu_pct.toFixed(1)}% | RAM: ${memUsed}/${memTotal} GB | swap: ${r.swap_used_mb}/${r.swap_total_mb} MB`, 'info');
       log(`  zram: ${na(r.zram_used_mb)} MB | I/O R/W: ${na(r.io_read_mb_s)}/${na(r.io_write_mb_s)} MB/s | GPU: ${na(r.gpu_pct)}% | PSI cpu/mem: ${na(r.psi_cpu != null ? (r.psi_cpu*100).toFixed(1) : null)}%/${na(r.psi_mem != null ? (r.psi_mem*100).toFixed(1) : null)}%`, 'info');
+    }
+    // Detect machine activity state
+    state.machineActivity = detectMachineActivity(m);
+    // Accumulate real dome integral (only during active periods)
+    if (state.domeActive && state.machineActivity === 'active' && state.lastPi != null) {
+      const now = Date.now();
+      if (state.domeRealLastTs != null) {
+        const dt_s = Math.min((now - state.domeRealLastTs) / 1000, 30);
+        state.domeRealIntegral += state.lastPi * dt_s;
+      }
+      state.domeRealLastTs = now;
+    } else if (!state.domeActive) {
+      state.domeRealLastTs = null;
     }
     scheduleMetricRender(m);
     await runAdaptiveController(m);
@@ -1146,6 +1172,20 @@ function renderAbSummary(summary) {
 
 
 
+function detectMachineActivity(m) {
+  if (!m || !m.raw) return 'active';
+  const cpu = Number(m.raw.cpu_pct || 0);
+  const gpuPct = Number(m.raw.gpu_pct || 0);
+  const ioR = Number(m.raw.io_read_mb_s || 0);
+  const ioW = Number(m.raw.io_write_mb_s || 0);
+  const ioTotal = ioR + ioW;
+  // Media: GPU decoding active but CPU low (video/film/series)
+  if (cpu < 15 && gpuPct > 15) return 'media';
+  // Idle: everything quiet
+  if (cpu < 8 && ioTotal < 0.5 && gpuPct < 5) return 'idle';
+  return 'active';
+}
+
 async function ingestTelemetry(m) {
   if (!hasTauri || !m || !m.raw) return;
   const now = Date.now();
@@ -1162,6 +1202,7 @@ async function ingestTelemetry(m) {
         kpi_gain_median_pct: (gain != null ? Number(gain) : null),
         cpu_pct: (m.raw.cpu_pct != null ? Number(m.raw.cpu_pct) : null),
         pi: (state.lastPi != null ? Number(state.lastPi) : null),
+        machine_activity: state.machineActivity || 'active',
       }
     });
   } catch (_) {}
@@ -1231,6 +1272,11 @@ function renderGreenItPanel(s) {
     }
     if (lt.avg_kpi_gain_pct != null) {
       text += ` | gain KPI median: <strong>${Number(lt.avg_kpi_gain_pct).toFixed(1)}%</strong>`;
+    }
+    const idleH = Number(lt.total_idle_hours || 0);
+    const mediaH = Number(lt.total_media_hours || 0);
+    if (idleH > 0.01 || mediaH > 0.01) {
+      text += ` <span style="color:var(--muted)">(hors ${f2(idleH)}h idle + ${f2(mediaH)}h media)</span>`;
     }
     ltEl.innerHTML = text;
   } else if (ltEl) {
@@ -1826,6 +1872,32 @@ function renderMetrics(m) {
   document.getElementById('sigmaFill').style.height = (m.sigma * 100) + '%';
   document.getElementById('sigmaVal').textContent    = m.sigma.toFixed(3);
 
+  // Dynamic sigma sub-label based on platform
+  const sigmaLbl = document.getElementById('sigmaSubLabel');
+  if (sigmaLbl) {
+    const p = String(m.raw.platform || '').toLowerCase();
+    if (p.includes('windows')) sigmaLbl.textContent = 'CPU + MEM + I/O PRESSURE';
+    else if (p.includes('macos')) sigmaLbl.textContent = 'CPU + MEM PRESSURE';
+    else if (p.includes('linux')) sigmaLbl.textContent = 'PSI + MEM + SWAP PRESSURE';
+  }
+
+  // Machine activity badge in header
+  const actBadge = document.getElementById('activityBadge');
+  if (actBadge) {
+    const a = state.machineActivity || 'active';
+    if (a === 'idle') {
+      actBadge.textContent = 'IDLE';
+      actBadge.className = 'status-pill pill-warn';
+      actBadge.style.display = '';
+    } else if (a === 'media') {
+      actBadge.textContent = 'MEDIA';
+      actBadge.className = 'status-pill pill-warn';
+      actBadge.style.display = '';
+    } else {
+      actBadge.style.display = 'none';
+    }
+  }
+
   // raw metrics — uniquement valeurs réelles, N/A si indisponible
   set('rawMemUsed',  (m.raw.mem_used_mb/1024).toFixed(2)+' GB');
   set('rawMemTotal', (m.raw.mem_total_mb/1024).toFixed(2)+' GB');
@@ -1836,6 +1908,14 @@ function renderMetrics(m) {
   set('rawIoRw',     (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null) ? `${m.raw.io_read_mb_s.toFixed(3)}/${m.raw.io_write_mb_s.toFixed(3)} MB/s` : na);
   set('rawGpuPct',   opt(m.raw.gpu_pct, v => v.toFixed(2)+'%'));
   set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W'));
+
+  // Activity state in raw metrics
+  const actRaw = document.getElementById('rawActivity');
+  if (actRaw) {
+    const a = state.machineActivity || 'active';
+    actRaw.textContent = a.toUpperCase();
+    actRaw.style.color = a === 'active' ? 'var(--io)' : 'var(--gpu)';
+  }
   updateSystemStatus(m);
 }
 
@@ -1857,10 +1937,7 @@ function renderFormula(m) {
   const brake   = Math.exp(-state.kappa * m.sigma);
   const pi      = brut * fric * brake;
 
-  const T       = { es:60, compile:120, gamer:90, ai:30, backup:300, sqlite:20, oracle:180 }[state.wl] || 60;
-  const dGain   = pi * T - 0.04 - 0.02;
   state.lastPi = pi;
-  state.lastDomeModel = dGain;
   const deltaK  = [0.9,0.85,0.95,0.8,0.7];
   const bIdle   = alpha.reduce((s,a,i) => s + a*(1-r[i]*0.7)*deltaK[i], 0);
 
@@ -1868,16 +1945,45 @@ function renderFormula(m) {
   piEl.textContent = 'π = ' + pi.toFixed(5);
   piEl.className   = 'eq-result' + (pi>.5?' high':pi<.2?' low':'');
 
-  document.getElementById('domeVal').textContent = state.domeActive
-    ? '𝒟 = ' + dGain.toFixed(4)
-    : '𝒟 = —';
+  // 𝒟 = real accumulated integral (not projection)
+  const domeEl = document.getElementById('domeVal');
+  if (state.domeActive) {
+    const realD = state.domeRealIntegral - 0.04 - 0.02;
+    domeEl.textContent = '𝒟 = ' + realD.toFixed(4);
+    state.lastDomeModel = realD;
+  } else {
+    domeEl.textContent = '𝒟 = —';
+    state.lastDomeModel = null;
+  }
 
   set('mBrut',  brut.toFixed(4));
   set('mFric',  fric.toFixed(4));
   set('mFrein', brake.toFixed(4));
+
+  // RENTABLE: based on real action success + real integral (when dome active)
   const rEl = document.getElementById('mRenta');
-  rEl.textContent = dGain > 0 ? 'OUI ✓' : 'NON ✗';
-  rEl.style.color = dGain > 0 ? 'var(--io)' : 'var(--stress)';
+  if (state.domeActive) {
+    const act = state.machineActivity || 'active';
+    if (act === 'idle' || act === 'media') {
+      rEl.textContent = 'PAUSE (' + act + ')';
+      rEl.style.color = 'var(--gpu)';
+    } else if (state.domeActionsOk === 0 && state.domeActionsTotal > 0) {
+      rEl.textContent = 'NON ✗ (refusé)';
+      rEl.style.color = 'var(--stress)';
+    } else if (state.domeRealIntegral > 0.06) {
+      rEl.textContent = 'OUI ✓';
+      rEl.style.color = 'var(--io)';
+    } else {
+      rEl.textContent = '...';
+      rEl.style.color = 'var(--muted)';
+    }
+  } else {
+    // Dome off: show theoretical projection as before
+    const T = { es:60, compile:120, gamer:90, ai:30, backup:300, sqlite:20, oracle:180 }[state.wl] || 60;
+    const dGain = pi * T - 0.04 - 0.02;
+    rEl.textContent = dGain > 0 ? 'OUI ✓' : 'NON ✗';
+    rEl.style.color = dGain > 0 ? 'var(--io)' : 'var(--stress)';
+  }
 
   // dome bars = α_i · r_i · 50px
   alpha.forEach((a,i) => {
@@ -1929,13 +2035,19 @@ document.getElementById('btnDome').addEventListener('click', async () => {
     });
     state.domeActive = result.activated;
     if (result.activated) {
+      state.domeActionsOk = result.actions_ok || 0;
+      state.domeActionsTotal = result.actions_total || 0;
+      state.domeRealIntegral = 0;
+      state.domeRealLastTs = Date.now();
       try { state.snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) { state.snapshotBefore = null; }
       state.domeHistory.unshift({
         ts: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         workload: state.wl,
         pi: result.pi,
-        domeGain: result.dome_gain,
+        domeGain: 0,
         targetPid: state.targetPid,
+        actionsOk: state.domeActionsOk,
+        actionsTotal: state.domeActionsTotal,
       });
       if (state.domeHistory.length > MAX_DOME_HISTORY) state.domeHistory.pop();
       renderGainsHistory();
@@ -1957,7 +2069,15 @@ document.getElementById('btnDome').addEventListener('click', async () => {
 document.getElementById('btnReset').addEventListener('click', async () => {
   try {
     const actions = await invoke('rollback_dome');
+    // Store final real integral in last dome history entry
+    if (state.domeHistory.length > 0 && state.domeRealIntegral > 0) {
+      state.domeHistory[0].domeGain = state.domeRealIntegral - 0.06;
+    }
     state.domeActive = false;
+    state.domeRealIntegral = 0;
+    state.domeRealLastTs = null;
+    state.domeActionsOk = 0;
+    state.domeActionsTotal = 0;
     actions.forEach(a => log(a, a.startsWith('✓') ? 'ok' : 'warn'));
     state.snapshotBefore = null;
     log('ROLLBACK — kernel params restored', 'ok');
@@ -2058,9 +2178,11 @@ function renderGainsHistory() {
   const lt = state.telemetrySummary?.lifetime;
   const lifetimeN = lt?.total_dome_activations || n;
   summary.textContent = `Vie entiere : ${lifetimeN} activation(s), D cumule = ${Number(lt?.total_dome_gain_integral || 0).toFixed(2)} | Session: ${n} dome(s), D moy = ${avgD.toFixed(2)}`;
-  listEl.innerHTML = state.domeHistory.map(e =>
-    `<div class="gains-row"><span>${e.ts}</span><span>${e.workload}</span><span class="gains-pi">pi=${e.pi.toFixed(4)}</span><span class="gains-d">D=${e.domeGain.toFixed(2)}</span><span>${e.targetPid ? 'PID ' + e.targetPid : '-'}</span></div>`
-  ).join('');
+  listEl.innerHTML = state.domeHistory.map(e => {
+    const dVal = (e.domeGain != null && e.domeGain !== 0) ? e.domeGain.toFixed(2) : '...';
+    const actInfo = (e.actionsOk != null && e.actionsTotal != null) ? ` [${e.actionsOk}/${e.actionsTotal}]` : '';
+    return `<div class="gains-row"><span>${e.ts}</span><span>${e.workload}</span><span class="gains-pi">pi=${e.pi.toFixed(4)}</span><span class="gains-d">D=${dVal}${actInfo}</span><span>${e.targetPid ? 'PID ' + e.targetPid : '-'}</span></div>`;
+  }).join('');
   // Persist dome history to localStorage
   saveDomeHistory();
 }
@@ -2110,6 +2232,9 @@ function buildSessionReportText() {
   lines.push('Workload: ' + state.wl);
   lines.push('kappa: ' + state.kappa.toFixed(2) + ' | sigmaMax: ' + state.sigmaMax.toFixed(2) + ' | eta: ' + state.eta.toFixed(2));
   lines.push('Dome actif: ' + (state.domeActive ? 'oui' : 'non'));
+  lines.push('Machine activite: ' + (state.machineActivity || 'active'));
+  lines.push('D reel (integral): ' + (state.domeActive ? (state.domeRealIntegral - 0.06).toFixed(4) : 'N/A'));
+  lines.push('Actions dome: ' + state.domeActionsOk + '/' + state.domeActionsTotal + ' ok');
   lines.push('Cible: ' + selectedTargetText);
   lines.push('Auto-cible: ' + (state.autoProcessTarget ? 'on' : 'off'));
   lines.push('SoulRAM: ' + (state.soulRamActive ? 'on' : 'off') + ' (' + state.soulRamPercent + '%)');
@@ -2138,12 +2263,14 @@ function buildSessionReportText() {
 
   lines.push('');
   lines.push('Gains dome');
-  lines.push('Heure\tWorkload\tpi\tD\tCible');
+  lines.push('Heure\tWorkload\tpi\tD reel\tActions\tCible');
   if (state.domeHistory.length === 0) {
     lines.push('Aucune activation');
   } else {
     state.domeHistory.forEach(e => {
-      lines.push(e.ts + '\t' + e.workload + '\t' + e.pi.toFixed(4) + '\t' + e.domeGain.toFixed(2) + '\t' + (e.targetPid || '-'));
+      const dVal = (e.domeGain != null && e.domeGain !== 0) ? e.domeGain.toFixed(2) : '...';
+      const actTxt = (e.actionsOk != null && e.actionsTotal != null) ? (e.actionsOk + '/' + e.actionsTotal) : '-';
+      lines.push(e.ts + '\t' + e.workload + '\t' + e.pi.toFixed(4) + '\t' + dVal + '\t' + actTxt + '\t' + (e.targetPid || '-'));
     });
     lines.push('Session: ' + state.domeHistory.length + ' activation(s), D moyen = ' + avgD.toFixed(2));
   }
@@ -2176,6 +2303,14 @@ function buildSessionReportText() {
     }
     lines.push('Optimisation reelle mediane A/B: ' + (t.total?.kpi_gain_median_pct == null ? 'N/A' : Number(t.total.kpi_gain_median_pct).toFixed(2) + '%'));
     lines.push('Clean passif (h): ' + f(t.total?.passive_clean_h) + ' | ratio dome actif: ' + f((t.total?.dome_active_ratio ?? 0) * 100) + '%');
+    const lt = t.lifetime;
+    if (lt) {
+      const idleH = Number(lt.total_idle_hours || 0);
+      const mediaH = Number(lt.total_media_hours || 0);
+      if (idleH > 0.01 || mediaH > 0.01) {
+        lines.push('Periodes exclues: idle=' + idleH.toFixed(2) + 'h | media=' + mediaH.toFixed(2) + 'h');
+      }
+    }
   }
   const logs = collectVisibleLogLines();
   lines.push('');
@@ -2207,6 +2342,10 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
       product: 'SoulKernel',
       version: '0.1.0',
       dome_active: state.domeActive,
+      machine_activity: state.machineActivity || 'active',
+      dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
+      dome_actions_ok: state.domeActionsOk,
+      dome_actions_total: state.domeActionsTotal,
       snapshot_before: snapshotBefore,
       history: state.domeHistory,
       adaptive: { enabled: state.adaptiveEnabled, auto_dome: state.adaptiveAutoDome },
@@ -2546,9 +2685,19 @@ function applyHudPayload(payload) {
   set('hudPi', payload.pi ?? 'N/A');
   set('hudCpu', payload.cpu ?? 'N/A');
   set('hudRam', payload.ram ?? 'N/A');
+  set('hudIo', payload.io ?? 'N/A');
+  set('hudGpu', payload.gpu ?? 'N/A');
+  set('hudWl', payload.workload ? payload.workload.toUpperCase() : 'N/A');
   set('hudTarget', payload.target ?? 'N/A');
+  set('hudDreal', payload.d_real ?? '—');
+  set('hudRenta', payload.rentable ?? '—');
   set('hudPower', payload.power ?? 'N/A');
   set('hudEnergy', payload.energy ?? 'N/A');
+  const actEl = document.getElementById('hudActivity');
+  if (actEl) {
+    actEl.textContent = payload.activity ?? 'ACTIF';
+    actEl.style.color = (payload.activity === 'ACTIF') ? 'var(--io)' : 'var(--gpu)';
+  }
 }
 
 async function initHudOnlyMode() {
@@ -2672,18 +2821,50 @@ function renderCompactHud(m) {
     : 'Auto';
 
   set('hudDome', state.domeActive ? 'ACTIF' : 'IDLE');
+  const act = state.machineActivity || 'active';
+  const actEl = document.getElementById('hudActivity');
+  if (actEl) {
+    actEl.textContent = act === 'idle' ? 'IDLE' : (act === 'media' ? 'MEDIA' : 'ACTIF');
+    actEl.style.color = act === 'active' ? 'var(--io)' : 'var(--gpu)';
+  }
   const sigmaTxt = Number(m.sigma || 0).toFixed(3);
   const piTxt = state.lastPi == null ? 'N/A' : Number(state.lastPi).toFixed(4);
   const cpuTxt = Number(m.raw.cpu_pct || 0).toFixed(1) + '%';
   const ramTxt = (Number(m.raw.mem_used_mb || 0) / 1024).toFixed(1) + '/' + (Number(m.raw.mem_total_mb || 0) / 1024).toFixed(1) + ' GB';
+  const ioTxt = (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null)
+    ? Number(m.raw.io_read_mb_s).toFixed(0) + '/' + Number(m.raw.io_write_mb_s).toFixed(0) + ' MB/s'
+    : 'N/A';
+  const gpuTxt = m.raw.gpu_pct != null ? Number(m.raw.gpu_pct).toFixed(1) + '%' : 'N/A';
   const targetOut = targetTxt.replace(/\s+/g, ' ').slice(0, 42);
   const powerTxt = m.raw.power_watts == null ? 'N/A' : Number(m.raw.power_watts).toFixed(1) + ' W';
+
+  // Real dome integral & rentable
+  let drealTxt = '—';
+  let rentaTxt = '—';
+  if (state.domeActive) {
+    const realD = state.domeRealIntegral - 0.06;
+    drealTxt = realD.toFixed(4);
+    if (act === 'idle' || act === 'media') {
+      rentaTxt = 'PAUSE';
+    } else if (state.domeActionsOk === 0 && state.domeActionsTotal > 0) {
+      rentaTxt = 'NON (refuse)';
+    } else if (state.domeRealIntegral > 0.06) {
+      rentaTxt = 'OUI';
+    } else {
+      rentaTxt = '...';
+    }
+  }
 
   set('hudSigma', sigmaTxt);
   set('hudPi', piTxt);
   set('hudCpu', cpuTxt);
   set('hudRam', ramTxt);
+  set('hudIo', ioTxt);
+  set('hudGpu', gpuTxt);
+  set('hudWl', state.wl.toUpperCase());
   set('hudTarget', targetOut);
+  set('hudDreal', drealTxt);
+  set('hudRenta', rentaTxt);
   set('hudPower', powerTxt);
 
   let energyTxt = 'N/A';
@@ -2694,11 +2875,17 @@ function renderCompactHud(m) {
 
   pushSystemHudData({
     dome: state.domeActive ? 'ACTIF' : 'IDLE',
+    activity: act.toUpperCase(),
     sigma: sigmaTxt,
     pi: piTxt,
     cpu: cpuTxt,
     ram: ramTxt,
+    io: ioTxt,
+    gpu: gpuTxt,
+    workload: state.wl,
     target: targetOut,
+    d_real: drealTxt,
+    rentable: rentaTxt,
     power: powerTxt,
     energy: energyTxt,
   });
@@ -2755,7 +2942,7 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'activate_dome') return Promise.resolve({
     activated: false, pi: 0, dome_gain: 0, b_idle: 0,
     message: 'Non disponible hors Tauri.',
-    actions: []
+    actions: [], actions_ok: 0, actions_total: 0
   });
   if (cmd === 'rollback_dome') return Promise.resolve(['Non disponible hors Tauri.']);
   if (cmd === 'get_snapshot_before_dome') return Promise.resolve(null);
@@ -2769,8 +2956,8 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'audit_log_event') return Promise.resolve(null);
   if (cmd === 'get_audit_log_path') return Promise.resolve('Hors Tauri');
   if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
-  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: {}, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false } });
-  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false });
+  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: {}, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 } });
+  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 });
   if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
   if (cmd === 'set_energy_pricing') return Promise.resolve(null);
   if (cmd === 'open_system_hud') return Promise.resolve(null);

@@ -3,6 +3,18 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
+/// Machine activity state — used to exclude idle/media periods from dome gain accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineActivity {
+    /// User is actively working (compilation, DB, game, etc.)
+    Active,
+    /// Machine is mostly idle (low CPU, low I/O, low GPU)
+    Idle,
+    /// Passive media consumption (video/film — GPU busy, CPU low)
+    Media,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnergyPricing {
     pub currency: String,
@@ -33,6 +45,9 @@ pub struct TelemetryIngestRequest {
     /// Instantaneous π(t) computed by the frontend at this tick.
     #[serde(default)]
     pub pi: Option<f64>,
+    /// Machine activity state detected by the frontend.
+    #[serde(default)]
+    pub machine_activity: Option<MachineActivity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +64,9 @@ pub struct TelemetrySample {
     /// π(t) at this tick — used for real dome gain integral.
     #[serde(default)]
     pub pi: Option<f64>,
+    /// Machine activity state at this tick.
+    #[serde(default)]
+    pub machine_activity: Option<MachineActivity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -68,6 +86,10 @@ pub struct WindowSummary {
     pub cpu_hours_saved: f64,
     /// Real dome gain integral Σ(π_i × dt_i) for dome-active samples.
     pub dome_gain_integral: f64,
+    /// Ratio of idle samples in the window.
+    pub idle_ratio: f64,
+    /// Ratio of media samples in the window.
+    pub media_ratio: f64,
 }
 
 /// Cumulative lifetime gains since first launch. Persisted to disk.
@@ -95,6 +117,10 @@ pub struct LifetimeGains {
     pub total_samples: u64,
     /// Whether real power data (RAPL/battery) has ever been seen.
     pub has_real_power: bool,
+    /// Total hours the machine was idle while monitored.
+    pub total_idle_hours: f64,
+    /// Total hours spent in media consumption (video/film).
+    pub total_media_hours: f64,
 }
 
 impl Default for LifetimeGains {
@@ -111,6 +137,8 @@ impl Default for LifetimeGains {
             avg_kpi_gain_pct: None,
             total_samples: 0,
             has_real_power: false,
+            total_idle_hours: 0.0,
+            total_media_hours: 0.0,
         }
     }
 }
@@ -218,6 +246,7 @@ impl TelemetryState {
             kpi_gain_median_pct: req.kpi_gain_median_pct.filter(|v| v.is_finite()),
             cpu_pct: req.cpu_pct.filter(|v| v.is_finite() && *v >= 0.0),
             pi: req.pi.filter(|v| v.is_finite()),
+            machine_activity: req.machine_activity,
         };
 
         // ── Update lifetime gains ─────────────────────────────────────────
@@ -270,14 +299,17 @@ impl TelemetryState {
         let mut active_dt = 0.0;
         let mut passive_clean_dt = 0.0;
         let mut gains = Vec::new();
+        let mut idle_dt = 0.0;
+        let mut media_dt = 0.0;
 
-        // CPU baseline: average CPU% during dome-OFF periods in this window.
+        // CPU baseline: average CPU% during dome-OFF active periods in this window.
         let mut cpu_off_sum = 0.0;
         let mut cpu_off_dt = 0.0;
 
         // First pass: compute dome-OFF CPU baseline.
         for s in self.ring.iter().filter(|s| s.ts_ms >= start_ms) {
-            if !s.dome_active {
+            let activity = s.machine_activity.unwrap_or(MachineActivity::Active);
+            if !s.dome_active && activity == MachineActivity::Active {
                 if let Some(cpu) = s.cpu_pct {
                     cpu_off_sum += cpu * s.dt_s;
                     cpu_off_dt += s.dt_s;
@@ -292,9 +324,17 @@ impl TelemetryState {
 
         // Second pass: aggregate all metrics.
         for s in self.ring.iter().filter(|s| s.ts_ms >= start_ms) {
+            let activity = s.machine_activity.unwrap_or(MachineActivity::Active);
             out.samples += 1;
             out.duration_h += s.dt_s / 3600.0;
-            if s.dome_active {
+
+            match activity {
+                MachineActivity::Idle => idle_dt += s.dt_s,
+                MachineActivity::Media => media_dt += s.dt_s,
+                MachineActivity::Active => {}
+            }
+
+            if s.dome_active && activity == MachineActivity::Active {
                 active_dt += s.dt_s;
                 // CPU·h saved = (baseline% − dome%) × dt / 3600 / 100
                 if let Some(cpu) = s.cpu_pct {
@@ -334,6 +374,17 @@ impl TelemetryState {
         out.cost = out.energy_kwh * self.pricing.price_per_kwh;
         out.co2_kg = out.energy_kwh * self.pricing.co2_kg_per_kwh;
         out.kpi_gain_median_pct = median(&gains);
+        let total_dt = out.duration_h * 3600.0;
+        out.idle_ratio = if total_dt > 0.0 {
+            (idle_dt / total_dt).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        out.media_ratio = if total_dt > 0.0 {
+            (media_dt / total_dt).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         out
     }
 
@@ -353,11 +404,18 @@ impl TelemetryState {
 
     /// Incrementally update lifetime counters from a single new sample.
     fn update_lifetime(&mut self, s: &TelemetrySample) {
+        let activity = s.machine_activity.unwrap_or(MachineActivity::Active);
         // First launch timestamp.
         if self.lifetime.first_launch_ts == 0 {
             self.lifetime.first_launch_ts = s.ts_ms;
         }
         self.lifetime.total_samples += 1;
+        // Track idle/media hours.
+        match activity {
+            MachineActivity::Idle => self.lifetime.total_idle_hours += s.dt_s / 3600.0,
+            MachineActivity::Media => self.lifetime.total_media_hours += s.dt_s / 3600.0,
+            MachineActivity::Active => {}
+        }
 
         // Detect dome activation (OFF → ON transition).
         if s.dome_active && !self.last_dome_active {
@@ -368,23 +426,26 @@ impl TelemetryState {
         if s.dome_active {
             self.lifetime.total_dome_hours += s.dt_s / 3600.0;
 
-            // CPU·h saved: compare against running baseline.
-            if let Some(cpu) = s.cpu_pct {
-                let baseline = if self.cpu_baseline_dt > 0.0 {
-                    self.cpu_baseline_acc / self.cpu_baseline_dt
-                } else {
-                    0.0
-                };
-                let delta_pct = (baseline - cpu).max(0.0);
-                self.lifetime.total_cpu_hours_saved += delta_pct * s.dt_s / 360_000.0;
-            }
+            // Only count dome savings during Active periods — idle/media gains are not real.
+            if activity == MachineActivity::Active {
+                // CPU·h saved: compare against running baseline.
+                if let Some(cpu) = s.cpu_pct {
+                    let baseline = if self.cpu_baseline_dt > 0.0 {
+                        self.cpu_baseline_acc / self.cpu_baseline_dt
+                    } else {
+                        0.0
+                    };
+                    let delta_pct = (baseline - cpu).max(0.0);
+                    self.lifetime.total_cpu_hours_saved += delta_pct * s.dt_s / 360_000.0;
+                }
 
-            // Real π integral.
-            if let Some(pi) = s.pi {
-                self.lifetime.total_dome_gain_integral += pi * s.dt_s;
+                // Real π integral.
+                if let Some(pi) = s.pi {
+                    self.lifetime.total_dome_gain_integral += pi * s.dt_s;
+                }
             }
-        } else {
-            // Dome OFF: accumulate CPU baseline.
+        } else if activity == MachineActivity::Active {
+            // Dome OFF + Active: accumulate CPU baseline.
             if let Some(cpu) = s.cpu_pct {
                 self.cpu_baseline_acc += cpu * s.dt_s;
                 self.cpu_baseline_dt += s.dt_s;

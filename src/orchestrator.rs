@@ -18,6 +18,10 @@ pub struct DomeResult {
     pub message: String,
     /// List of actual kernel actions taken (for the log panel)
     pub actions: Vec<String>,
+    /// Number of kernel actions that succeeded.
+    pub actions_ok: usize,
+    /// Total number of kernel actions attempted.
+    pub actions_total: usize,
 }
 
 // ─── Activation ───────────────────────────────────────────────────────────────
@@ -35,15 +39,20 @@ pub async fn activate(
 
     let results = platform::apply_dome_profile(profile, eta, baseline, policy, target_pid).await;
 
+    let mut ok_count = 0usize;
+    let total_count = results.len();
     for (action, ok) in results {
         if ok {
+            ok_count += 1;
             actions.push(format!("✓ {}", action));
         } else {
             actions.push(format!("✗ {}", action));
         }
     }
 
-    let msg = if f.rentable {
+    let msg = if ok_count == 0 && total_count > 0 {
+        format!("Dome actif (toutes actions refusées) · π={:.4}", f.pi)
+    } else if f.rentable {
         format!("Dome ACTIVÉ · π={:.4} · 𝒟={:.4}", f.pi, f.dome_gain)
     } else {
         format!("Dome actif (gain marginal) · π={:.4}", f.pi)
@@ -56,6 +65,8 @@ pub async fn activate(
         b_idle: f.b_idle,
         message: msg,
         actions,
+        actions_ok: ok_count,
+        actions_total: total_count,
     })
 }
 

@@ -126,6 +126,8 @@ async fn activate_dome(
             dome_gain: formula_res.dome_gain,
             b_idle: formula_res.b_idle,
             actions: vec![],
+            actions_ok: 0,
+            actions_total: 0,
             message: format!(
                 "DOME BLOQUE - Sigma({:.2}) >= SigmaMax({:.2})",
                 metrics.sigma, sigma_max
