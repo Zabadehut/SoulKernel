@@ -1093,6 +1093,7 @@ function updateAdaptiveStatusText(extra = '') {
 function setWorkload(nextWl, sourceLabel = "auto") {
   const wl = WORKLOADS[nextWl] ? nextWl : 'es';
   if (state.wl === wl) return;
+  const prevWl = state.wl;
   state.wl = wl;
   state.workloadLastSwitchTs = Date.now();
   state.adaptiveWorkloadCandidate = null;
@@ -1101,6 +1102,14 @@ function setWorkload(nextWl, sourceLabel = "auto") {
   const btn = document.querySelector(`.wl-btn[data-wl="${wl}"]`);
   if (btn) btn.classList.add('active');
   log(sourceLabel === 'manuel' ? ('Profil: ' + wl) : ('Profil auto: ' + wl + ' (' + sourceLabel + ')'), 'info');
+  log('STATE DIAG workload ' + JSON.stringify({
+    previous_workload: prevWl,
+    next_workload: wl,
+    source: sourceLabel,
+    auto_process_target: !!state.autoProcessTarget,
+    target_pid: state.targetPid,
+    dome_history_len: state.domeHistory.length,
+  }), 'info');
   if (state.lastMetrics) renderFormula(state.lastMetrics);
   loadBenchmarkHistory(true).catch(() => {});
 }
@@ -1639,6 +1648,12 @@ async function runAbBenchmark() {
     setWorkload(benchWorkload, 'benchmark');
     log('Benchmark workload auto: ' + benchWorkload, 'info');
   }
+  log('BENCH DIAG start ' + JSON.stringify(benchmarkDiagPayload({
+    bench_command: command,
+    bench_args: args,
+    bench_workload: benchWorkload,
+    runs_per_state: runs,
+  })), 'info');
 
   const wasAdaptive = state.adaptiveEnabled;
   state.kpiBench.running = true;
@@ -1682,6 +1697,13 @@ async function runAbBenchmark() {
     state.kpiBench.lastSummary = session.summary;
     if (state.kpiBench.sessions.length > 20) state.kpiBench.sessions.pop();
     renderAbSummary(session.summary);
+    log('BENCH DIAG end ' + JSON.stringify(benchmarkDiagPayload({
+      bench_command: command,
+      bench_args: args,
+      bench_workload: benchWorkload,
+      summary: session.summary,
+      session_samples: Array.isArray(session.samples) ? session.samples.length : 0,
+    })), 'info');
     log('A/B termine: gain median=' + (session.summary.gain_median_pct == null ? 'N/A' : session.summary.gain_median_pct.toFixed(1) + '%'), 'ok');
     await loadBenchmarkHistory(true);
   } catch (e) {
@@ -1822,12 +1844,25 @@ async function refreshProcesses(options = {}) {
       const pick = pickAutoProcess(list, current);
       if (pick) sel.value = pick;
       const chosen = list.find(p => String(p.pid) === String(sel.value));
+      const prevTargetPid = state.targetPid;
+      state.targetPid = sel.value === '' ? null : parseInt(sel.value, 10);
+      if (prevTargetPid !== state.targetPid) {
+        log('STATE DIAG target ' + JSON.stringify({
+          source: 'auto-process-refresh',
+          previous_target_pid: prevTargetPid,
+          next_target_pid: state.targetPid,
+          next_target_label: chosen ? `${chosen.name} (PID ${chosen.pid}) - ${Number(chosen.cpu_usage || 0).toFixed(1)}% CPU` : 'Ce processus (SoulKernel)',
+          auto_process_target: !!state.autoProcessTarget,
+          workload: state.wl,
+        }), 'info');
+      }
       if (!state.adaptiveEnabled) {
         const inferred = inferWorkloadFromProcess(chosen, state.lastMetrics);
         if (inferred) setWorkload(inferred, 'process:' + (chosen?.name || 'n/a'));
       }
     } else if (current) {
       sel.value = current;
+      state.targetPid = current === '' ? null : parseInt(current, 10);
     }
     const now = new Date();
     state.lastProcessRefreshTs = now.toTimeString().slice(0, 8);
@@ -2442,12 +2477,47 @@ function collectVisibleLogLines() {
     .filter(Boolean);
 }
 
+function selectedTargetSnapshot() {
+  const sel = document.getElementById('targetProcess');
+  const value = sel ? sel.value : '';
+  const label = sel && sel.selectedIndex >= 0
+    ? (sel.options[sel.selectedIndex].text || '')
+    : '';
+  return {
+    target_pid: value === '' ? null : Number(value),
+    target_label: label || 'Ce processus (SoulKernel)',
+  };
+}
+
+function benchmarkDiagPayload(extra = {}) {
+  const target = selectedTargetSnapshot();
+  return {
+    workload: state.wl,
+    kappa: Number(state.kappa.toFixed(2)),
+    sigma_max: Number(state.sigmaMax.toFixed(2)),
+    eta: Number(state.eta.toFixed(2)),
+    dome_active: !!state.domeActive,
+    auto_process_target: !!state.autoProcessTarget,
+    state_target_pid: state.targetPid,
+    target_pid: target.target_pid,
+    target_label: target.target_label,
+    dome_history_len: state.domeHistory.length,
+    dome_actions_ok: state.domeActionsOk,
+    dome_actions_total: state.domeActionsTotal,
+    ...extra,
+  };
+}
+
 function buildSessionReportText() {
   const now = new Date().toISOString();
-  const selectedTarget = document.getElementById('targetProcess');
-  const selectedTargetText = selectedTarget && selectedTarget.selectedIndex >= 0
-    ? selectedTarget.options[selectedTarget.selectedIndex].text
-    : 'Ce processus (SoulKernel)';
+  const diag = benchmarkDiagPayload({
+    report_type: 'session-report',
+    exported_at: now,
+    machine_activity: state.machineActivity || 'active',
+    has_snapshot_before: !!state.snapshotBefore,
+    last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
+    last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
+  });
   const avgD = state.domeHistory.length
     ? state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length
     : 0;
@@ -2464,12 +2534,21 @@ function buildSessionReportText() {
   lines.push('Machine activite: ' + (state.machineActivity || 'active'));
   lines.push('D reel (integral): ' + (state.domeActive ? (state.domeRealIntegral - 0.06).toFixed(4) : 'N/A'));
   lines.push('Actions dome: ' + state.domeActionsOk + '/' + state.domeActionsTotal + ' ok');
-  lines.push('Cible: ' + selectedTargetText);
+  lines.push('Cible: ' + diag.target_label);
   lines.push('Auto-cible: ' + (state.autoProcessTarget ? 'on' : 'off'));
   lines.push('SoulRAM: ' + (state.soulRamActive ? 'on' : 'off') + ' (' + state.soulRamPercent + '%)');
   lines.push('SoulRAM reboot requis: ' + (state.soulRamNeedsReboot ? 'oui' : 'non'));
   lines.push('Adaptive: ' + (state.adaptiveEnabled ? 'on' : 'off') + ' | auto-dome: ' + (state.adaptiveAutoDome ? 'on' : 'off'));
   lines.push('Audit JSONL: ' + (state.auditLogPath || 'N/A')); 
+
+  lines.push('');
+  lines.push('Diagnostic export');
+  lines.push('Workload/state: ' + diag.workload + ' | auto-cible=' + (diag.auto_process_target ? 'on' : 'off'));
+  lines.push('Target state/select: ' + (diag.state_target_pid ?? 'null') + ' / ' + (diag.target_pid ?? 'null'));
+  lines.push('Target label: ' + diag.target_label);
+  lines.push('Dome history len: ' + diag.dome_history_len + ' | snapshot before=' + (diag.has_snapshot_before ? 'oui' : 'non'));
+  lines.push('Last benchmark gain median/p95: ' + (diag.last_benchmark_gain_median_pct == null ? 'N/A' : Number(diag.last_benchmark_gain_median_pct).toFixed(1) + '%') + ' / ' + (diag.last_benchmark_gain_p95_pct == null ? 'N/A' : Number(diag.last_benchmark_gain_p95_pct).toFixed(1) + '%'));
+  lines.push('Diag JSON: ' + JSON.stringify(diag));
 
   if (state.lastMetrics && state.lastMetrics.raw) {
     const r = state.lastMetrics.raw;
@@ -2559,6 +2638,13 @@ function buildSessionReportText() {
 }
 
 document.getElementById('btnCopyGains').addEventListener('click', () => {
+  const diag = benchmarkDiagPayload({
+    export_mode: 'clipboard',
+    has_snapshot_before: !!state.snapshotBefore,
+    last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
+    last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
+  });
+  log('EXPORT DIAG clipboard ' + JSON.stringify(diag), 'info');
   const report = buildSessionReportText();
   navigator.clipboard.writeText(report).then(() => {
     log('Rapport complet copie dans le presse-papier', 'ok');
@@ -2571,6 +2657,13 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     if (state.domeActive && !snapshotBefore) {
       try { snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) {}
     }
+    const diag = benchmarkDiagPayload({
+      export_mode: 'file',
+      has_snapshot_before: !!snapshotBefore,
+      last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
+      last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
+    });
+    log('EXPORT DIAG file ' + JSON.stringify(diag), 'info');
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
@@ -2586,6 +2679,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
       audit_log_path: state.auditLogPath,
       kpi_bench_sessions: state.kpiBench.sessions,
       telemetry_summary: state.telemetrySummary,
+      diagnostic: diag,
       session_summary: state.domeHistory.length ? {
         count: state.domeHistory.length,
         avg_dome_gain: state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length,
@@ -2610,6 +2704,16 @@ document.getElementById('autoProcessTarget').addEventListener('change', e => {
 });
 
 document.getElementById('targetProcess').addEventListener('change', e => {
+  state.targetPid = e.target.value === '' ? null : parseInt(e.target.value, 10);
+  const label = e.target.selectedIndex >= 0 ? (e.target.options[e.target.selectedIndex].text || '') : 'Ce processus (SoulKernel)';
+  log('STATE DIAG target ' + JSON.stringify({
+    source: 'manual-target-change',
+    next_target_pid: state.targetPid,
+    next_target_label: label || 'Ce processus (SoulKernel)',
+    auto_process_target: !!state.autoProcessTarget,
+    workload: state.wl,
+    dome_history_len: state.domeHistory.length,
+  }), 'info');
   if (state.autoProcessTarget && e.target.value) {
     state.autoProcessTarget = false;
     document.getElementById('autoProcessTarget').checked = false;
@@ -3371,11 +3475,3 @@ function fallbackInvoke(cmd, args) {
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
