@@ -360,6 +360,20 @@ fn default_telemetry_pricing_path() -> std::path::PathBuf {
         .join("soulkernel_pricing.json")
 }
 
+fn default_telemetry_lifetime_path() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return std::path::PathBuf::from(appdata)
+            .join("SoulKernel")
+            .join("telemetry")
+            .join("lifetime_gains.json");
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("soulkernel_lifetime_gains.json")
+}
+
 #[tauri::command]
 fn ingest_telemetry_sample(
     sample: telemetry::TelemetryIngestRequest,
@@ -394,6 +408,14 @@ fn set_energy_pricing(
     t.set_pricing(pricing)
 }
 
+#[tauri::command]
+fn get_lifetime_gains(
+    telemetry_state: State<'_, SharedTelemetry>,
+) -> Result<telemetry::LifetimeGains, String> {
+    let t = telemetry_state.lock().map_err(|e| e.to_string())?;
+    Ok(t.lifetime())
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
@@ -425,6 +447,7 @@ fn main() {
     let telemetry_state: SharedTelemetry = Arc::new(Mutex::new(telemetry::TelemetryState::new(
         default_telemetry_path(),
         default_telemetry_pricing_path(),
+        default_telemetry_lifetime_path(),
     )));
 
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntimeState {
@@ -680,6 +703,7 @@ fn main() {
             get_telemetry_summary,
             get_energy_pricing,
             set_energy_pricing,
+            get_lifetime_gains,
         ])
         .run(tauri::generate_context!())
         .expect("SoulKernel: failed to start Tauri runtime");

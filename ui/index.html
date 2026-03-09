@@ -231,6 +231,24 @@ body.hud-only .compact-hud.hud-mini .compact-hud-item{font-size:.52rem}
 body.hud-only .compact-hud.hud-detailed .compact-hud-grid{grid-template-columns:1fr}
 body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 .hud-badge{font-size:.5rem;color:var(--muted);margin-left:.35rem}
+.green-it-panel{background:var(--s1);border:1px solid var(--io);border-left:3px solid var(--io);
+  border-radius:6px;padding:.7rem 1rem;margin-top:.6rem;
+  box-shadow:0 0 18px rgba(0,255,157,.06),inset 0 0 12px rgba(0,255,157,.02);}
+.green-it-title{font-size:.62rem;letter-spacing:.14em;color:var(--io);
+  margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem;}
+.green-it-title::before{content:'';display:inline-block;width:6px;height:6px;
+  background:var(--io);border-radius:50%;}
+.green-it-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.35rem;}
+.green-it-stat{background:var(--s2);border:1px solid var(--border);border-radius:4px;
+  padding:.35rem .5rem;text-align:center;}
+.green-it-val{font-size:.85rem;font-weight:700;color:var(--io);}
+.green-it-label{font-size:.46rem;color:var(--muted);margin-top:.1rem;letter-spacing:.08em;}
+.green-it-source{display:inline-block;font-size:.5rem;padding:.12rem .45rem;border-radius:999px;
+  border:1px solid var(--io);color:var(--io);margin-left:.5rem;}
+.green-it-lifetime{font-size:.56rem;color:var(--text);margin-top:.45rem;line-height:1.5;}
+.green-it-lifetime strong{color:var(--io);}
+.sigma-gauge.green-saving{border-color:var(--io);
+  box-shadow:0 0 12px rgba(0,255,157,.15),inset 0 0 8px rgba(0,255,157,.04);}
 </style>
 </head>
 <body>
@@ -271,6 +289,8 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="compact-hud-item"><span>Cible:</span> <strong id="hudTarget">-</strong></div>
     <div class="compact-hud-item"><span>Power:</span> <strong id="hudPower">-</strong></div>
     <div class="compact-hud-item"><span>Energie:</span> <strong id="hudEnergy">-</strong></div>
+    <div class="compact-hud-item"><span>CO₂ evite:</span> <strong id="hudCo2">-</strong></div>
+    <div class="compact-hud-item"><span>CPU·h saved:</span> <strong id="hudCpuH">-</strong></div>
   </div>
 </div>
 
@@ -410,6 +430,40 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       <div class="metric-cell"><div class="metric-val" id="mFric">—</div><div class="metric-name">FRICTION</div></div>
       <div class="metric-cell"><div class="metric-val" id="mFrein">—</div><div class="metric-name">FREIN σ</div></div>
       <div class="metric-cell"><div class="metric-val" id="mRenta">—</div><div class="metric-name">RENTABLE</div></div>
+    </div>
+
+    <!-- GREEN IT · IMPACT -->
+    <div class="green-it-panel" id="greenItPanel">
+      <div class="green-it-title">GREEN IT · IMPACT <span class="green-it-source" id="greenItSource">—</span></div>
+      <div class="green-it-grid">
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenCpuH">0</div>
+          <div class="green-it-label">CPU·H SAVED</div>
+        </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenCo2">0</div>
+          <div class="green-it-label">KG CO₂ AVOIDED</div>
+        </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenKwh">0</div>
+          <div class="green-it-label">KWH MEASURED</div>
+        </div>
+      </div>
+      <div class="green-it-grid" style="margin-top:.35rem">
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenDomeN">0</div>
+          <div class="green-it-label">ACTIVATIONS</div>
+        </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenDomeH">0</div>
+          <div class="green-it-label">DOME HOURS</div>
+        </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenDomeD">0</div>
+          <div class="green-it-label">∫𝒟 RÉELLE</div>
+        </div>
+      </div>
+      <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
     </div>
   </div>
 
@@ -1106,6 +1160,8 @@ async function ingestTelemetry(m) {
         dome_active: !!state.domeActive,
         soulram_active: !!state.soulRamActive,
         kpi_gain_median_pct: (gain != null ? Number(gain) : null),
+        cpu_pct: (m.raw.cpu_pct != null ? Number(m.raw.cpu_pct) : null),
+        pi: (state.lastPi != null ? Number(state.lastPi) : null),
       }
     });
   } catch (_) {}
@@ -1136,6 +1192,62 @@ function renderTelemetrySummary(s) {
     status.textContent = 'Tarif actif: ' + f(s.pricing?.price_per_kwh) + ' ' + ccy + '/kWh | CO2: ' + f(s.pricing?.co2_kg_per_kwh) + ' kg/kWh | ' + sensor;
     status.style.color = s.total?.has_power_data ? 'var(--io)' : 'var(--gpu)';
   }
+
+  // ── GREEN IT panel ──────────────────────────────────────────────────────
+  renderGreenItPanel(s);
+}
+
+function renderGreenItPanel(s) {
+  if (!s) return;
+  const lt = s.lifetime;
+  if (!lt) return;
+  const f2 = v => (v == null ? '0' : Number(v).toFixed(2));
+  const f3 = v => (v == null ? '0' : Number(v).toFixed(3));
+
+  // Source badge
+  const srcMap = { rapl: 'RAPL', battery: 'BATTERIE', cpu_differential: 'CPU DELTA' };
+  set('greenItSource', srcMap[s.power_source] || s.power_source || '--');
+
+  // Main stats
+  set('greenCpuH', f2(lt.total_cpu_hours_saved));
+  set('greenCo2', f3(lt.total_co2_avoided_kg));
+  set('greenKwh', lt.has_real_power ? f3(lt.total_energy_kwh) : '--');
+  set('greenDomeN', String(lt.total_dome_activations || 0));
+  set('greenDomeH', f2(lt.total_dome_hours));
+  set('greenDomeD', f2(lt.total_dome_gain_integral));
+
+  // Lifetime text
+  const ltEl = document.getElementById('greenItLifetime');
+  if (ltEl && lt.first_launch_ts > 0) {
+    const firstDate = new Date(lt.first_launch_ts).toLocaleDateString('fr-FR');
+    let text = `Depuis le ${firstDate} : `;
+    text += `<strong>${lt.total_dome_activations}</strong> activations, `;
+    text += `<strong>${f2(lt.total_dome_hours)}</strong> h de dome, `;
+    text += `<strong>${f2(lt.total_cpu_hours_saved)}</strong> CPU-h economisees`;
+    if (lt.has_real_power) {
+      text += ` | <strong>${f3(lt.total_energy_kwh)}</strong> kWh mesures`;
+      text += `, <strong>${f3(lt.total_co2_avoided_kg)}</strong> kg CO2 evites`;
+      text += `, <strong>${f2(lt.total_cost_saved)}</strong> ${s.pricing?.currency || 'EUR'} economises`;
+    }
+    if (lt.avg_kpi_gain_pct != null) {
+      text += ` | gain KPI median: <strong>${Number(lt.avg_kpi_gain_pct).toFixed(1)}%</strong>`;
+    }
+    ltEl.innerHTML = text;
+  } else if (ltEl) {
+    ltEl.textContent = 'Premier lancement en attente de donnees...';
+  }
+
+  // Sigma gauge green indicator
+  const sigmaGauge = document.querySelector('.sigma-gauge');
+  if (sigmaGauge) {
+    sigmaGauge.classList.toggle('green-saving', !!state.domeActive && lt.total_cpu_hours_saved > 0);
+  }
+
+  // HUD compact enrichment
+  const hudCo2 = document.getElementById('hudCo2');
+  if (hudCo2) hudCo2.textContent = lt.has_real_power ? f3(lt.total_co2_avoided_kg) + ' kg' : '--';
+  const hudCpuH = document.getElementById('hudCpuH');
+  if (hudCpuH) hudCpuH.textContent = f2(lt.total_cpu_hours_saved) + ' h';
 }
 
 async function refreshTelemetrySummary(force = false) {
@@ -1932,16 +2044,43 @@ function renderGainsHistory() {
   const summary = document.getElementById('gainsSummary');
   const listEl = document.getElementById('gainsList');
   if (state.domeHistory.length === 0) {
-    summary.textContent = '- Aucune activation encore';
+    const lt = state.telemetrySummary?.lifetime;
+    if (lt && lt.total_dome_activations > 0) {
+      summary.textContent = `Vie entiere : ${lt.total_dome_activations} activation(s), D cumule = ${Number(lt.total_dome_gain_integral || 0).toFixed(2)}`;
+    } else {
+      summary.textContent = '- Aucune activation encore';
+    }
     listEl.innerHTML = '';
     return;
   }
   const n = state.domeHistory.length;
   const avgD = state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / n;
-  summary.textContent = `Session: ${n} dome(s) - D moyen = ${avgD.toFixed(2)}`;
+  const lt = state.telemetrySummary?.lifetime;
+  const lifetimeN = lt?.total_dome_activations || n;
+  summary.textContent = `Vie entiere : ${lifetimeN} activation(s), D cumule = ${Number(lt?.total_dome_gain_integral || 0).toFixed(2)} | Session: ${n} dome(s), D moy = ${avgD.toFixed(2)}`;
   listEl.innerHTML = state.domeHistory.map(e =>
     `<div class="gains-row"><span>${e.ts}</span><span>${e.workload}</span><span class="gains-pi">pi=${e.pi.toFixed(4)}</span><span class="gains-d">D=${e.domeGain.toFixed(2)}</span><span>${e.targetPid ? 'PID ' + e.targetPid : '-'}</span></div>`
   ).join('');
+  // Persist dome history to localStorage
+  saveDomeHistory();
+}
+
+function saveDomeHistory() {
+  try {
+    localStorage.setItem('soulkernel.dome_history', JSON.stringify(state.domeHistory.slice(0, MAX_DOME_HISTORY)));
+  } catch (_) {}
+}
+
+function loadDomeHistory() {
+  try {
+    const raw = localStorage.getItem('soulkernel.dome_history');
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length > 0) {
+      state.domeHistory = arr.slice(0, MAX_DOME_HISTORY);
+      renderGainsHistory();
+    }
+  } catch (_) {}
 }
 
 function collectVisibleLogLines() {
@@ -2630,7 +2769,8 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'audit_log_event') return Promise.resolve(null);
   if (cmd === 'get_audit_log_path') return Promise.resolve('Hors Tauri');
   if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
-  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: {}, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false });
+  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: {}, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false } });
+  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false });
   if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
   if (cmd === 'set_energy_pricing') return Promise.resolve(null);
   if (cmd === 'open_system_hud') return Promise.resolve(null);
@@ -2654,6 +2794,7 @@ function fallbackInvoke(cmd, args) {
   setHudInteractive(!!state.hudInteractive);
   setHudVisible(!!state.hudVisible);
   try { await invoke('set_policy_mode', { mode: state.policyMode }); } catch (_) {}
+  loadDomeHistory();
   log('SoulKernel demarre - ' + (hasTauri ? 'Tauri runtime (metriques reelles)' : 'Hors Tauri - lancez cargo tauri dev pour les metriques'), hasTauri ? 'ok' : 'warn');
   loadPlatformInfo();
   updateSystemStatus(null);

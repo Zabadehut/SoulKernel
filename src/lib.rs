@@ -11,4 +11,4 @@ pub use formula::{FormulaResult, WorkloadProfile};
 pub use metrics::ResourceState;
 pub use orchestrator::DomeResult;
 pub use platform::PlatformInfo;
-pub use telemetry::{EnergyPricing, TelemetrySummary};
+pub use telemetry::{EnergyPricing, LifetimeGains, TelemetrySummary};

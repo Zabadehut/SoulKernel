@@ -108,6 +108,32 @@ where:
   κ      = stability sensitivity parameter
 ```
 
+## Green IT — Preuve d'économie d'énergie
+
+SoulKernel mesure et prouve l'impact énergétique en temps réel, **même sur desktop sans batterie**.
+
+### Deux niveaux de preuve (jamais d'estimation)
+
+| Source | Disponibilité | Ce qui est mesuré |
+|--------|---------------|--------------------|
+| **RAPL** (Intel/AMD powercap) | Tout x86 (desktop + laptop) | Watts réels → kWh, coût (€), kg CO₂ |
+| **Batterie** (`power_supply`) | Laptops | Watts réels → kWh, coût, CO₂ |
+| **Différentiel CPU** | **Universel** | CPU·heures économisées = ∫(CPU%_off − CPU%_on) × dt |
+
+Le différentiel CPU est toujours disponible : il compare l'utilisation CPU mesurée quand le dôme est actif vs inactif. C'est un calcul sur données réelles, pas une estimation.
+
+### Compteur vie entière
+
+Dès le premier lancement, SoulKernel accumule dans `lifetime_gains.json` :
+- Nombre total d'activations dome
+- Heures de dome cumulées
+- CPU·heures économisées (différentiel mesuré)
+- kWh mesurés (quand RAPL/batterie disponible)
+- kg CO₂ évités + coût économisé
+- Intégrale réelle Σ(πₘ × dtₘ) — gain dome cumulé sur données réelles
+
+Ces données sont affichées dans le panneau **GREEN IT · IMPACT** au centre de l'UI et dans le HUD compact.
+
 ## What gets written to the kernel
 
 ### Linux
