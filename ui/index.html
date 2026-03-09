@@ -15,9 +15,6 @@
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;font-size:14px;
   min-height:100vh;overflow-x:hidden;}
-body::before{content:';position:fixed;inset:0;pointer-events:none;z-index:999;
-  background:repeating-linear-gradient(0deg,transparent,transparent 2px,
-  rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px);}
 header{display:flex;align-items:center;justify-content:space-between;
   padding:.6rem 1.4rem;background:var(--s1);border-bottom:1px solid var(--border);
   position:sticky;top:0;z-index:100;}
@@ -42,7 +39,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 
 main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto auto 1fr auto;
   gap:1px;background:var(--border);min-height:calc(100vh - 46px);}
-.panel{background:var(--bg);padding:1rem 1.05rem;}
+.panel{background:var(--bg);padding:1rem 1.05rem;contain:layout paint style;}
 .panel-title{font-size:.66rem;letter-spacing:.14em;color:var(--muted);
   margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--s3);
   display:flex;align-items:center;gap:.5rem;}
@@ -54,9 +51,9 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .res-name{font-size:.65rem;letter-spacing:.08em;}
 .res-val{font-size:.9rem;font-weight:700;}
 .bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
-.bar-fill{height:100%;border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1);position:relative;}
+.bar-fill{height:100%;border-radius:2px;transition:transform .35s cubic-bezier(.4,0,.2,1);position:relative;transform-origin:left center;transform:scaleX(0);will-change:transform;}
 .bar-fill::after{content:';position:absolute;right:0;top:0;bottom:0;width:6px;
-  background:inherit;filter:brightness(2);border-radius:0 2px 2px 0;}
+  background:inherit;border-radius:0 2px 2px 0;opacity:.8;}
 .bar-cpu{background:linear-gradient(90deg,#005f6e,var(--cpu));}
 .bar-mem{background:linear-gradient(90deg,#4a1880,var(--mem));}
 .bar-lam{background:linear-gradient(90deg,#005f3a,var(--io));}
@@ -66,17 +63,17 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 
 .formula-zone{background:var(--s1);border:1px solid var(--s3);border-left:3px solid var(--s3);
   border-radius:6px;padding:1rem 1.2rem;margin-bottom:.8rem;text-align:center;
-  transition:border-color .3s,box-shadow .3s;overflow-x:auto;}
+  transition:border-color .2s;overflow-x:auto;contain:layout paint;}
 .formula-zone.active{border-left-color:var(--cpu);
-  box-shadow:0 0 30px rgba(0,229,255,.12),inset 0 0 20px rgba(0,229,255,.03);}
+  box-shadow:inset 0 0 0 1px rgba(0,229,255,.12);}
 .formula-main{font-size:.75rem;line-height:2.2;color:var(--text);}
 .f-sym{color:var(--cpu);font-style:italic;}
 .f-green{color:var(--io);}.f-purple{color:var(--mem);}
 .f-red{color:var(--stress);}.f-op{color:var(--muted);}
 .eq-result{margin-top:.5rem;font-size:1.5rem;font-weight:700;color:var(--cpu);
-  text-shadow:0 0 20px rgba(0,229,255,.5);transition:color .3s;}
-.eq-result.high{color:var(--io);text-shadow:0 0 20px rgba(0,255,157,.4);}
-.eq-result.low{color:var(--stress);text-shadow:0 0 20px rgba(255,59,92,.4);}
+  transition:color .2s;}
+.eq-result.high{color:var(--io);}
+.eq-result.low{color:var(--stress);}
 .formula-label{font-size:.52rem;color:var(--muted);margin-top:.25rem;letter-spacing:.12em;}
 
 .dome-vis{background:var(--s1);border:1px solid var(--s3);border-radius:6px;
@@ -85,8 +82,8 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .dome-bars{display:grid;grid-template-columns:repeat(5,1fr);gap:.3rem;
   align-items:end;height:55px;}
 .dome-bar-wrap{display:flex;flex-direction:column;align-items:center;gap:.2rem;}
-.dome-bar-col{width:100%;min-height:3px;border-radius:2px 2px 0 0;
-  transition:height .5s cubic-bezier(.4,0,.2,1);}
+.dome-bar-col{width:100%;height:50px;min-height:3px;border-radius:2px 2px 0 0;
+  transition:transform .35s cubic-bezier(.4,0,.2,1);transform-origin:center bottom;transform:scaleY(.06);will-change:transform;}
 .dome-bar-label{font-size:.48rem;color:var(--muted);}
 
 .metrics-row{display:grid;grid-template-columns:repeat(4,1fr);
@@ -114,9 +111,9 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .sigma-gauge{position:relative;height:80px;background:var(--s1);
   border:1px solid var(--s3);border-radius:6px;overflow:hidden;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.2rem;}
-.sigma-fill{position:absolute;bottom:0;left:0;right:0;
-  background:linear-gradient(180deg,rgba(255,59,92,.6),rgba(255,59,92,.1));
-  transition:height .5s;}
+.sigma-fill{position:absolute;bottom:0;left:0;right:0;top:0;
+  background:linear-gradient(180deg,rgba(255,59,92,.55),rgba(255,59,92,.1));
+  transition:transform .35s;transform-origin:center bottom;transform:scaleY(0);will-change:transform;}
 .sigma-val{font-size:1.3rem;font-weight:700;color:var(--stress);position:relative;z-index:1;}
 .sigma-label{font-size:.52rem;color:var(--muted);letter-spacing:.08em;position:relative;z-index:1;}
 
@@ -151,7 +148,7 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .gains-actions{display:flex;gap:.35rem;margin-top:.3rem;flex-wrap:wrap;}
 .gains-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.4rem;font-size:.7rem;}
 .gains-summary{color:var(--io);margin-bottom:.3rem;}
-.gains-list{max-height:120px;overflow-y:auto;}
+.gains-list{max-height:120px;overflow-y:auto;contain:layout paint;content-visibility:auto;}
 .gains-list .gains-row{display:flex;gap:.5rem;padding:.15rem 0;border-bottom:1px solid var(--border);color:var(--muted);}
 .gains-list .gains-row:last-child{border-bottom:none;}
 .gains-list .gains-pi{color:var(--cpu);min-width:3rem;}
@@ -167,7 +164,7 @@ input[type=range].mem-range::-webkit-slider-thumb{background:var(--mem);}
 input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
 
 .log-panel{flex:1;background:var(--s1);border:1px solid var(--s3);
-  border-radius:6px;padding:.6rem;overflow-y:auto;max-height:280px;}
+  border-radius:6px;padding:.6rem;overflow-y:auto;max-height:280px;contain:layout paint;content-visibility:auto;}
 .log-entry{font-size:.56rem;line-height:1.7;border-bottom:1px solid rgba(26,51,85,.4);
   padding:.12rem 0;display:flex;gap:.5rem;}
 .log-ts{color:var(--muted);min-width:48px;}
@@ -194,21 +191,23 @@ input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
 .feat-tag{font-size:.5rem;padding:.15rem .45rem;border-radius:999px;
   border:1px solid var(--border);color:var(--muted);}
 .feat-tag.active{border-color:var(--io);color:var(--io);}
-.pilotage-card{background:var(--s1);border:1px solid var(--s3);border-radius:6px;padding:.55rem;}
+.pilotage-card{background:var(--s1);border:1px solid var(--s3);border-radius:6px;padding:.55rem;contain:layout paint style;}
 .pilotage-title{font-size:.62rem;color:var(--io);letter-spacing:.08em;margin-bottom:.45rem;border-bottom:1px solid var(--s3);padding-bottom:.28rem;}
 .advanced-fold{margin-top:.45rem;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:.25rem .35rem}
 .advanced-fold>summary{cursor:pointer;list-style:none;color:var(--mem);font-size:.58rem;letter-spacing:.08em}
 .advanced-fold>summary::-webkit-details-marker{display:none}
 .advanced-fold>summary::before{content:'+';display:inline-block;margin-right:.35rem;color:var(--cpu)}
 .advanced-fold[open]>summary::before{content:'-'} 
-.advanced-stack{margin-top:.45rem;display:flex;flex-direction:column;gap:.35rem}
+.advanced-stack{margin-top:.45rem;display:flex;flex-direction:column;gap:.35rem;contain:layout paint;content-visibility:auto}
 .panel-insights{grid-column:2;}
 .insights-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;}
 .fold{background:var(--s1);border:1px solid var(--s3);border-radius:6px;padding:.35rem;}
 .fold summary{cursor:pointer;color:var(--cpu);font-size:.62rem;letter-spacing:.08em;margin-bottom:.4rem;}
 .fold[open] summary{color:var(--io);}
 .fold .log-panel{max-height:320px;}
-.compact-hud{display:none;position:fixed;left:12px;top:58px;z-index:1200;background:rgba(11,19,32,.94);border:1px solid var(--border);border-radius:8px;padding:.55rem .65rem;min-width:300px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.fold, .advisor-panel, .proof-panel, .gains-panel, .benchmark-column{contain:layout paint style;}
+.fold[open] > :not(summary), .advanced-fold[open] > :not(summary){content-visibility:auto;}
+.compact-hud{display:none;position:fixed;left:12px;top:58px;z-index:1200;background:rgba(11,19,32,.94);border:1px solid var(--border);border-radius:8px;padding:.55rem .65rem;min-width:300px}
 .compact-hud-title{font-size:.56rem;letter-spacing:.12em;color:var(--cpu);margin-bottom:.35rem}
 .compact-hud-grid{display:grid;grid-template-columns:1fr 1fr;gap:.25rem .7rem}
 .compact-hud-item{font-size:.58rem;color:var(--text);line-height:1.35}
@@ -245,7 +244,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 .hud-badge{font-size:.5rem;color:var(--muted);margin-left:.35rem}
 .green-it-panel{background:var(--s1);border:1px solid var(--io);border-left:3px solid var(--io);
   border-radius:6px;padding:.7rem 1rem;margin-top:.6rem;
-  box-shadow:0 0 18px rgba(0,255,157,.06),inset 0 0 12px rgba(0,255,157,.02);}
+  box-shadow:inset 0 0 0 1px rgba(0,255,157,.05);contain:layout paint style;}
 .green-it-title{font-size:.62rem;letter-spacing:.14em;color:var(--io);
   margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem;}
 .green-it-title::before{content:'';display:inline-block;width:6px;height:6px;
@@ -538,7 +537,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   <div class="panel panel-insights">
     <div class="panel-title">SESSION � PREUVE / GAINS / LOG</div>
     <div class="insights-grid">
-      <details class="fold" open>
+      <details class="fold" id="proofFold" open>
         <summary>Preuve avant/apr�s</summary>
         <div class="proof-panel" id="proofPanel">
           <div class="proof-placeholder" id="proofPlaceholder">Activer le dome pour afficher une comparaison lisible avant/apres.</div>
@@ -929,6 +928,7 @@ let pollTimer = null;
 let pendingUiMetric = null;
 let uiFrameScheduled = false;
 let lastMetricsAuditTs = 0;
+let lastRenderedMetricKey = null;
 
 // Polling loop (adaptive + low-overhead)
 
@@ -953,11 +953,28 @@ function scheduleMetricRender(m) {
     const mm = pendingUiMetric;
     pendingUiMetric = null;
     if (!mm) return;
+    const renderKey = JSON.stringify([
+      Number(mm.raw?.cpu_pct || 0).toFixed(1),
+      Number(mm.raw?.cpu_clock_mhz || 0).toFixed(0),
+      Number(mm.raw?.mem_used_mb || 0),
+      Number(mm.raw?.ram_clock_mhz || 0).toFixed(0),
+      Number(mm.sigma || 0).toFixed(3),
+      Number(mm.raw?.gpu_pct || 0).toFixed(1),
+      Number(mm.raw?.gpu_core_clock_mhz || 0).toFixed(0),
+      Number(mm.raw?.gpu_mem_clock_mhz || 0).toFixed(0),
+      Number(mm.raw?.io_read_mb_s || 0).toFixed(2),
+      Number(mm.raw?.io_write_mb_s || 0).toFixed(2),
+      state.domeActive,
+      state.machineActivity || 'active',
+      state.viewMode,
+    ]);
+    if (renderKey === lastRenderedMetricKey) return;
+    lastRenderedMetricKey = renderKey;
     renderMetrics(mm);
     renderFormula(mm);
     renderTuningAdvice(mm);
-    renderProofPanel();
-    renderCompactHud(mm);
+    if (state.domeActive || state.snapshotBefore) renderProofPanel();
+    if (state.hudVisible || HUD_ONLY) renderCompactHud(mm);
   });
 }
 let _metricsLoggedOnce = false;
@@ -2040,8 +2057,9 @@ function renderMetrics(m) {
     ? `R:${m.raw.io_read_mb_s.toFixed(0)} W:${m.raw.io_write_mb_s.toFixed(0)} MB/s` : na;
 
   // sigma
-  document.getElementById('sigmaFill').style.height = (m.sigma * 100) + '%';
-  document.getElementById('sigmaVal').textContent    = m.sigma.toFixed(3);
+  const sigmaFill = document.getElementById('sigmaFill');
+  if (sigmaFill) sigmaFill.style.transform = `scaleY(${Number(m.sigma || 0).toFixed(4)})`;
+  set('sigmaVal', m.sigma.toFixed(3));
 
   // Dynamic sigma sub-label based on platform
   const sigmaLbl = document.getElementById('sigmaSubLabel');
@@ -2098,8 +2116,11 @@ function setBar(id, val, _label) {
   const vEl = document.getElementById('v'+id);
   const bEl = document.getElementById('b'+id);
   const num = (val != null && typeof val === 'number') ? val : 0;
-  vEl.textContent = val != null ? num.toFixed(3) : (state.naLabel || 'N/A');
-  bEl.style.width = (num * 100).toFixed(1) + '%';
+  if (vEl) {
+    const txt = val != null ? num.toFixed(3) : (state.naLabel || 'N/A');
+    if (vEl.textContent !== txt) vEl.textContent = txt;
+  }
+  if (bEl) bEl.style.transform = `scaleX(${num.toFixed(4)})`;
 }
 
 function renderFormula(m) {
@@ -2162,7 +2183,8 @@ function renderFormula(m) {
 
   // dome bars = α_i · r_i · 50px
   alpha.forEach((a,i) => {
-    document.getElementById('dc'+i).style.height = (a * r[i] * 50).toFixed(1)+'px';
+    const el = document.getElementById('dc'+i);
+    if (el) el.style.transform = `scaleY(${Math.max(0.06, a * r[i]).toFixed(4)})`;
   });
 }
 
@@ -2288,6 +2310,8 @@ function formatDelta(delta, unit, invertGood) {
 }
 
 function renderProofPanel() {
+  const fold = document.getElementById('proofFold');
+  if (fold && !fold.open && !state.domeActive) return;
   const placeholder = document.getElementById('proofPlaceholder');
   const compare = document.getElementById('proofCompare');
   const beforeEl = document.getElementById('proofBefore');
@@ -3058,6 +3082,7 @@ function setViewMode(mode) {
 }
 
 function renderCompactHud(m) {
+  if (!HUD_ONLY && !state.hudVisible) return;
   if (!m || !m.raw) return;
   const t = state.telemetrySummary || null;
   const ccy = (t && t.pricing && t.pricing.currency) ? t.pricing.currency : 'EUR';
@@ -3137,7 +3162,12 @@ function renderCompactHud(m) {
   });
 }
 // ─── Utils ────────────────────────────────────────────────────────────────────
-function set(id, txt) { const el=document.getElementById(id); if(el) el.textContent=txt; }
+function set(id, txt) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const next = String(txt);
+  if (el.textContent !== next) el.textContent = next;
+}
 function updateDomeBadge(on) {
   document.getElementById('domeStatus').textContent = on ? 'DOME ACTIF' : 'DOME IDLE';
   document.getElementById('domeStatus').className   = 'status-pill ' + (on ? 'pill-run' : 'pill-off');
@@ -3308,13 +3338,6 @@ function fallbackInvoke(cmd, args) {
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
 
 
 
