@@ -237,7 +237,11 @@ fn rapl_total_energy_uj() -> Option<f64> {
     }
 
     visit(root, &mut sum, &mut found, 0);
-    if found { Some(sum) } else { None }
+    if found {
+        Some(sum)
+    } else {
+        None
+    }
 }
 
 fn sample_battery_power_watts() -> Option<f64> {
@@ -280,7 +284,11 @@ fn sample_battery_power_watts() -> Option<f64> {
         }
     }
 
-    if found { Some(total_w) } else { None }
+    if found {
+        Some(total_w)
+    } else {
+        None
+    }
 }
 pub async fn apply_dome(
     profile: &WorkloadProfile,
@@ -383,16 +391,71 @@ fn write_cpu_governor(governor: &str) -> (String, bool) {
     (format!("CPU governor → {}", governor), any_ok)
 }
 
+/// Detect the primary block device (first non-virtual disk with a scheduler).
+fn detect_primary_block_device() -> Option<String> {
+    let entries = std::fs::read_dir("/sys/block").ok()?;
+    let mut candidates: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("loop")
+            || name.starts_with("zram")
+            || name.starts_with("dm-")
+            || name.starts_with("sr")
+            || name.starts_with("ram")
+        {
+            continue;
+        }
+        let sched_path = format!("/sys/block/{}/queue/scheduler", name);
+        if Path::new(&sched_path).exists() {
+            candidates.push(name);
+        }
+    }
+    // Prefer NVMe, then sd*, then vd*, then others
+    candidates.sort_by(|a, b| {
+        fn priority(name: &str) -> u8 {
+            if name.starts_with("nvme") {
+                0
+            } else if name.starts_with("sd") {
+                1
+            } else if name.starts_with("vd") {
+                2
+            } else {
+                3
+            }
+        }
+        priority(a).cmp(&priority(b)).then(a.cmp(b))
+    });
+    candidates.into_iter().next()
+}
+
 fn write_io_scheduler(sched: &str) -> (String, bool) {
-    let path = "/sys/block/sda/queue/scheduler"; // TODO: detect primary disk
-    let ok = std::fs::write(path, sched).is_ok();
-    (format!("I/O scheduler → {}", sched), ok)
+    let dev = match detect_primary_block_device() {
+        Some(d) => d,
+        None => {
+            return (
+                format!("I/O scheduler → {} (no block device found)", sched),
+                false,
+            )
+        }
+    };
+    let path = format!("/sys/block/{}/queue/scheduler", dev);
+    let ok = std::fs::write(&path, sched).is_ok();
+    (format!("I/O scheduler ({}) → {}", dev, sched), ok)
 }
 
 fn write_read_ahead(kb: u64) -> (String, bool) {
-    let path = "/sys/block/sda/queue/read_ahead_kb";
-    let ok = std::fs::write(path, kb.to_string()).is_ok();
-    (format!("read_ahead_kb → {}", kb), ok)
+    let dev = match detect_primary_block_device() {
+        Some(d) => d,
+        None => {
+            return (
+                format!("read_ahead_kb → {} (no block device found)", kb),
+                false,
+            )
+        }
+    };
+    let path = format!("/sys/block/{}/queue/read_ahead_kb", dev);
+    let ok = std::fs::write(&path, kb.to_string()).is_ok();
+    (format!("read_ahead_kb ({}) → {}", dev, kb), ok)
 }
 
 fn resize_zram(factor: f64) -> (String, bool) {
@@ -410,21 +473,33 @@ fn resize_zram(factor: f64) -> (String, bool) {
     (format!("zRAM resize → {} MB", new_size / 1024 / 1024), ok)
 }
 
+/// Returns the online CPU range string (e.g. "0-7").
+fn available_cpu_range() -> String {
+    if let Ok(range) = std::fs::read_to_string("/sys/devices/system/cpu/online") {
+        let trimmed = range.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    let count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    format!("0-{}", count.saturating_sub(1))
+}
+
 fn pin_process_to_cpuset() -> (String, bool) {
-    // Create a SoulKernel-specific cgroup and move current process into it
     let cg_path = "/sys/fs/cgroup/soulkernel";
+    let cpu_range = available_cpu_range();
     let ok = (|| -> Result<()> {
         std::fs::create_dir_all(cg_path)?;
-        // Pin to performance cores (CPU 0-3 on a typical system)
-        std::fs::write(format!("{}/cpuset.cpus", cg_path), "0-3").context("cpuset.cpus")?;
-        // Move current process
+        std::fs::write(format!("{}/cpuset.cpus", cg_path), &cpu_range).context("cpuset.cpus")?;
         let pid = std::process::id();
         std::fs::write(format!("{}/cgroup.procs", cg_path), pid.to_string())
             .context("cgroup.procs")?;
         Ok(())
     })()
     .is_ok();
-    ("cgroup cpuset → CPU 0-3".into(), ok)
+    (format!("cgroup cpuset → CPU {}", cpu_range), ok)
 }
 
 fn drop_caches_level(level: u8) -> (String, bool) {
@@ -554,6 +629,3 @@ fn run_cmd(bin: &str, args: &[&str], label: &str) -> (String, bool) {
         .unwrap_or(false);
     (label.into(), ok)
 }
-
-
-

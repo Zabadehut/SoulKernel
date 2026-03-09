@@ -157,3 +157,145 @@ fn resource_vec(s: &ResourceState) -> [f64; 5] {
         s.gpu.unwrap_or(0.0),
     ]
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::{RawMetrics, ResourceState};
+
+    fn mock_state(cpu: f64, mem: f64, sigma: f64) -> ResourceState {
+        ResourceState {
+            cpu,
+            mem,
+            compression: Some(0.5),
+            io_bandwidth: Some(0.3),
+            gpu: Some(0.2),
+            sigma,
+            epsilon: [0.05, 0.08, 0.03, 0.04, 0.02],
+            raw: RawMetrics {
+                cpu_pct: cpu * 100.0,
+                mem_used_mb: 4096,
+                mem_total_mb: 16384,
+                swap_used_mb: 0,
+                swap_total_mb: 8192,
+                zram_used_mb: None,
+                io_read_mb_s: Some(150.0),
+                io_write_mb_s: Some(50.0),
+                gpu_pct: Some(20.0),
+                power_watts: None,
+                psi_cpu: None,
+                psi_mem: None,
+                on_battery: None,
+                battery_percent: None,
+                platform: "Test".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn pi_is_in_unit_range() {
+        for profile in WorkloadProfile::all() {
+            let state = mock_state(0.5, 0.7, 0.3);
+            let result = compute(&state, &profile, 2.0);
+            assert!(result.pi >= 0.0, "π must be ≥ 0 for {}", profile.name);
+            assert!(result.pi <= 1.0, "π must be ≤ 1 for {}", profile.name);
+        }
+    }
+
+    #[test]
+    fn friction_is_in_unit_range() {
+        let state = mock_state(0.5, 0.7, 0.3);
+        let profile = WorkloadProfile::from_name("es").unwrap();
+        let result = compute(&state, &profile, 2.0);
+        assert!(result.friction >= 0.0 && result.friction <= 1.0);
+    }
+
+    #[test]
+    fn brake_decreases_with_sigma() {
+        let profile = WorkloadProfile::from_name("compile").unwrap();
+        let r_low = compute(&mock_state(0.3, 0.8, 0.1), &profile, 2.0);
+        let r_high = compute(&mock_state(0.3, 0.8, 0.9), &profile, 2.0);
+        assert!(
+            r_low.brake > r_high.brake,
+            "brake must decrease as sigma increases"
+        );
+    }
+
+    #[test]
+    fn dome_gain_higher_for_longer_duration() {
+        let state = mock_state(0.4, 0.8, 0.2);
+        let short = WorkloadProfile {
+            name: "short".into(),
+            alpha: [0.2, 0.35, 0.2, 0.25, 0.0],
+            duration_estimate_s: 10.0,
+        };
+        let long = WorkloadProfile {
+            name: "long".into(),
+            alpha: [0.2, 0.35, 0.2, 0.25, 0.0],
+            duration_estimate_s: 300.0,
+        };
+        let r_short = compute(&state, &short, 2.0);
+        let r_long = compute(&state, &long, 2.0);
+        assert!(r_long.dome_gain > r_short.dome_gain);
+    }
+
+    #[test]
+    fn b_idle_positive_when_resources_available() {
+        let state = mock_state(0.3, 0.8, 0.2);
+        let profile = WorkloadProfile::from_name("es").unwrap();
+        let result = compute(&state, &profile, 2.0);
+        assert!(
+            result.b_idle > 0.0,
+            "B_idle must be positive with available resources"
+        );
+    }
+
+    #[test]
+    fn all_profiles_exist() {
+        let profiles = WorkloadProfile::all();
+        assert!(profiles.len() >= 7);
+        for name in &["es", "compile", "gamer", "ai", "backup", "sqlite", "oracle"] {
+            assert!(
+                WorkloadProfile::from_name(name).is_some(),
+                "Missing profile: {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn alpha_weights_sum_to_one() {
+        for profile in WorkloadProfile::all() {
+            let sum: f64 = profile.alpha.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-10,
+                "α weights must sum to 1.0 for {}: got {}",
+                profile.name,
+                sum
+            );
+        }
+    }
+
+    #[test]
+    fn zero_kappa_means_no_brake() {
+        let state = mock_state(0.5, 0.7, 0.5);
+        let profile = WorkloadProfile::from_name("es").unwrap();
+        let result = compute(&state, &profile, 0.0);
+        assert!(
+            (result.brake - 1.0).abs() < 1e-10,
+            "brake must be 1.0 when κ=0"
+        );
+    }
+
+    #[test]
+    fn dimension_weights_consistent() {
+        let state = mock_state(0.5, 0.7, 0.3);
+        let profile = WorkloadProfile::from_name("gamer").unwrap();
+        let result = compute(&state, &profile, 2.0);
+        for (i, dw) in result.dimension_weights.iter().enumerate() {
+            assert!(*dw >= 0.0, "dimension_weight[{}] must be ≥ 0", i);
+        }
+    }
+}

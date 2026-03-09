@@ -3,19 +3,28 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod audit;
 mod formula;
+mod hud;
 mod metrics;
 mod orchestrator;
 mod platform;
 mod telemetry;
 
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State, WindowEvent};
-use tauri::PhysicalPosition;
-use tokio::sync::mpsc;
 use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+use tokio::sync::mpsc;
+
+use audit::{audit_write, default_audit_path, now_ms_local, AuditState, SharedAudit};
+use hud::{
+    apply_hud_window_mode, cleanup_hud_before_exit, HudHealthState, HudOverlayData,
+    HudRuntimeState, SharedHud, SharedHudData, SharedHudHealth, SharedHudTx,
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
 
 pub struct SoulKernelState {
     pub dome_active: bool,
@@ -28,61 +37,7 @@ pub struct SoulKernelState {
 }
 
 type SharedState = Arc<Mutex<SoulKernelState>>;
-type SharedAudit = Arc<Mutex<AuditState>>;
 type SharedTelemetry = Arc<Mutex<telemetry::TelemetryState>>;
-type SharedHud = Arc<Mutex<HudRuntimeState>>;
-type SharedHudTx = Arc<Mutex<Option<mpsc::UnboundedSender<HudOverlayData>>>>;
-type SharedHudData = Arc<Mutex<Option<HudOverlayData>>>;
-type SharedHudHealth = Arc<Mutex<HudHealthState>>;
-
-#[derive(Default)]
-pub struct AuditState {
-    pub path: Option<std::path::PathBuf>,
-}
-
-pub struct HudRuntimeState {
-    pub visible: bool,
-    pub interactive: bool,
-    pub preset: String,
-    pub opacity: f64,
-    pub display_index: Option<usize>,
-}
-pub struct HudHealthState {
-    pub last_ready_ms: u64,
-    pub last_reload_ms: u64,
-    pub reload_count: u32,
-    pub ready_count: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DisplayInfo {
-    pub index: usize,
-    pub name: String,
-    pub width: u32,
-    pub height: u32,
-    pub x: i32,
-    pub y: i32,
-    pub scale_factor: f64,
-    pub is_primary: bool,
-}
-
-#[derive(serde::Serialize)]
-struct AuditEntry {
-    ts_ms: u64,
-    category: String,
-    action: String,
-    level: Option<String>,
-    data: Option<serde_json::Value>,
-}
-
-static AUDIT_FILE: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
-
-fn now_ms_local() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
-}
 
 #[derive(serde::Serialize)]
 pub struct SoulRamStatusResponse {
@@ -110,367 +65,8 @@ pub struct KpiProbeResult {
     pub stderr_tail: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct HudOverlayData {
-    pub dome: String,
-    pub sigma: String,
-    pub pi: String,
-    pub cpu: String,
-    pub ram: String,
-    pub target: String,
-    pub power: String,
-    pub energy: String,
-}
+// ─── Tauri commands ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct HudConfigEvent {
-    pub preset: String,
-    pub interactive: bool,
-    pub opacity: f64,
-}
-
-fn preset_to_size(preset: &str) -> (f64, f64) {
-    match preset {
-        "mini" => (280.0, 148.0),
-        "detailed" => (460.0, 280.0),
-        _ => (360.0, 210.0),
-    }
-}
-
-fn list_displays_internal(app: &tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
-    let primary_name = app.primary_monitor().map_err(|e| e.to_string())?.and_then(|m| m.name().cloned());
-    let mons = app.available_monitors().map_err(|e| e.to_string())?;
-    let mut out = Vec::with_capacity(mons.len());
-    for (idx, m) in mons.iter().enumerate() {
-        let name = m.name().cloned().unwrap_or_else(|| format!("Display {}", idx + 1));
-        out.push(DisplayInfo {
-            index: idx,
-            name: name.clone(),
-            width: m.size().width,
-            height: m.size().height,
-            x: m.position().x,
-            y: m.position().y,
-            scale_factor: m.scale_factor(),
-            is_primary: primary_name.as_ref().map(|n| n.as_str() == name.as_str()).unwrap_or(false),
-        });
-    }
-    Ok(out)
-}
-
-fn pick_display(app: &tauri::AppHandle, index: Option<usize>) -> Result<Option<DisplayInfo>, String> {
-    let list = list_displays_internal(app)?;
-    if list.is_empty() { return Ok(None); }
-    if let Some(i) = index {
-        if let Some(d) = list.iter().find(|d| d.index == i) { return Ok(Some(d.clone())); }
-    }
-    if let Some(d) = list.iter().find(|d| d.is_primary) { return Ok(Some(d.clone())); }
-    Ok(list.into_iter().next())
-}
-
-fn ensure_hud_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    if let Some(w) = app.get_webview_window("hud") {
-        return Ok(w);
-    }
-    let url = tauri::WebviewUrl::App("hud.html".into());
-    tauri::WebviewWindowBuilder::new(app, "hud", url)
-        .title("SoulKernel HUD")        .initialization_script(
-            r#"
-            (() => {
-              try {
-                const s = document.createElement('style');
-                s.textContent = 'html,body{background:#0b1320 !important;color:#9dbad6;font:12px monospace;}';
-                document.documentElement.appendChild(s);
-                const p = document.createElement('div');
-                p.id = '__sk_hud_boot';
-                p.textContent = 'SoulKernel HUD booting...';
-                p.style.cssText = 'position:fixed;left:8px;top:8px;z-index:2147483647;opacity:.8';
-                document.documentElement.appendChild(p);
-                setTimeout(() => { try { p.remove(); } catch (_) {} }, 3000);
-              } catch (_) {}
-            })();
-            "#,
-        )
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .focused(false)
-        .visible(false)
-        .transparent(false)
-        .inner_size(360.0, 210.0)
-        .position(14.0, 58.0)
-        .build()
-        .map_err(|e| e.to_string())
-}
-
-fn apply_hud_window_mode(
-    app: &tauri::AppHandle,
-    interactive: bool,
-    preset: &str,
-    opacity: f64,
-    display_index: Option<usize>,
-) -> Result<(), String> {
-    let w = ensure_hud_window(app)?;
-    let (width, height) = preset_to_size(preset);
-    let clamped_opacity = opacity.clamp(0.3, 1.0);
-    if let Some(display) = pick_display(app, display_index)? {
-        let x = display.x + 14;
-        let y = display.y + 58;
-        let _ = w.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
-    }
-    let _ = w.set_always_on_top(true);
-    let _ = w.set_ignore_cursor_events(!interactive);
-    let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
-    let _ = w.emit(
-        "soulkernel://hud-config",
-        HudConfigEvent {
-            preset: preset.to_string(),
-            interactive,
-            opacity: clamped_opacity,
-        },
-    );
-    Ok(())
-}
-
-fn cleanup_hud_before_exit(app: &tauri::AppHandle) {
-    if let Some(audit) = app.try_state::<SharedAudit>() {
-        let _ = audit_write(&audit, "hud", "exit-cleanup", Some("info"), None);
-    }
-    if let Some(hud_state) = app.try_state::<SharedHud>() {
-        if let Ok(mut hs) = hud_state.lock() {
-            hs.visible = false;
-        }
-    }
-    if let Some(w) = app.get_webview_window("hud") {
-        let _ = w.hide();
-        let _ = w.close();
-    }
-}
-#[tauri::command]
-fn open_system_hud(
-    app: tauri::AppHandle,
-    hud: State<'_, SharedHud>,
-    hud_health: State<'_, SharedHudHealth>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    {
-        let mut hs = hud.lock().map_err(|e| e.to_string())?;
-        hs.visible = true;
-    }
-    {
-        let mut health = hud_health.lock().map_err(|e| e.to_string())?;
-        let now = now_ms_local();
-        health.last_ready_ms = now;
-        health.last_reload_ms = 0;
-        health.reload_count = 0;
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(&app, hs.interactive, &hs.preset, hs.opacity, hs.display_index)?;
-    if let Some(w) = app.get_webview_window("hud") {
-        let _ = w.show();
-    }
-    let _ = audit_write(
-        &audit,
-        "hud",
-        "open",
-        Some("info"),
-        Some(serde_json::json!({
-            "preset": hs.preset,
-            "interactive": hs.interactive,
-            "opacity": hs.opacity,
-            "display_index": hs.display_index
-        })),
-    );
-    Ok(())
-}
-
-#[tauri::command]
-fn close_system_hud(
-    app: tauri::AppHandle,
-    hud: State<'_, SharedHud>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    {
-        let mut hs = hud.lock().map_err(|e| e.to_string())?;
-        hs.visible = false;
-    }
-    if let Some(w) = app.get_webview_window("hud") {
-        w.hide().map_err(|e| e.to_string())?;
-    }
-    let _ = audit_write(&audit, "hud", "close", Some("info"), None);
-    Ok(())
-}
-
-#[tauri::command]
-fn set_system_hud_interactive(
-    app: tauri::AppHandle,
-    interactive: bool,
-    hud: State<'_, SharedHud>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    {
-        let mut hs = hud.lock().map_err(|e| e.to_string())?;
-        hs.interactive = interactive;
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(&app, hs.interactive, &hs.preset, hs.opacity, hs.display_index)?;
-    let _ = audit_write(
-        &audit,
-        "hud",
-        "interactive",
-        Some("info"),
-        Some(serde_json::json!({ "interactive": hs.interactive })),
-    );
-    Ok(())
-}
-
-#[tauri::command]
-fn set_system_hud_preset(
-    app: tauri::AppHandle,
-    preset: String,
-    opacity: f64,
-    hud: State<'_, SharedHud>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    {
-        let mut hs = hud.lock().map_err(|e| e.to_string())?;
-        hs.preset = match preset.as_str() {
-            "mini" | "compact" | "detailed" => preset,
-            _ => "compact".to_string(),
-        };
-        hs.opacity = opacity.clamp(0.3, 1.0);
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(&app, hs.interactive, &hs.preset, hs.opacity, hs.display_index)?;
-    let _ = audit_write(
-        &audit,
-        "hud",
-        "preset",
-        Some("info"),
-        Some(serde_json::json!({
-            "preset": hs.preset,
-            "opacity": hs.opacity
-        })),
-    );
-    Ok(())
-}
-
-#[tauri::command]
-fn set_system_hud_data(
-    app: tauri::AppHandle,
-    payload: HudOverlayData,
-    hud_tx: State<'_, SharedHudTx>,
-    hud_data: State<'_, SharedHudData>,
-) -> Result<(), String> {
-    {
-        let mut latest = hud_data.lock().map_err(|e| e.to_string())?;
-        *latest = Some(payload.clone());
-    }
-    if let Some(tx) = hud_tx.lock().map_err(|e| e.to_string())?.as_ref() {
-        let _ = tx.send(payload);
-        return Ok(());
-    }
-    if app.get_webview_window("hud").is_some() {
-        app.emit_to("hud", "soulkernel://hud", payload)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn get_system_hud_data(hud_data: State<'_, SharedHudData>) -> Result<Option<HudOverlayData>, String> {
-    let data = hud_data.lock().map_err(|e| e.to_string())?;
-    Ok(data.clone())
-}
-
-#[tauri::command]
-fn get_system_hud_config(hud: State<'_, SharedHud>) -> Result<HudConfigEvent, String> {
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    Ok(HudConfigEvent {
-        preset: hs.preset.clone(),
-        interactive: hs.interactive,
-        opacity: hs.opacity,
-    })
-}
-
-
-#[tauri::command]
-fn set_system_hud_ready(
-    app: tauri::AppHandle,
-    ts_ms: Option<u64>,
-    hud_health: State<'_, SharedHudHealth>,
-    hud: State<'_, SharedHud>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    let now = ts_ms.unwrap_or_else(now_ms_local);
-    let mut health = hud_health.lock().map_err(|e| e.to_string())?;
-    health.last_ready_ms = now;
-    health.ready_count = health.ready_count.saturating_add(1);
-
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    if hs.visible {
-        if let Some(w) = app.get_webview_window("hud") {
-            let was_visible = w.is_visible().unwrap_or(false);
-            let _ = w.show();
-            if !was_visible {
-                let _ = audit_write(
-                    &audit,
-                    "hud",
-                    "shown-after-ready",
-                    Some("info"),
-                    Some(serde_json::json!({
-                        "ready_count": health.ready_count
-                    })),
-                );
-            }
-        }
-    }
-
-    if health.reload_count > 0 {
-        let _ = audit_write(
-            &audit,
-            "hud",
-            "recovered",
-            Some("info"),
-            Some(serde_json::json!({ "reload_count": health.reload_count })),
-        );
-        health.reload_count = 0;
-    }
-    Ok(())
-}
-#[tauri::command]
-fn list_displays(app: tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
-    list_displays_internal(&app)
-}
-
-#[tauri::command]
-fn set_system_hud_display(
-    app: tauri::AppHandle,
-    display_index: Option<usize>,
-    hud: State<'_, SharedHud>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    {
-        let mut hs = hud.lock().map_err(|e| e.to_string())?;
-        hs.display_index = display_index;
-    }
-    let hs = hud.lock().map_err(|e| e.to_string())?;
-    apply_hud_window_mode(
-        &app,
-        hs.interactive,
-        &hs.preset,
-        hs.opacity,
-        hs.display_index,
-    )?;
-    let _ = audit_write(
-        &audit,
-        "hud",
-        "display",
-        Some("info"),
-        Some(serde_json::json!({ "display_index": hs.display_index })),
-    );
-    Ok(())
-}
 #[tauri::command]
 fn list_processes() -> Result<Vec<ProcessInfo>, String> {
     let mut sys = sysinfo::System::new_all();
@@ -480,7 +76,7 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
         .iter()
         .map(|(pid, p)| ProcessInfo {
             pid: pid.as_u32(),
-            name: p.name().to_string(),
+            name: p.name().to_string_lossy().to_string(),
             cpu_usage: p.cpu_usage() as f64,
         })
         .collect();
@@ -724,132 +320,17 @@ async fn run_kpi_probe(
 
 #[tauri::command]
 fn export_gains_to_file(content: String) -> Result<String, String> {
+    let ts = now_ms_local() / 1000;
     let path = rfd::FileDialog::new()
         .add_filter("JSON", &["json"])
-        .set_file_name(&format!("soulkernel_gains_{}.json", {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        }))
+        .set_file_name(&format!("soulkernel_gains_{}.json", ts))
         .save_file()
         .ok_or_else(|| "Annule ou aucun chemin choisi".to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }
 
-
-fn default_audit_path() -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(appdata)
-            .join("SoulKernel")
-            .join("audit")
-            .join("soulkernel_audit.jsonl");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-            return std::path::PathBuf::from(xdg)
-                .join("SoulKernel")
-                .join("audit")
-                .join("soulkernel_audit.jsonl");
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            return std::path::PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("SoulKernel")
-                .join("audit")
-                .join("soulkernel_audit.jsonl");
-        }
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("soulkernel_audit.jsonl")
-}
-
-
-
-fn ensure_audit_file(audit: &State<'_, SharedAudit>) -> Result<&'static Mutex<std::fs::File>, String> {
-    if AUDIT_FILE.get().is_none() {
-        let mut guard = audit.lock().map_err(|e| e.to_string())?;
-        if guard.path.is_none() {
-            guard.path = Some(default_audit_path());
-        }
-        let path = guard
-            .path
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| "audit path unavailable".to_string())?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| e.to_string())?;
-        let _ = AUDIT_FILE.set(Mutex::new(file));
-    }
-    AUDIT_FILE
-        .get()
-        .ok_or_else(|| "audit logger init failed".to_string())
-}
-fn audit_write(
-    audit: &State<'_, SharedAudit>,
-    category: &str,
-    action: &str,
-    level: Option<&str>,
-    data: Option<serde_json::Value>,
-) -> Result<(), String> {
-    let file_mutex = ensure_audit_file(audit)?;
-    let ts_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0);
-    let entry = AuditEntry {
-        ts_ms,
-        category: category.to_string(),
-        action: action.to_string(),
-        level: level.map(|s| s.to_string()),
-        data,
-    };
-    let line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
-    let mut file = file_mutex.lock().map_err(|e| e.to_string())?;
-    use std::io::Write;
-    writeln!(file, "{}", line).map_err(|e| e.to_string())?;
-    Ok(())
-}
-#[tauri::command]
-fn get_audit_log_path(audit: State<'_, SharedAudit>) -> Result<String, String> {
-    {
-        let mut g = audit.lock().map_err(|e| e.to_string())?;
-        if g.path.is_none() {
-            g.path = Some(default_audit_path());
-        }
-    }
-    let _ = ensure_audit_file(&audit)?;
-    let g = audit.lock().map_err(|e| e.to_string())?;
-    g.path
-        .as_ref()
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| "audit path unavailable".to_string())
-}
-
-#[tauri::command]
-fn audit_log_event(
-    category: String,
-    action: String,
-    level: Option<String>,
-    data: Option<serde_json::Value>,
-    audit: State<'_, SharedAudit>,
-) -> Result<(), String> {
-    audit_write(&audit, &category, &action, level.as_deref(), data)
-}
+// ─── Telemetry ────────────────────────────────────────────────────────────────
 
 fn default_telemetry_path() -> std::path::PathBuf {
     #[cfg(target_os = "windows")]
@@ -889,13 +370,17 @@ fn ingest_telemetry_sample(
 }
 
 #[tauri::command]
-fn get_telemetry_summary(telemetry_state: State<'_, SharedTelemetry>) -> Result<telemetry::TelemetrySummary, String> {
+fn get_telemetry_summary(
+    telemetry_state: State<'_, SharedTelemetry>,
+) -> Result<telemetry::TelemetrySummary, String> {
     let t = telemetry_state.lock().map_err(|e| e.to_string())?;
     Ok(t.summary(telemetry::now_ms()))
 }
 
 #[tauri::command]
-fn get_energy_pricing(telemetry_state: State<'_, SharedTelemetry>) -> Result<telemetry::EnergyPricing, String> {
+fn get_energy_pricing(
+    telemetry_state: State<'_, SharedTelemetry>,
+) -> Result<telemetry::EnergyPricing, String> {
     let t = telemetry_state.lock().map_err(|e| e.to_string())?;
     Ok(t.pricing())
 }
@@ -908,6 +393,8 @@ fn set_energy_pricing(
     let mut t = telemetry_state.lock().map_err(|e| e.to_string())?;
     t.set_pricing(pricing)
 }
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
     env_logger::init();
@@ -931,16 +418,16 @@ fn main() {
         soulram_percent: 20,
     }));
 
-    let audit = Arc::new(Mutex::new(AuditState {
+    let audit: SharedAudit = Arc::new(Mutex::new(AuditState {
         path: Some(default_audit_path()),
     }));
 
-    let telemetry_state = Arc::new(Mutex::new(telemetry::TelemetryState::new(
+    let telemetry_state: SharedTelemetry = Arc::new(Mutex::new(telemetry::TelemetryState::new(
         default_telemetry_path(),
         default_telemetry_pricing_path(),
     )));
 
-    let hud_state = Arc::new(Mutex::new(HudRuntimeState {
+    let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntimeState {
         visible: false,
         interactive: false,
         preset: "compact".to_string(),
@@ -981,9 +468,15 @@ fn main() {
                         };
                         hs.visible = !hs.visible;
                         if hs.visible {
-                            let _ = apply_hud_window_mode(app, hs.interactive, &hs.preset, hs.opacity, hs.display_index);
+                            let _ = apply_hud_window_mode(
+                                app,
+                                hs.interactive,
+                                &hs.preset,
+                                hs.opacity,
+                                hs.display_index,
+                            );
                             if let Some(w) = app.get_webview_window("hud") {
-                                let _ = w.hide();
+                                let _ = w.show();
                             }
                         } else if let Some(w) = app.get_webview_window("hud") {
                             let _ = w.hide();
@@ -996,7 +489,13 @@ fn main() {
                             Err(_) => return,
                         };
                         hs.interactive = !hs.interactive;
-                        let _ = apply_hud_window_mode(app, hs.interactive, &hs.preset, hs.opacity, hs.display_index);
+                        let _ = apply_hud_window_mode(
+                            app,
+                            hs.interactive,
+                            &hs.preset,
+                            hs.opacity,
+                            hs.display_index,
+                        );
                         let _ = app.emit("soulkernel://hud-interactive", hs.interactive);
                     }
                 })
@@ -1007,7 +506,7 @@ fn main() {
         .manage(audit)
         .manage(telemetry_state)
         .manage(hud_state)
-         .manage(hud_tx_state)
+        .manage(hud_tx_state)
         .manage(hud_data_state)
         .manage(hud_health_state)
         .setup(move |app| {
@@ -1015,13 +514,7 @@ fn main() {
                 let _ = w.hide();
                 let _ = w.close();
                 let audit = app.state::<SharedAudit>();
-                let _ = audit_write(
-                    &audit,
-                    "hud",
-                    "startup-orphan-cleanup",
-                    Some("warn"),
-                    None,
-                );
+                let _ = audit_write(&*audit, "hud", "startup-orphan-cleanup", Some("warn"), None);
             }
 
             let app_handle = app.handle().clone();
@@ -1065,13 +558,19 @@ fn main() {
                         continue;
                     }
                     if app_handle2.get_webview_window("hud").is_none() {
-                        let _ = apply_hud_window_mode(&app_handle2, hs.interactive, &hs.preset, hs.opacity, hs.display_index);
+                        let _ = apply_hud_window_mode(
+                            &app_handle2,
+                            hs.interactive,
+                            &hs.preset,
+                            hs.opacity,
+                            hs.display_index,
+                        );
                         if let Some(w) = app_handle2.get_webview_window("hud") {
                             let _ = w.hide();
                         }
                         let audit = app_handle2.state::<SharedAudit>();
                         let _ = audit_write(
-                            &audit,
+                            &*audit,
                             "hud",
                             "window-recreated",
                             Some("warn"),
@@ -1101,7 +600,13 @@ fn main() {
                             let _ = w.hide();
                             let _ = w.close();
                         }
-                        let _ = apply_hud_window_mode(&app_handle2, hs.interactive, &hs.preset, hs.opacity, hs.display_index);
+                        let _ = apply_hud_window_mode(
+                            &app_handle2,
+                            hs.interactive,
+                            &hs.preset,
+                            hs.opacity,
+                            hs.display_index,
+                        );
                         if let Some(w) = app_handle2.get_webview_window("hud") {
                             let _ = w.show();
                         }
@@ -1109,7 +614,7 @@ fn main() {
                         health.reload_count = health.reload_count.saturating_add(1);
                         let audit = app_handle2.state::<SharedAudit>();
                         let _ = audit_write(
-                            &audit,
+                            &*audit,
                             "hud",
                             "window-hard-recreate",
                             Some("warn"),
@@ -1122,7 +627,7 @@ fn main() {
                     } else if stale && !cooldown_ok {
                         let audit = app_handle2.state::<SharedAudit>();
                         let _ = audit_write(
-                            &audit,
+                            &*audit,
                             "hud",
                             "watchdog-skip-backoff",
                             Some("info"),
@@ -1159,18 +664,18 @@ fn main() {
             get_policy_status,
             set_taskbar_gauge,
             run_kpi_probe,
-            list_displays,
-            open_system_hud,
-            close_system_hud,
-            set_system_hud_display,
-            set_system_hud_interactive,
-            set_system_hud_preset,
-            set_system_hud_data,
-            get_system_hud_data,
-            get_system_hud_config,
-            set_system_hud_ready,
-            audit_log_event,
-            get_audit_log_path,
+            hud::list_displays,
+            hud::open_system_hud,
+            hud::close_system_hud,
+            hud::set_system_hud_display,
+            hud::set_system_hud_interactive,
+            hud::set_system_hud_preset,
+            hud::set_system_hud_data,
+            hud::get_system_hud_data,
+            hud::get_system_hud_config,
+            hud::set_system_hud_ready,
+            audit::audit_log_event,
+            audit::get_audit_log_path,
             ingest_telemetry_sample,
             get_telemetry_summary,
             get_energy_pricing,
@@ -1179,37 +684,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("SoulKernel: failed to start Tauri runtime");
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

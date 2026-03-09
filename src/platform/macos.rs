@@ -327,5 +327,3 @@ fn purge_file_cache_hint() -> (String, bool) {
         .unwrap_or(false);
     ("purge file cache hint".into(), ok)
 }
-
-

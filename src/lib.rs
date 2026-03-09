@@ -5,8 +5,10 @@ pub mod formula;
 pub mod metrics;
 pub mod orchestrator;
 pub mod platform;
+pub mod telemetry;
 
 pub use formula::{FormulaResult, WorkloadProfile};
 pub use metrics::ResourceState;
 pub use orchestrator::DomeResult;
 pub use platform::PlatformInfo;
+pub use telemetry::{EnergyPricing, TelemetrySummary};

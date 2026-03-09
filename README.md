@@ -15,16 +15,20 @@
 SoulKernel/
 ├── src/
 │   ├── main.rs          ← Tauri entry + invoke handlers
+│   ├── audit.rs         ← JSONL audit log writer
+│   ├── hud.rs           ← System HUD overlay management
 │   ├── metrics.rs       ← Hardware collection r(t)
-│   ├── formula.rs       ← Math engine (pure)
+│   ├── formula.rs       ← Math engine (pure, with tests)
 │   ├── orchestrator.rs  ← Dome activate / rollback
+│   ├── telemetry.rs     ← Energy & performance telemetry
 │   └── platform/
 │       ├── mod.rs       ← Cross-platform router
 │       ├── linux.rs     ← /proc, /sys, cgroups v2, zRAM
 │       ├── windows.rs   ← Job Objects, affinity, powercfg
 │       └── macos.rs     ← QoS, pmset, IOKit
 ├── ui/
-│   └── index.html       ← Frontend embarqué (zero deps)
+│   ├── index.html       ← Frontend embarqué (zero deps)
+│   └── hud.html         ← HUD overlay window
 ├── icons/               ← Icône Windows (icon.ico)
 ├── Cargo.toml
 ├── tauri.conf.json
@@ -54,8 +58,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Tauri CLI (v2)
 cargo install tauri-cli
 
-# Linux extra deps
-sudo apt install libwebkit2gtk-4.0-dev libssl-dev libgtk-3-dev
+# Linux extra deps (Debian/Ubuntu)
+sudo apt install libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libglib2.0-dev pkg-config
+
+# Linux extra deps (Rocky/Fedora/RHEL)
+sudo dnf install webkit2gtk3-devel openssl-devel gtk3-devel glib2-devel pkg-config
 ```
 
 ### Dev
@@ -107,8 +114,8 @@ where:
 - `/proc/sys/vm/swappiness`
 - `/sys/devices/system/cpu/*/cpufreq/scaling_governor`
 - `/sys/block/zram0/disksize`
-- `/sys/block/sda/queue/scheduler`
-- `/sys/block/sda/queue/read_ahead_kb`
+- `/sys/block/<detected>/queue/scheduler` (auto-detected primary disk)
+- `/sys/block/<detected>/queue/read_ahead_kb`
 - `/sys/fs/cgroup/soulkernel/{cpuset.cpus, cgroup.procs}`
 - `/proc/sys/vm/drop_caches`
 

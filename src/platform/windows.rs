@@ -207,7 +207,8 @@ impl WindowsRealtimeCounters {
         me.gpu_counter = Self::add_counter(me.query, "\\GPU Engine(*)\\Utilization Percentage");
         me.compressed_counter = Self::add_counter(me.query, "\\Memory\\Compressed Page Size");
         me.power_counter = Self::add_counter(me.query, "\\Power Meter(_Total)\\Power");
-        me.battery_discharge_counter = Self::add_counter(me.query, "\\Battery Status(*)\\Discharge Rate");
+        me.battery_discharge_counter =
+            Self::add_counter(me.query, "\\Battery Status(*)\\Discharge Rate");
 
         if me.disk_read_counter.is_none()
             && me.disk_write_counter.is_none()
@@ -240,7 +241,15 @@ impl WindowsRealtimeCounters {
         }
     }
 
-    fn sample(&mut self) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
+    fn sample(
+        &mut self,
+    ) -> (
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    ) {
         use windows::Win32::System::Performance::PdhCollectQueryData;
 
         let status = unsafe { PdhCollectQueryData(self.query) };
@@ -260,13 +269,16 @@ impl WindowsRealtimeCounters {
             .and_then(|bytes| {
                 raw_system_memory().map(|(total, _)| (bytes / total.max(1) as f64).clamp(0.0, 1.0))
             });
-        let power_meter_watts = self.power_counter.and_then(Self::counter_value).and_then(|v| {
-            if v.is_finite() && v >= 0.0 {
-                Some(v)
-            } else {
-                None
-            }
-        });
+        let power_meter_watts = self
+            .power_counter
+            .and_then(Self::counter_value)
+            .and_then(|v| {
+                if v.is_finite() && v >= 0.0 {
+                    Some(v)
+                } else {
+                    None
+                }
+            });
         // Laptop fallback: PDH battery discharge rate is typically exposed in mW.
         let battery_watts = self
             .battery_discharge_counter
@@ -274,7 +286,11 @@ impl WindowsRealtimeCounters {
             .and_then(|mw| {
                 if mw.is_finite() {
                     let w = mw.abs() / 1000.0;
-                    if w > 0.0 { Some(w) } else { None }
+                    if w > 0.0 {
+                        Some(w)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -352,7 +368,13 @@ impl WindowsRealtimeCounters {
     }
 }
 
-pub fn sample_realtime_metrics() -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
+pub fn sample_realtime_metrics() -> (
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+) {
     #[cfg(target_os = "windows")]
     {
         let counters =
@@ -847,13 +869,3 @@ fn trim_working_sets_global() -> (String, bool) {
     #[cfg(not(target_os = "windows"))]
     ("Global working-set trim (stub)".into(), false)
 }
-
-
-
-
-
-
-
-
-
-

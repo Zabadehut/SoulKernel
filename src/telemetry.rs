@@ -221,7 +221,10 @@ impl TelemetryState {
         let reader = BufReader::new(file);
         for line in reader.lines().map_while(Result::ok) {
             if let Ok(sample) = serde_json::from_str::<TelemetrySample>(&line) {
-                self.last_ts_ms = Some(self.last_ts_ms.map_or(sample.ts_ms, |p| p.max(sample.ts_ms)));
+                self.last_ts_ms = Some(
+                    self.last_ts_ms
+                        .map_or(sample.ts_ms, |p| p.max(sample.ts_ms)),
+                );
                 self.ring.push_back(sample);
             }
         }
@@ -262,5 +265,3 @@ fn load_pricing(path: &PathBuf) -> Option<EnergyPricing> {
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice::<EnergyPricing>(&bytes).ok()
 }
-
-
