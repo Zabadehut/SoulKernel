@@ -1073,6 +1073,20 @@ function setSlidersFromState() {
   document.getElementById('smaxBot').textContent = state.sigmaMax.toFixed(2);
   document.getElementById('etaSlider').value = state.eta.toFixed(2);
   document.getElementById('etaNum').textContent = state.eta.toFixed(2);
+  updateAdaptiveStatusText();
+}
+
+function updateAdaptiveStatusText(extra = '') {
+  const statusEl = document.getElementById('adaptiveStatus');
+  if (!statusEl) return;
+  if (!state.adaptiveEnabled) {
+    statusEl.textContent = extra || 'OFF';
+    return;
+  }
+  statusEl.textContent =
+    `ON | wl=${state.wl} k=${state.kappa.toFixed(2)} sMax=${state.sigmaMax.toFixed(2)} ` +
+    `eta=${state.eta.toFixed(2)} policy=${state.policyMode}` +
+    (extra ? ` | ${extra}` : '');
 }
 
 
@@ -1266,7 +1280,7 @@ function renderAbSummary(summary) {
   el.textContent =
     `OFF median=${f(summary.median_off_ms)}ms p95=${f(summary.p95_off_ms)}ms | ` +
     `ON median=${f(summary.median_on_ms)}ms p95=${f(summary.p95_on_ms)}ms | ` +
-    `gain median=${f(summary.gain_median_pct)}% p95=${f(summary.gain_p95_pct)}%`;
+    `dernier benchmark: gain median=${f(summary.gain_median_pct)}% p95=${f(summary.gain_p95_pct)}%`;
   const verdictEl = document.getElementById('benchmarkVerdict');
   if (verdictEl) {
     const gain = Number(summary.gain_median_pct ?? 0);
@@ -1599,11 +1613,7 @@ async function runAdaptiveController(m) {
   }
 
   const statusEl = document.getElementById('adaptiveStatus');
-  if (statusEl) {
-    statusEl.textContent =
-      `ON | wl=${state.wl} k=${state.kappa.toFixed(2)} sMax=${state.sigmaMax.toFixed(2)} ` +
-      `eta=${state.eta.toFixed(2)} policy=${state.policyMode}`;
-  }
+  updateAdaptiveStatusText();
 
   if (state.adaptiveAutoDome && now - state.adaptiveLastDomeSwitchTs >= 10000) {
     if (state.domeActive && m.sigma > state.sigmaMax + 0.08) {
@@ -1620,9 +1630,14 @@ async function runAbBenchmark() {
   const runs = Math.max(5, Math.min(20, isNaN(runsInput) ? 5 : runsInput));
   const command = (document.getElementById('kpiCommand')?.value || '').trim();
   const args = tokenizeArgs(document.getElementById('kpiArgs')?.value || '');
+  const benchWorkload = inferWorkloadFromBenchmarkCommand(command, args) || state.wl;
   if (!command) {
     log('KPI command vide', 'err');
     return;
+  }
+  if (benchWorkload !== state.wl) {
+    setWorkload(benchWorkload, 'benchmark');
+    log('Benchmark workload auto: ' + benchWorkload, 'info');
   }
 
   const wasAdaptive = state.adaptiveEnabled;
@@ -1633,8 +1648,7 @@ async function runAbBenchmark() {
     state.adaptiveEnabled = false;
     const cb = document.getElementById('adaptiveEnabled');
     if (cb) cb.checked = false;
-    const statusEl = document.getElementById('adaptiveStatus');
-    if (statusEl) statusEl.textContent = 'OFF (paused during benchmark)';
+    updateAdaptiveStatusText('paused during benchmark');
   }
 
   try {
@@ -1644,7 +1658,7 @@ async function runAbBenchmark() {
         args,
         cwd: null,
         runs_per_state: runs,
-        workload: state.wl,
+        workload: benchWorkload,
         kappa: state.kappa,
         sigma_max: state.sigmaMax,
         eta: state.eta,
@@ -1685,6 +1699,9 @@ async function runAbBenchmark() {
       state.adaptiveEnabled = true;
       const cb = document.getElementById('adaptiveEnabled');
       if (cb) cb.checked = true;
+      updateAdaptiveStatusText();
+    } else {
+      updateAdaptiveStatusText();
     }
     saveRuntimeSettings();
     saveStartupIntent();
@@ -1721,16 +1738,29 @@ async function loadBenchmarkHistory(applyAdvice = true) {
 }
 function pickAutoProcess(list, selectedValue) {
   if (!Array.isArray(list) || list.length === 0) return '';
-  const excluded = /^(soulkernel(\.exe)?|system|system idle process|idle)$/i;
+  const excluded = /^(soulkernel(\.exe)?|system|system idle process|idle|msedgewebview2(\.exe)?)$/i;
   const candidates = list.filter(p => {
     const n = String(p.name || '').trim().toLowerCase();
-    return !excluded.test(n) && !n.includes('soulkernel');
+    return !excluded.test(n) && !n.includes('soulkernel') && !n.includes('msedgewebview2');
   });
   const pool = candidates.length ? candidates : list;
   if (selectedValue && pool.some(p => String(p.pid) === String(selectedValue))) return String(selectedValue);
   const firstHot = pool.find(p => (p.cpu_usage || 0) >= 1.0);
   const chosen = firstHot || pool[0];
   return chosen ? String(chosen.pid) : '';
+}
+
+function inferWorkloadFromBenchmarkCommand(command, args) {
+  const joined = [command, ...(args || [])].join(' ').toLowerCase();
+  if (/(^|\s)(cargo|rustc|cl|clang|gcc|msbuild|ninja|cmake|link\.exe|javac|gradle|mvn|go|dotnet|tsc|webpack)(\s|$)/.test(joined)) {
+    return 'compile';
+  }
+  if (/(elastic|kibana|logstash)/.test(joined)) return 'es';
+  if (/(sqlite|dbbrowser|litecli)/.test(joined)) return 'sqlite';
+  if (/(oracle|sqlplus|sqlservr|postgres|mysql|mariadb)/.test(joined)) return 'oracle';
+  if (/(backup|veeam|acronis|robocopy|rsync|sync)/.test(joined)) return 'backup';
+  if (/(python|ollama|llama|pytorch|tensorflow|cuda)/.test(joined)) return 'ai';
+  return null;
 }
 
 function inferWorkloadFromProcess(proc, metrics) {
@@ -2462,10 +2492,14 @@ function buildSessionReportText() {
   }
 
   lines.push('');
-  lines.push('Gains dome');
+  lines.push('Gains dome - session');
   lines.push('Heure\tWorkload\tpi\tD reel\tActions\tCible');
   if (state.domeHistory.length === 0) {
-    lines.push('Aucune activation');
+    if (state.domeActive) {
+      lines.push('Activation en cours - historique session pas encore persiste');
+    } else {
+      lines.push('Aucune activation');
+    }
   } else {
     state.domeHistory.forEach(e => {
       const dVal = (e.domeGain != null && e.domeGain !== 0) ? e.domeGain.toFixed(2) : '...';
@@ -2479,7 +2513,7 @@ function buildSessionReportText() {
     const s = state.kpiBench.lastSummary;
     const f = v => (v == null ? 'N/A' : v.toFixed(1));
     lines.push('');
-    lines.push('A/B KPI (dernier run)');
+    lines.push('A/B KPI (dernier benchmark)');
     lines.push('OFF median/p95: ' + f(s.median_off_ms) + '/' + f(s.p95_off_ms) + ' ms');
     lines.push('ON  median/p95: ' + f(s.median_on_ms) + '/' + f(s.p95_on_ms) + ' ms');
     lines.push('Gain median/p95: ' + f(s.gain_median_pct) + '% / ' + f(s.gain_p95_pct) + '%');
@@ -2501,7 +2535,7 @@ function buildSessionReportText() {
       lines.push('Total: N/A (aucune mesure de puissance reelle)');
       lines.push('Fenetres kWh H/J/S/M/A: N/A');
     }
-    lines.push('Optimisation reelle mediane A/B: ' + (t.total?.kpi_gain_median_pct == null ? 'N/A' : Number(t.total.kpi_gain_median_pct).toFixed(2) + '%'));
+    lines.push('Optimisation reelle mediane A/B (historique global): ' + (t.total?.kpi_gain_median_pct == null ? 'N/A' : Number(t.total.kpi_gain_median_pct).toFixed(2) + '%'));
     lines.push('Clean passif (h): ' + f(t.total?.passive_clean_h) + ' | ratio dome actif: ' + f((t.total?.dome_active_ratio ?? 0) * 100) + '%');
     const lt = t.lifetime;
     if (lt) {
@@ -2628,8 +2662,7 @@ if (adaptiveEnabledEl) {
   adaptiveEnabledEl.checked = !!state.adaptiveEnabled;
   adaptiveEnabledEl.addEventListener('change', e => {
     state.adaptiveEnabled = !!e.target.checked;
-    const statusEl = document.getElementById('adaptiveStatus');
-    if (statusEl) statusEl.textContent = state.adaptiveEnabled ? 'ON (warming up...)' : 'OFF';
+    updateAdaptiveStatusText(state.adaptiveEnabled ? 'warming up...' : 'OFF');
     log('Adaptive mode ' + (state.adaptiveEnabled ? 'active' : 'desactive'), 'info');
     saveRuntimeSettings();
     saveStartupIntent();
@@ -3328,7 +3361,7 @@ function fallbackInvoke(cmd, args) {
   updateSoulRamUi();
   const ad = document.getElementById('adaptiveEnabled'); if (ad) ad.checked = !!state.adaptiveEnabled;
   const aad = document.getElementById('adaptiveAutoDome'); if (aad) aad.checked = !!state.adaptiveAutoDome;
-  const ast = document.getElementById('adaptiveStatus'); if (ast && !state.adaptiveEnabled) ast.textContent = 'OFF';
+  updateAdaptiveStatusText();
   renderAbSummary(state.kpiBench.lastSummary);
   renderBenchmarkLearning(state.kpiBench.tuningAdvice);
   saveRuntimeSettings();
@@ -3338,15 +3371,6 @@ function fallbackInvoke(cmd, args) {
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
 
 
 
