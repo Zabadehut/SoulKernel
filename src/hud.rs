@@ -125,7 +125,7 @@ fn ensure_hud_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, Str
         return Ok(w);
     }
     let url = tauri::WebviewUrl::App("hud.html".into());
-    tauri::WebviewWindowBuilder::new(app, "hud", url)
+    let builder = tauri::WebviewWindowBuilder::new(app, "hud", url)
         .title("SoulKernel HUD")
         .initialization_script(
             r#"
@@ -149,8 +149,11 @@ fn ensure_hud_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, Str
         .skip_taskbar(true)
         .resizable(false)
         .focused(false)
-        .visible(false)
-        .transparent(false)
+        .visible(false);
+    // `WebviewWindowBuilder::transparent` n’existe pas sur macOS (Tauri 2).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(false);
+    builder
         .inner_size(360.0, 210.0)
         .position(14.0, 58.0)
         .build()
