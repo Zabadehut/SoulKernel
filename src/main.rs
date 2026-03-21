@@ -7,6 +7,7 @@ mod audit;
 mod benchmark;
 mod formula;
 mod hud;
+mod memory_policy;
 mod metrics;
 mod orchestrator;
 mod platform;
@@ -65,7 +66,7 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
         .iter()
         .map(|(pid, p)| ProcessInfo {
             pid: pid.as_u32(),
-            name: p.name().to_string_lossy().to_string(),
+            name: p.name().to_string(),
             cpu_usage: p.cpu_usage() as f64,
         })
         .collect();

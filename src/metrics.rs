@@ -60,6 +60,8 @@ pub struct RawMetrics {
     pub on_battery: Option<bool>,
     /// Battery charge percentage when available.
     pub battery_percent: Option<f64>,
+    /// Windows PDH `\Memory\Page Faults/sec` quand disponible.
+    pub page_faults_per_sec: Option<f64>,
     pub platform: String,
 }
 
@@ -127,14 +129,18 @@ pub fn collect() -> Result<ResourceState> {
 
     // Real-time samplers (Windows)
     #[cfg(target_os = "windows")]
-    let (io_read_mb_s, io_write_mb_s, gpu_pct, win_compression, power_watts) =
+    let (io_read_mb_s, io_write_mb_s, gpu_pct, win_compression, power_watts, page_faults_per_sec) =
         crate::platform::windows::sample_realtime_metrics();
 
     #[cfg(target_os = "windows")]
     let compression = win_compression.or(compression);
 
     #[cfg(not(target_os = "windows"))]
-    let (io_read_mb_s, io_write_mb_s): (Option<f64>, Option<f64>) = (None, None);
+    let (io_read_mb_s, io_write_mb_s, page_faults_per_sec): (
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    ) = (None, None, None);
 
     #[cfg(target_os = "linux")]
     let power_watts: Option<f64> = crate::platform::linux::sample_power_watts();
@@ -208,19 +214,6 @@ pub fn collect() -> Result<ResourceState> {
             .clamp(0.0, 1.0)
     };
 
-    // epsilon contention
-    let memory_optimizer_factor = crate::platform::memory_optimizer_factor().clamp(0.0, 1.0);
-    let mem_eps_scale = 1.0 - 0.35 * memory_optimizer_factor;
-    let comp_eps_scale = 1.0 - 0.25 * memory_optimizer_factor;
-
-    let epsilon = [
-        (cpu * 0.15).clamp(0.0, 0.4),
-        (mem_pressure * 0.20 * mem_eps_scale).clamp(0.0, 0.4),
-        (compression.unwrap_or(0.0) * 0.10 * comp_eps_scale).clamp(0.0, 0.3),
-        (io_bandwidth.unwrap_or(0.0) * 0.15).clamp(0.0, 0.4),
-        (gpu.unwrap_or(0.0) * 0.10).clamp(0.0, 0.3),
-    ];
-
     let platform_name = {
         #[cfg(target_os = "linux")]
         {
@@ -240,14 +233,14 @@ pub fn collect() -> Result<ResourceState> {
         }
     };
 
-    Ok(ResourceState {
+    let mut state = ResourceState {
         cpu,
         mem,
         compression,
         io_bandwidth,
         gpu,
         sigma,
-        epsilon,
+        epsilon: [0.0; 5],
         raw: RawMetrics {
             cpu_pct,
             cpu_clock_mhz,
@@ -267,7 +260,26 @@ pub fn collect() -> Result<ResourceState> {
             psi_mem,
             on_battery,
             battery_percent,
-            platform: platform_name,
+            page_faults_per_sec,
+            platform: platform_name.clone(),
         },
-    })
+    };
+
+    let mem_guard_penalty = crate::memory_policy::tick_from_baseline(&state);
+
+    // epsilon contention — facteur mémoire OS atténué si garde-fous adaptatifs actifs
+    let memory_optimizer_factor = crate::platform::memory_optimizer_factor().clamp(0.0, 1.0)
+        * (1.0 - 0.35 * mem_guard_penalty);
+    let mem_eps_scale = 1.0 - 0.35 * memory_optimizer_factor;
+    let comp_eps_scale = 1.0 - 0.25 * memory_optimizer_factor;
+
+    state.epsilon = [
+        (cpu * 0.15).clamp(0.0, 0.4),
+        (mem_pressure * 0.20 * mem_eps_scale).clamp(0.0, 0.4),
+        (compression.unwrap_or(0.0) * 0.10 * comp_eps_scale).clamp(0.0, 0.3),
+        (io_bandwidth.unwrap_or(0.0) * 0.15).clamp(0.0, 0.4),
+        (gpu.unwrap_or(0.0) * 0.10).clamp(0.0, 0.3),
+    ];
+
+    Ok(state)
 }

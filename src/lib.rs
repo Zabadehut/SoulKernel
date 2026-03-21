@@ -2,6 +2,7 @@
 //! Re-exports for use as a dependency or tests.
 
 pub mod formula;
+pub mod memory_policy;
 pub mod metrics;
 pub mod orchestrator;
 pub mod platform;

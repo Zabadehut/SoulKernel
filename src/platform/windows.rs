@@ -95,7 +95,7 @@ pub fn platform_info() -> PlatformInfo {
 pub async fn apply_dome(
     profile: &WorkloadProfile,
     eta: f64,
-    _baseline: &ResourceState,
+    baseline: &ResourceState,
     policy: crate::platform::PolicyMode,
     target_pid: Option<u32>,
 ) -> Vec<(String, bool)> {
@@ -115,6 +115,11 @@ pub async fn apply_dome(
         return actions;
     }
 
+    let mem_plan = crate::memory_policy::plan_for_dome_activation(baseline, profile);
+    for note in &mem_plan.notes {
+        actions.push((note.clone(), true));
+    }
+
     // Privileged mode path
     if profile.alpha[0] > 0.4 {
         let mask = if is_target_process { 0xFFFF } else { 0x0F0F };
@@ -122,19 +127,28 @@ pub async fn apply_dome(
     }
 
     if profile.alpha[1] > 0.2 {
-        let (min_b, max_b) = if is_target_process {
-            let min_b = 512 * 1024 * 1024;
-            let max_mb_mb = (2048.0_f64 + eta * 2048.0).min(4096.0);
-            let max_b = (max_mb_mb as usize) * 1024 * 1024;
-            (min_b, max_b)
-        } else {
-            (256 * 1024 * 1024, 1024 * 1024 * 1024)
-        };
-        actions.push(set_working_set(min_b, max_b, target_pid));
+        if mem_plan.apply_working_set {
+            let (min_b, max_b) = if is_target_process {
+                let min_b = 512 * 1024 * 1024;
+                let max_mb_mb = (2048.0_f64 + eta * 2048.0).min(4096.0);
+                let max_b = (max_mb_mb as usize) * 1024 * 1024;
+                (min_b, max_b)
+            } else {
+                (256 * 1024 * 1024, 1024 * 1024 * 1024)
+            };
+            let (msg, ok) = set_working_set(min_b, max_b, target_pid);
+            if ok {
+                crate::memory_policy::record_working_set_adjustment();
+            }
+            actions.push((msg, ok));
+        }
     }
 
     if profile.alpha[3] > 0.4 {
-        actions.push(disable_memory_compression());
+        if mem_plan.apply_disable_compression {
+            crate::memory_policy::record_compression_toggle();
+            actions.push(disable_memory_compression());
+        }
     }
 
     actions.push(set_io_priority_high(target_pid));
@@ -161,6 +175,7 @@ struct WindowsRealtimeCounters {
     disk_write_counter: Option<isize>,
     gpu_counter: Option<isize>,
     compressed_counter: Option<isize>,
+    page_faults_counter: Option<isize>,
     power_counter: Option<isize>,
     battery_discharge_counter: Option<isize>,
 }
@@ -196,6 +211,7 @@ impl WindowsRealtimeCounters {
             disk_write_counter: None,
             gpu_counter: None,
             compressed_counter: None,
+            page_faults_counter: None,
             power_counter: None,
             battery_discharge_counter: None,
         };
@@ -206,6 +222,7 @@ impl WindowsRealtimeCounters {
             Self::add_counter(me.query, "\\PhysicalDisk(_Total)\\Disk Write Bytes/sec");
         me.gpu_counter = Self::add_counter(me.query, "\\GPU Engine(*)\\Utilization Percentage");
         me.compressed_counter = Self::add_counter(me.query, "\\Memory\\Compressed Page Size");
+        me.page_faults_counter = Self::add_counter(me.query, "\\Memory\\Page Faults/sec");
         me.power_counter = Self::add_counter(me.query, "\\Power Meter(_Total)\\Power");
         me.battery_discharge_counter =
             Self::add_counter(me.query, "\\Battery Status(*)\\Discharge Rate");
@@ -214,6 +231,7 @@ impl WindowsRealtimeCounters {
             && me.disk_write_counter.is_none()
             && me.gpu_counter.is_none()
             && me.compressed_counter.is_none()
+            && me.page_faults_counter.is_none()
             && me.power_counter.is_none()
             && me.battery_discharge_counter.is_none()
         {
@@ -249,12 +267,13 @@ impl WindowsRealtimeCounters {
         Option<f64>,
         Option<f64>,
         Option<f64>,
+        Option<f64>,
     ) {
         use windows::Win32::System::Performance::PdhCollectQueryData;
 
         let status = unsafe { PdhCollectQueryData(self.query) };
         if status != 0 {
-            return (None, None, None, None, None);
+            return (None, None, None, None, None, None);
         }
 
         let read_b_s = self.disk_read_counter.and_then(Self::counter_value);
@@ -269,6 +288,7 @@ impl WindowsRealtimeCounters {
             .and_then(|bytes| {
                 raw_system_memory().map(|(total, _)| (bytes / total.max(1) as f64).clamp(0.0, 1.0))
             });
+        let page_faults_per_sec = self.page_faults_counter.and_then(Self::counter_value);
         let power_meter_watts = self
             .power_counter
             .and_then(Self::counter_value)
@@ -303,6 +323,7 @@ impl WindowsRealtimeCounters {
             gpu_pct,
             compression_ratio,
             power_watts,
+            page_faults_per_sec,
         )
     }
 
@@ -374,6 +395,7 @@ pub fn sample_realtime_metrics() -> (
     Option<f64>,
     Option<f64>,
     Option<f64>,
+    Option<f64>,
 ) {
     #[cfg(target_os = "windows")]
     {
@@ -384,16 +406,16 @@ pub fn sample_realtime_metrics() -> (
                 return g.sample();
             }
         }
-        (None, None, None, None, None)
+        (None, None, None, None, None, None)
     }
     #[cfg(not(target_os = "windows"))]
     {
-        (None, None, None, None, None)
+        (None, None, None, None, None, None)
     }
 }
 
 pub fn gpu_utilisation() -> Option<f64> {
-    let (_, _, gpu_pct, _, _) = sample_realtime_metrics();
+    let (_, _, gpu_pct, _, _, _) = sample_realtime_metrics();
     gpu_pct
 }
 
@@ -432,12 +454,20 @@ fn query_windows_numeric_lines(program: &str, args: &[&str]) -> Option<Vec<f64>>
 // ─── Win32 write primitives ───────────────────────────────────────────────────
 
 fn set_power_plan(guid: &str) -> (String, bool) {
-    let ok = command_hidden("powercfg")
-        .args(["/setactive", guid])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    (format!("Power plan GUID {} activated", &guid[..8]), ok)
+    #[cfg(target_os = "windows")]
+    {
+        let ok = command_hidden("powercfg")
+            .args(["/setactive", guid])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        (format!("Power plan GUID {} activated", &guid[..8]), ok)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = guid;
+        ("Power plan (stub non-Windows)".into(), false)
+    }
 }
 
 fn set_process_affinity(mask: usize, target_pid: Option<u32>) -> (String, bool) {
@@ -541,54 +571,68 @@ fn set_working_set(min: usize, max: usize, target_pid: Option<u32>) -> (String, 
 }
 
 fn disable_memory_compression() -> (String, bool) {
-    if !is_elevated() {
-        return (
-            "Memory compression disable skipped (Administrator required)".into(),
-            false,
-        );
+    #[cfg(target_os = "windows")]
+    {
+        if !is_elevated() {
+            return (
+                "Memory compression disable skipped (Administrator required)".into(),
+                false,
+            );
+        }
+        // Requires PowerShell admin: Disable-MMAgent -MemoryCompression
+        let ok = command_hidden("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Disable-MMAgent -MemoryCompression",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let msg = if ok {
+            "Memory compression disabled"
+        } else {
+            "Memory compression disable failed"
+        };
+        (msg.into(), ok)
     }
-    // Requires PowerShell admin: Disable-MMAgent -MemoryCompression
-    let ok = command_hidden("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Disable-MMAgent -MemoryCompression",
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    let msg = if ok {
-        "Memory compression disabled"
-    } else {
-        "Memory compression disable failed"
-    };
-    (msg.into(), ok)
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("Memory compression disable (stub non-Windows)".into(), false)
+    }
 }
 
 fn restore_memory_compression() -> (String, bool) {
-    if !is_elevated() {
-        return (
-            "Memory compression restore skipped (Administrator required)".into(),
-            false,
-        );
+    #[cfg(target_os = "windows")]
+    {
+        if !is_elevated() {
+            return (
+                "Memory compression restore skipped (Administrator required)".into(),
+                false,
+            );
+        }
+        let ok = command_hidden("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Enable-MMAgent -MemoryCompression",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let msg = if ok {
+            "Memory compression restored"
+        } else {
+            "Memory compression restore failed"
+        };
+        (msg.into(), ok)
     }
-    let ok = command_hidden("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Enable-MMAgent -MemoryCompression",
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    let msg = if ok {
-        "Memory compression restored"
-    } else {
-        "Memory compression restore failed"
-    };
-    (msg.into(), ok)
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("Memory compression restore (stub non-Windows)".into(), false)
+    }
 }
 
 fn set_io_priority_high(target_pid: Option<u32>) -> (String, bool) {
@@ -673,67 +717,95 @@ fn restore_working_set(target_pid: Option<u32>) -> (String, bool) {
 }
 
 fn os_version() -> String {
-    command_hidden("cmd")
-        .args(["/C", "ver"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_else(|| "Windows".into())
-        .trim()
-        .to_string()
+    #[cfg(target_os = "windows")]
+    {
+        command_hidden("cmd")
+            .args(["/C", "ver"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_else(|| "Windows".into())
+            .trim()
+            .to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "Windows".into()
+    }
 }
 
 fn is_elevated_uncached() -> bool {
-    command_hidden("net")
-        .args(["session"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        command_hidden("net")
+            .args(["session"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
 }
 
 fn memory_compression_state_uncached() -> Option<bool> {
-    let out = command_hidden("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            "(Get-MMAgent).MemoryCompression",
-        ])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    #[cfg(target_os = "windows")]
+    {
+        let out = command_hidden("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "(Get-MMAgent).MemoryCompression",
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8(out.stdout).ok()?;
+        match s.trim().to_ascii_lowercase().as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
     }
-    let s = String::from_utf8(out.stdout).ok()?;
-    match s.trim().to_ascii_lowercase().as_str() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
     }
 }
 
 fn windows_priv_snapshot() -> (bool, Option<bool>) {
-    let cache = WINDOWS_PRIV_CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = match cache.lock() {
-        Ok(v) => v,
-        Err(_) => return (is_elevated_uncached(), memory_compression_state_uncached()),
-    };
-    let ttl = std::time::Duration::from_secs(10);
-    if let Some(cached) = guard.as_ref() {
-        if cached.at.elapsed() < ttl {
-            return (cached.is_admin, cached.memory_compression);
+    #[cfg(target_os = "windows")]
+    {
+        let cache = WINDOWS_PRIV_CACHE.get_or_init(|| Mutex::new(None));
+        let mut guard = match cache.lock() {
+            Ok(v) => v,
+            Err(_) => return (is_elevated_uncached(), memory_compression_state_uncached()),
+        };
+        let ttl = std::time::Duration::from_secs(10);
+        if let Some(cached) = guard.as_ref() {
+            if cached.at.elapsed() < ttl {
+                return (cached.is_admin, cached.memory_compression);
+            }
         }
+        let is_admin = is_elevated_uncached();
+        let memory_compression = memory_compression_state_uncached();
+        *guard = Some(WindowsPrivCache {
+            at: std::time::Instant::now(),
+            is_admin,
+            memory_compression,
+        });
+        (is_admin, memory_compression)
     }
-    let is_admin = is_elevated_uncached();
-    let memory_compression = memory_compression_state_uncached();
-    *guard = Some(WindowsPrivCache {
-        at: std::time::Instant::now(),
-        is_admin,
-        memory_compression,
-    });
-    (is_admin, memory_compression)
+    #[cfg(not(target_os = "windows"))]
+    {
+        (false, None)
+    }
 }
 
 fn is_elevated() -> bool {
@@ -745,36 +817,43 @@ fn memory_compression_state() -> Option<bool> {
 }
 
 pub fn ensure_admin_or_relaunch() -> Result<bool, String> {
-    if is_elevated() {
-        return Ok(true);
+    #[cfg(target_os = "windows")]
+    {
+        if is_elevated() {
+            return Ok(true);
+        }
+
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let args: Vec<String> = std::env::args().skip(1).collect();
+
+        let quote_ps = |s: &str| -> String { format!("'{}'", s.replace('\'', "''")) };
+        let file = quote_ps(exe.to_string_lossy().as_ref());
+        let arg_list = if args.is_empty() {
+            String::new()
+        } else {
+            let items = args
+                .iter()
+                .map(|a| quote_ps(a))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(" -ArgumentList @({})", items)
+        };
+        let cmd = format!("Start-Process -FilePath {}{} -Verb RunAs", file, arg_list);
+
+        let status = command_hidden("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
+            .status()
+            .map_err(|e| e.to_string())?;
+
+        if status.success() {
+            Ok(false)
+        } else {
+            Err("UAC elevation refused or failed".into())
+        }
     }
-
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let quote_ps = |s: &str| -> String { format!("'{}'", s.replace('\'', "''")) };
-    let file = quote_ps(exe.to_string_lossy().as_ref());
-    let arg_list = if args.is_empty() {
-        String::new()
-    } else {
-        let items = args
-            .iter()
-            .map(|a| quote_ps(a))
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(" -ArgumentList @({})", items)
-    };
-    let cmd = format!("Start-Process -FilePath {}{} -Verb RunAs", file, arg_list);
-
-    let status = command_hidden("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
-        .status()
-        .map_err(|e| e.to_string())?;
-
-    if status.success() {
-        Ok(false)
-    } else {
-        Err("UAC elevation refused or failed".into())
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(true)
     }
 }
 
@@ -788,12 +867,19 @@ pub fn policy_status(mode: crate::platform::PolicyMode) -> crate::platform::Poli
 }
 
 fn is_reboot_pending() -> bool {
-    let script = "if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') { exit 10 }; if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') { exit 11 }; $p = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue; if ($p) { exit 12 }; exit 0";
-    command_hidden("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .status()
-        .map(|s| !s.success())
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        let script = "if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') { exit 10 }; if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') { exit 11 }; $p = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue; if ($p) { exit 12 }; exit 0";
+        command_hidden("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .status()
+            .map(|s| !s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
 }
 
 pub fn memory_optimizer_factor() -> f64 {
@@ -815,11 +901,21 @@ pub fn soulram_backend_name() -> String {
 
 pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {
     let pct = percent.clamp(5, 60);
-    vec![
-        (format!("SoulRAM target ratio -> {}%", pct), true),
-        enable_memory_compression(),
-        trim_working_sets_global(),
-    ]
+    let mut out = vec![(format!("SoulRAM target ratio -> {}%", pct), true)];
+    crate::memory_policy::record_compression_toggle();
+    out.push(enable_memory_compression());
+    let (allow_trim, notes) = crate::memory_policy::allow_global_trim(None);
+    for n in notes {
+        out.push((n, true));
+    }
+    if allow_trim {
+        let (msg, ok) = trim_working_sets_global();
+        if ok {
+            crate::memory_policy::record_global_working_set_trim();
+        }
+        out.push((msg, ok));
+    }
+    out
 }
 
 pub async fn disable_soulram() -> Vec<(String, bool)> {
@@ -830,32 +926,39 @@ pub async fn disable_soulram() -> Vec<(String, bool)> {
 }
 
 fn enable_memory_compression() -> (String, bool) {
-    if !is_elevated() {
-        return (
-            "Memory compression enable skipped (Administrator required)".into(),
-            false,
-        );
+    #[cfg(target_os = "windows")]
+    {
+        if !is_elevated() {
+            return (
+                "Memory compression enable skipped (Administrator required)".into(),
+                false,
+            );
+        }
+        let ok = command_hidden("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Enable-MMAgent -MemoryCompression",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let state_after = memory_compression_state();
+        let effective_ok = ok || state_after == Some(true);
+        let msg = if ok {
+            "Memory compression enabled"
+        } else if state_after == Some(true) {
+            "Memory compression already enabled (Windows reports restart pending)"
+        } else {
+            "Memory compression enable failed (restart may be required)"
+        };
+        (msg.into(), effective_ok)
     }
-    let ok = command_hidden("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Enable-MMAgent -MemoryCompression",
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    let state_after = memory_compression_state();
-    let effective_ok = ok || state_after == Some(true);
-    let msg = if ok {
-        "Memory compression enabled"
-    } else if state_after == Some(true) {
-        "Memory compression already enabled (Windows reports restart pending)"
-    } else {
-        "Memory compression enable failed (restart may be required)"
-    };
-    (msg.into(), effective_ok)
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("Memory compression enable (stub non-Windows)".into(), false)
+    }
 }
 
 fn trim_working_sets_global() -> (String, bool) {

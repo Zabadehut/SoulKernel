@@ -369,6 +369,11 @@ pub async fn apply_dome(
 ) -> Vec<(String, bool)> {
     let mut actions = Vec::new();
 
+    let mem_plan = crate::memory_policy::plan_for_dome_activation(baseline, profile);
+    for note in &mem_plan.notes {
+        actions.push((note.clone(), true));
+    }
+
     // Determine profile intensities via gradient
     // r_new[i] = r[i] + η · α[i] · (1 − Σ)
     let boost =
@@ -389,9 +394,14 @@ pub async fn apply_dome(
     ));
 
     // ── zRAM resize ──────────────────────────────────────────────────────────
-    if Path::new("/sys/block/zram0").exists() && profile.alpha[2] > 0.1 {
+    if Path::new("/sys/block/zram0").exists() && profile.alpha[2] > 0.1 && mem_plan.apply_zram_resize
+    {
         let boost_factor = 1.0 + boost(2) * 2.0; // up to 60% more zRAM
-        actions.push(resize_zram(boost_factor));
+        let (msg, ok) = resize_zram(boost_factor);
+        if ok {
+            crate::memory_policy::record_linux_aggressive_memory();
+        }
+        actions.push((msg, ok));
     }
 
     // ── I/O scheduler ────────────────────────────────────────────────────────
@@ -413,8 +423,12 @@ pub async fn apply_dome(
     }
 
     // ── Page cache drop (free stale cache for I/O-heavy workloads) ────────────
-    if profile.alpha[3] > 0.5 {
-        actions.push(drop_caches_level(1));
+    if profile.alpha[3] > 0.5 && mem_plan.apply_drop_caches {
+        let (msg, ok) = drop_caches_level(1);
+        if ok {
+            crate::memory_policy::record_linux_aggressive_memory();
+        }
+        actions.push((msg, ok));
     }
 
     actions
@@ -648,6 +662,8 @@ pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {
         ),
         true,
     ));
+
+    crate::memory_policy::record_linux_aggressive_memory();
 
     actions
 }

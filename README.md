@@ -35,6 +35,11 @@ SoulKernel/
 └── build.rs
 ```
 
+## Développement
+
+- **CI multi-OS** : `.github/workflows/ci.yml` exécute `cargo clippy` et `cargo test` sur Ubuntu (dépendances WebKit Tauri), Windows et macOS.
+- **MCP Cursor** (autonomie agent, docs, GitHub optionnel) : `.cursor/mcp.json` et `.cursor/README-MCP.md` — indexation légère : `.cursorignore` + `@codebase` dans le chat.
+
 ## Tauri Commands (invoke)
 
 | Command                    | Args                              | Returns            |

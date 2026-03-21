@@ -1,0 +1,11 @@
+# Index Cursor — réduire bruit et tokens (cf. AstraNote docs/MCP_AND_INDEXING.md)
+/target/
+**/target/
+/node_modules/
+/dist/
+/build/
+/.git/
+*.log
+*.tmp
+Thumbs.db
+.DS_Store

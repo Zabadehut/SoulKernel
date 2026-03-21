@@ -26,7 +26,11 @@ nul
 # --- IDE / editor ---
 .vscode/
 .idea/
-.cursor/
+# Cursor : état local ignoré ; on versionne mcp.json, README MCP et rules/
+.cursor/*
+!.cursor/mcp.json
+!.cursor/README-MCP.md
+!.cursor/rules/
 
 # --- Windows ---
 Thumbs.db
