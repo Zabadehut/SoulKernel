@@ -849,6 +849,110 @@ async function auditEmit(category, action, level = 'info', data = null) {
   } catch (_) {}
 }
 
+/** Journal lisible + audit structuré : métriques de gain au moment de l’activation (données réelles du backend). */
+function logDomeActivationGains(result, detail) {
+  if (!result || !result.activated) return;
+  const wl = detail && detail.workload != null ? detail.workload : state.wl;
+  const pid = detail && detail.targetPid !== undefined ? detail.targetPid : state.targetPid;
+  const ctx = (detail && detail.context) ? String(detail.context) : 'activation';
+  const pi = Number(result.pi);
+  const dGain = Number(result.dome_gain);
+  const bIdle = Number(result.b_idle);
+  const ok = result.actions_ok ?? 0;
+  const tot = result.actions_total ?? 0;
+  const cible = pid != null ? 'PID ' + pid : 'priorité SoulKernel (sans PID externe)';
+  const piS = Number.isFinite(pi) ? pi.toFixed(4) : 'N/A';
+  const dS = Number.isFinite(dGain) ? dGain.toFixed(4) : 'N/A';
+  const bS = Number.isFinite(bIdle) ? bIdle.toFixed(4) : 'N/A';
+  const msg =
+    'GAIN DÔME — ' + ctx +
+    ' | π=' + piS + ' (performance instantanée)' +
+    ' | 𝒟=' + dS + ' (gain marginal modèle à l\'activation)' +
+    ' | b_idle=' + bS + ' (baseline charge inactive)' +
+    ' | noyau ' + ok + '/' + tot + ' actions OK' +
+    ' | profil ' + wl +
+    ' | cible ' + cible;
+  log(msg, 'ok');
+  auditEmit('dome', 'activation_gains', 'ok', {
+    context: ctx,
+    pi: Number.isFinite(pi) ? pi : null,
+    dome_gain: Number.isFinite(dGain) ? dGain : null,
+    b_idle: Number.isFinite(bIdle) ? bIdle : null,
+    actions_ok: ok,
+    actions_total: tot,
+    workload: wl,
+    target_pid: pid != null ? pid : null,
+  });
+}
+
+/** Fin de session dôme : intégrale temps réel (Σ π·Δt) avec le même correctif de borne que l’historique local. */
+function logDomeSessionIntegralEnd(adjustedIntegral, extra) {
+  const v = Number(adjustedIntegral);
+  if (!Number.isFinite(v)) return;
+  const msg =
+    'GAIN DÔME — session terminée | intégrale ≈ ' + v.toFixed(4) +
+    ' (somme π·Δt sur ticks « machine active », correction −0.06 incluse)';
+  log(msg, 'ok');
+  auditEmit('dome', 'session_integral', 'ok', Object.assign({
+    dome_integral_session_approx: v,
+  }, extra && typeof extra === 'object' ? extra : {}));
+}
+
+/** Résumé A/B : pourcentages mesurés sur la sonde (pas de valeurs inventées). */
+function logBenchGainsHuman(summary) {
+  if (!summary || typeof summary !== 'object') return;
+  const pct = (x) => {
+    if (x == null || !Number.isFinite(Number(x))) return 'N/A';
+    return Number(x).toFixed(1) + '%';
+  };
+  const parts = [
+    'latence médiane ' + pct(summary.gain_median_pct) + ' vs réf. dôme OFF (plus bas = mieux)',
+    'p95 ' + pct(summary.gain_p95_pct),
+  ];
+  if (summary.gain_mem_median_pct != null && Number.isFinite(Number(summary.gain_mem_median_pct))) {
+    parts.push('pression RAM Δ ' + Number(summary.gain_mem_median_pct).toFixed(1) + '%');
+  }
+  if (summary.gain_cpu_median_pct != null && Number.isFinite(Number(summary.gain_cpu_median_pct))) {
+    parts.push('charge CPU Δ ' + Number(summary.gain_cpu_median_pct).toFixed(1) + '%');
+  }
+  if (summary.gain_gpu_median_pct != null && Number.isFinite(Number(summary.gain_gpu_median_pct))) {
+    parts.push('GPU Δ ' + Number(summary.gain_gpu_median_pct).toFixed(1) + '%');
+  }
+  log('GAIN A/B (sonde KPI) — ' + parts.join(' · '), 'ok');
+  auditEmit('benchmark', 'gains_summary', 'ok', {
+    gain_median_pct: summary.gain_median_pct != null ? Number(summary.gain_median_pct) : null,
+    gain_p95_pct: summary.gain_p95_pct != null ? Number(summary.gain_p95_pct) : null,
+    gain_mem_median_pct: summary.gain_mem_median_pct != null ? Number(summary.gain_mem_median_pct) : null,
+    gain_cpu_median_pct: summary.gain_cpu_median_pct != null ? Number(summary.gain_cpu_median_pct) : null,
+    gain_gpu_median_pct: summary.gain_gpu_median_pct != null ? Number(summary.gain_gpu_median_pct) : null,
+  });
+}
+
+/** Une ligne lisible dans le panneau ; détail JSON uniquement dans l’audit fichier. */
+function logStateDiagTarget(payload) {
+  const label = payload.next_target_label || 'SoulKernel';
+  const src = String(payload.source || '').indexOf('auto') >= 0 ? 'rafraîchissement auto' : 'sélection manuelle';
+  const wl = payload.workload != null ? payload.workload : state.wl;
+  log('Cible processus (' + src + ') : ' + label + ' · workload ' + wl, 'info');
+  auditEmit('state_diag', 'target', 'info', sanitizeAudit(payload));
+}
+
+function logStateDiagWorkload(prevWl, wl, sourceLabel) {
+  const src = sourceLabel === 'manuel' ? 'manuel' : 'auto / ' + sourceLabel;
+  log(
+    'Profil workload : ' + wl + ' (avant ' + prevWl + ') · source ' + src +
+    ' · cible PID ' + (state.targetPid != null ? state.targetPid : '—'),
+    'info'
+  );
+  auditEmit('state_diag', 'workload', 'info', sanitizeAudit({
+    previous_workload: prevWl,
+    next_workload: wl,
+    source: sourceLabel,
+    target_pid: state.targetPid,
+    dome_history_len: state.domeHistory.length,
+  }));
+}
+
 async function invokeWithAudit(cmd, args) {
   const start = Date.now();
   try {
@@ -1161,15 +1265,7 @@ function setWorkload(nextWl, sourceLabel = "auto") {
   document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
   const btn = document.querySelector(`.wl-btn[data-wl="${wl}"]`);
   if (btn) btn.classList.add('active');
-  log(sourceLabel === 'manuel' ? ('Profil: ' + wl) : ('Profil auto: ' + wl + ' (' + sourceLabel + ')'), 'info');
-  log('STATE DIAG workload ' + JSON.stringify({
-    previous_workload: prevWl,
-    next_workload: wl,
-    source: sourceLabel,
-    auto_process_target: !!state.autoProcessTarget,
-    target_pid: state.targetPid,
-    dome_history_len: state.domeHistory.length,
-  }), 'info');
+  logStateDiagWorkload(prevWl, wl, sourceLabel);
   if (state.lastMetrics) renderFormula(state.lastMetrics);
   loadBenchmarkHistory(true).catch(() => {});
 }
@@ -1638,7 +1734,10 @@ async function setDomeStateAdaptive(shouldEnable, reason) {
     });
     state.domeActive = !!result.activated;
     updateDomeBadge(state.domeActive);
-    log('Adaptive: dome ' + (state.domeActive ? 'ON' : 'blocked') + ' (' + reason + ')', state.domeActive ? 'ok' : 'warn');
+    log('Adaptive: dome ' + (state.domeActive ? 'ON' : 'bloqué') + ' (' + reason + ')', state.domeActive ? 'ok' : 'warn');
+    if (state.domeActive) {
+      logDomeActivationGains(result, { context: 'adaptatif', workload: state.wl, targetPid: state.targetPid });
+    }
   } else {
     const actions = await invoke('rollback_dome');
     state.domeActive = false;
@@ -1819,7 +1918,7 @@ async function runAbBenchmark() {
       summary: session.summary,
       session_samples: Array.isArray(session.samples) ? session.samples.length : 0,
     })), 'info');
-    log('A/B termine: gain median=' + (session.summary.gain_median_pct == null ? 'N/A' : session.summary.gain_median_pct.toFixed(1) + '%'), 'ok');
+    logBenchGainsHuman(session.summary);
     await loadBenchmarkHistory(true);
   } catch (e) {
     log('A/B error: ' + e, 'err');
@@ -1964,14 +2063,14 @@ async function refreshProcesses(options = {}) {
       const prevTargetPid = state.targetPid;
       state.targetPid = sel.value === '' ? null : parseInt(sel.value, 10);
       if (prevTargetPid !== state.targetPid) {
-        log('STATE DIAG target ' + JSON.stringify({
+        logStateDiagTarget({
           source: 'auto-process-refresh',
           previous_target_pid: prevTargetPid,
           next_target_pid: state.targetPid,
           next_target_label: chosen ? `${chosen.name} (PID ${chosen.pid}) - ${Number(chosen.cpu_usage || 0).toFixed(1)}% CPU` : 'Ce processus (SoulKernel)',
           auto_process_target: !!state.autoProcessTarget,
           workload: state.wl,
-        }), 'info');
+        });
       }
       if (!state.adaptiveEnabled) {
         const inferred = inferWorkloadFromProcess(chosen, state.lastMetrics);
@@ -2175,7 +2274,11 @@ async function applyStartupIntentIfAny() {
       state.domeActive = !!result.activated;
       updateDomeBadge(state.domeActive);
       result.actions.forEach(a => log(a, a.startsWith('\u2713') ? 'ok' : 'warn'));
-      log('Startup reapply dome: ' + result.message, state.domeActive ? 'ok' : 'warn');
+      if (state.domeActive) {
+        logDomeActivationGains(result, { context: 'démarrage (intention)', workload: state.wl, targetPid: state.targetPid });
+      } else {
+        log('Démarrage : réapplication dôme — ' + result.message, 'warn');
+      }
     } catch (e) {
       log('Startup reapply dome error: ' + e, 'warn');
     }
@@ -2409,7 +2512,7 @@ document.getElementById('btnDome').addEventListener('click', async () => {
   try {
     const pidVal = document.getElementById('targetProcess').value;
     state.targetPid = pidVal === '' ? null : parseInt(pidVal, 10);
-    log('Activation dome: workload=' + state.wl + ' kappa=' + state.kappa + ' sigmaMax=' + state.sigmaMax.toFixed(2) + (state.targetPid ? ' -> PID ' + state.targetPid : ''), 'info');
+    log('Activation dôme : profil ' + state.wl + ' · κ=' + state.kappa + ' · Σmax=' + state.sigmaMax.toFixed(2) + (state.targetPid ? ' · cible PID ' + state.targetPid : ' · cible SoulKernel'), 'info');
     const result = await invoke('activate_dome', {
       workload:  state.wl,
       kappa:     state.kappa,
@@ -2436,8 +2539,10 @@ document.getElementById('btnDome').addEventListener('click', async () => {
       });
       if (state.domeHistory.length > MAX_DOME_HISTORY) state.domeHistory.pop();
       renderGainsHistory();
+      logDomeActivationGains(result, { context: 'bouton', workload: state.wl, targetPid: state.targetPid });
+    } else {
+      log(result.message, 'warn');
     }
-    log(result.message, result.activated ? 'ok' : 'warn');
     result.actions.forEach(a => log(a, a.startsWith('✓') ? 'ok' : 'warn'));
     updateDomeBadge(result.activated);
     document.getElementById('fZone').classList.toggle('active', result.activated);
@@ -2454,9 +2559,11 @@ document.getElementById('btnDome').addEventListener('click', async () => {
 document.getElementById('btnReset').addEventListener('click', async () => {
   try {
     const actions = await invoke('rollback_dome');
-    // Store final real integral in last dome history entry
     if (state.domeHistory.length > 0 && state.domeRealIntegral > 0) {
       state.domeHistory[0].domeGain = state.domeRealIntegral - 0.06;
+    }
+    if (state.domeRealIntegral > 0) {
+      logDomeSessionIntegralEnd(state.domeRealIntegral - 0.06, { reason: 'rollback' });
     }
     state.domeActive = false;
     state.domeRealIntegral = 0;
@@ -2839,7 +2946,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '0.1.5',
+      version: '0.1.7',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -2883,14 +2990,14 @@ document.getElementById('autoProcessTarget').addEventListener('change', e => {
 document.getElementById('targetProcess').addEventListener('change', e => {
   state.targetPid = e.target.value === '' ? null : parseInt(e.target.value, 10);
   const label = e.target.selectedIndex >= 0 ? (e.target.options[e.target.selectedIndex].text || '') : 'Ce processus (SoulKernel)';
-  log('STATE DIAG target ' + JSON.stringify({
+  logStateDiagTarget({
     source: 'manual-target-change',
     next_target_pid: state.targetPid,
     next_target_label: label || 'Ce processus (SoulKernel)',
     auto_process_target: !!state.autoProcessTarget,
     workload: state.wl,
     dome_history_len: state.domeHistory.length,
-  }), 'info');
+  });
   if (state.autoProcessTarget && e.target.value) {
     state.autoProcessTarget = false;
     document.getElementById('autoProcessTarget').checked = false;
