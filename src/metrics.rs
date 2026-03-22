@@ -87,8 +87,8 @@ fn is_embedded_webview_name(name: &str) -> bool {
 /// Agrège CPU (somme des % sysinfo par cœur) et mémoire des descendants WebView du PID courant.
 fn webview_host_aggregate(sys: &System) -> (Option<f64>, Option<u64>) {
     let root = match get_current_pid() {
-        Some(p) => p,
-        None => return (None, None),
+        Ok(p) => p,
+        Err(_) => return (None, None),
     };
     let mut by_parent: HashMap<Pid, Vec<Pid>> = HashMap::new();
     for (pid, proc) in sys.processes() {
