@@ -466,10 +466,8 @@ fn write_cpu_governor(governor: &str) -> (String, bool) {
 
     for entry in entries {
         let path = entry.path().join("cpufreq/scaling_governor");
-        if path.exists() {
-            if std::fs::write(&path, governor).is_ok() {
-                any_ok = true;
-            }
+        if path.exists() && std::fs::write(&path, governor).is_ok() {
+            any_ok = true;
         }
     }
     (format!("CPU governor → {}", governor), any_ok)

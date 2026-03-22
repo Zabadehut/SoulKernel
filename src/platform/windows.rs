@@ -8,6 +8,9 @@
 //!   - Registry → virtual memory tuning
 //!   - GlobalMemoryStatusEx pour RAM physique réelle (évite les erreurs sysinfo >16 Go)
 
+// Sur Linux/macOS ce fichier est compilé pour la cohérence du crate ; les symboles Win32 ne sont pas appelés.
+#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+
 use crate::{formula::WorkloadProfile, metrics::ResourceState, platform::PlatformInfo};
 
 #[cfg(target_os = "windows")]
@@ -126,29 +129,25 @@ pub async fn apply_dome(
         actions.push(set_process_affinity(mask, target_pid));
     }
 
-    if profile.alpha[1] > 0.2 {
-        if mem_plan.apply_working_set {
-            let (min_b, max_b) = if is_target_process {
-                let min_b = 512 * 1024 * 1024;
-                let max_mb_mb = (2048.0_f64 + eta * 2048.0).min(4096.0);
-                let max_b = (max_mb_mb as usize) * 1024 * 1024;
-                (min_b, max_b)
-            } else {
-                (256 * 1024 * 1024, 1024 * 1024 * 1024)
-            };
-            let (msg, ok) = set_working_set(min_b, max_b, target_pid);
-            if ok {
-                crate::memory_policy::record_working_set_adjustment();
-            }
-            actions.push((msg, ok));
+    if profile.alpha[1] > 0.2 && mem_plan.apply_working_set {
+        let (min_b, max_b) = if is_target_process {
+            let min_b = 512 * 1024 * 1024;
+            let max_mb_mb = (2048.0_f64 + eta * 2048.0).min(4096.0);
+            let max_b = (max_mb_mb as usize) * 1024 * 1024;
+            (min_b, max_b)
+        } else {
+            (256 * 1024 * 1024, 1024 * 1024 * 1024)
+        };
+        let (msg, ok) = set_working_set(min_b, max_b, target_pid);
+        if ok {
+            crate::memory_policy::record_working_set_adjustment();
         }
+        actions.push((msg, ok));
     }
 
-    if profile.alpha[3] > 0.4 {
-        if mem_plan.apply_disable_compression {
-            crate::memory_policy::record_compression_toggle();
-            actions.push(disable_memory_compression());
-        }
+    if profile.alpha[3] > 0.4 && mem_plan.apply_disable_compression {
+        crate::memory_policy::record_compression_toggle();
+        actions.push(disable_memory_compression());
     }
 
     actions.push(set_io_priority_high(target_pid));
@@ -389,6 +388,7 @@ impl WindowsRealtimeCounters {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn sample_realtime_metrics() -> (
     Option<f64>,
     Option<f64>,
@@ -567,7 +567,7 @@ fn set_working_set(min: usize, max: usize, target_pid: Option<u32>) -> (String, 
     #[cfg(not(target_os = "windows"))]
     let _ = (target_pid, min, max);
     #[cfg(not(target_os = "windows"))]
-    (format!("Working set (stub)"), false)
+    ("Working set (stub)".to_string(), false)
 }
 
 fn disable_memory_compression() -> (String, bool) {

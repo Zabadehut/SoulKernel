@@ -27,13 +27,18 @@ SoulKernel/
 │       ├── windows.rs   ← Job Objects, affinity, powercfg
 │       └── macos.rs     ← QoS, pmset, IOKit
 ├── ui/
-│   ├── index.html       ← Frontend embarqué (zero deps)
+│   ├── index.html       ← Seule UI embarquée (Tauri `frontendDist`, zero deps)
 │   └── hud.html         ← HUD overlay window
-├── icons/               ← Icône Windows (icon.ico)
+├── scripts/
+│   └── cargo-msvc.example.cmd  ← Modèle MSVC Windows (copier en `cargo-msvc.cmd` local, voir .gitignore)
+├── gen/schemas/         ← Schémas Tauri (référence outils / IDE)
+├── icons/               ← icon.ico, icon.png
 ├── Cargo.toml
 ├── tauri.conf.json
 └── build.rs
 ```
+
+L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du dépôt.
 
 ## Développement
 
@@ -83,6 +88,8 @@ cargo tauri dev
 # Ou lancer l’app sans hot-reload :
 cargo run
 ```
+
+**Windows (MSVC)** : si `cargo` ne trouve pas les outils de lien, ouvrir une *Developer Command Prompt* ou s’inspirer de `scripts/cargo-msvc.example.cmd` (copie locale `cargo-msvc.cmd`, ignorée par git).
 
 ### Release (packaging pour distribution / vente)
 ```bash

@@ -257,7 +257,7 @@ impl TelemetryState {
         self.append_sample(&sample)?;
 
         // Persist lifetime every 20 samples to avoid excessive I/O.
-        if self.lifetime.total_samples % 20 == 0 {
+        if self.lifetime.total_samples.is_multiple_of(20) {
             let _ = self.save_lifetime();
         }
         Ok(())

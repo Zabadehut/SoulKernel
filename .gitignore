@@ -22,6 +22,8 @@
 .tmp_*.json
 soulkernel_gains_*.json
 nul
+# Wrapper MSVC local (voir scripts/cargo-msvc.example.cmd)
+/cargo-msvc.cmd
 
 # --- IDE / editor ---
 .vscode/
