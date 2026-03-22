@@ -330,6 +330,8 @@ mod tests {
                 battery_percent: None,
                 page_faults_per_sec: None,
                 platform: "Test".into(),
+                webview_host_cpu_sum: None,
+                webview_host_mem_mb: None,
             },
         }
     }

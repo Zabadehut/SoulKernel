@@ -7,7 +7,8 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sysinfo::System;
+use std::collections::{HashMap, HashSet, VecDeque};
+use sysinfo::{get_current_pid, Pid, System};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceState {
@@ -63,11 +64,77 @@ pub struct RawMetrics {
     /// Windows PDH `\Memory\Page Faults/sec` quand disponible.
     pub page_faults_per_sec: Option<f64>,
     pub platform: String,
+    /// Somme des `cpu_usage` sysinfo des processus WebView/WebKit descendants de SoulKernel
+    /// (ex. `msedgewebview2`, WebKit sur Linux/macOS). Aide à interpréter la charge « UI ».
+    #[serde(default)]
+    pub webview_host_cpu_sum: Option<f64>,
+    /// RSS agrégée des mêmes processus (MiB).
+    #[serde(default)]
+    pub webview_host_mem_mb: Option<u64>,
+}
+
+/// Processus hébergés par le runtime WebView (hors onglets navigateur classiques).
+fn is_embedded_webview_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("msedgewebview")
+        || n.contains("webview2")
+        || n.contains("webkitnetworkprocess")
+        || n.contains("webkit.webcontent")
+        || n.contains("webkitwebprocess")
+        || (n.contains("webkit") && n.contains("gpu"))
+}
+
+/// Agrège CPU (somme des % sysinfo par cœur) et mémoire des descendants WebView du PID courant.
+fn webview_host_aggregate(sys: &System) -> (Option<f64>, Option<u64>) {
+    let root = match get_current_pid() {
+        Some(p) => p,
+        None => return (None, None),
+    };
+    let mut by_parent: HashMap<Pid, Vec<Pid>> = HashMap::new();
+    for (pid, proc) in sys.processes() {
+        if let Some(par) = proc.parent() {
+            by_parent.entry(par).or_default().push(*pid);
+        }
+    }
+    let mut q = VecDeque::new();
+    q.push_back(root);
+    let mut seen = HashSet::new();
+    let mut cpu_sum = 0.0_f64;
+    let mut mem_sum = 0_u64;
+    let mut webview_nodes = 0_usize;
+    while let Some(pid) = q.pop_front() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        let Some(proc) = sys.processes().get(&pid) else {
+            continue;
+        };
+        if pid != root && is_embedded_webview_name(proc.name()) {
+            webview_nodes += 1;
+            cpu_sum += proc.cpu_usage() as f64;
+            mem_sum = mem_sum.saturating_add(proc.memory());
+        }
+        if let Some(kids) = by_parent.get(&pid) {
+            for c in kids {
+                q.push_back(*c);
+            }
+        }
+    }
+    if webview_nodes == 0 {
+        (None, None)
+    } else {
+        (
+            Some(cpu_sum),
+            Some(mem_sum / 1024 / 1024),
+        )
+    }
 }
 
 pub fn collect() -> Result<ResourceState> {
     let mut sys = System::new_all();
     sys.refresh_all();
+
+    let (webview_host_cpu_sum, webview_host_mem_mb) = webview_host_aggregate(&sys);
 
     // CPU
     let cpu_pct = sys.cpus().iter().map(|c| c.cpu_usage() as f64).sum::<f64>()
@@ -262,6 +329,8 @@ pub fn collect() -> Result<ResourceState> {
             battery_percent,
             page_faults_per_sec,
             platform: platform_name.clone(),
+            webview_host_cpu_sum,
+            webview_host_mem_mb,
         },
     };
 

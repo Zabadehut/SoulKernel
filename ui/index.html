@@ -385,6 +385,8 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <div class="raw-cell"><div class="raw-label">Cost total</div><div class="raw-val" id="rawCostTotal">—</div></div>
         <div class="raw-cell"><div class="raw-label">Energy H/J/S/M/A</div><div class="raw-val" id="rawEnergyWindows">—</div></div>
         <div class="raw-cell"><div class="raw-label">Activite</div><div class="raw-val" id="rawActivity">—</div></div>
+        <div class="raw-cell"><div class="raw-label">WebView hôte (ΣCPU)</div><div class="raw-val" id="rawWebviewCpu">—</div></div>
+        <div class="raw-cell"><div class="raw-label">WebView hôte (RAM)</div><div class="raw-val" id="rawWebviewMem">—</div></div>
       </div>
     </div>
 
@@ -488,6 +490,9 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         </div>
       </div>
       <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
+      <div class="green-it-hint" id="greenItHint" style="margin-top:.5rem;font-size:.78rem;line-height:1.35;color:var(--muted);max-width:42rem">
+        Les <strong>CPU·h économisées</strong> et l’intégrale <strong>∫𝒟</strong> ne comptent que lorsque l’activité machine est <strong>« ACTIF »</strong> (pas en veille média ni idle système). La nuit sans charge réelle, le dôme peut rester utile mais les gains mesurés restent faibles — regardez surtout <strong>heures dôme</strong> et les sessions de travail actives.
+      </div>
     </div>
   </div>
 
@@ -1362,10 +1367,14 @@ function detectMachineActivity(m) {
   const ioR = Number(m.raw.io_read_mb_s || 0);
   const ioW = Number(m.raw.io_write_mb_s || 0);
   const ioTotal = ioR + ioW;
-  // Media: GPU decoding active but CPU low (video/film/series)
-  if (cpu < 15 && gpuPct > 15) return 'media';
-  // Idle: everything quiet
-  if (cpu < 8 && ioTotal < 0.5 && gpuPct < 5) return 'idle';
+  // WebView2 (Tauri) peut élever la jauge GPU sans lecture vidéo → éviter le faux « media »
+  // qui ignorait les gains télémetrie (CPU·h / ∫𝒟).
+  const wvMem = Number(m.raw.webview_host_mem_mb || 0);
+  const gpuAdj = wvMem >= 48 ? Math.max(0, gpuPct - 18) : gpuPct;
+  // Media: décodage vidéo typique (GPU nettement sollicité, CPU modéré)
+  if (cpu < 12 && gpuAdj > 34) return 'media';
+  // Idle: machine calme (seuils un peu plus stricts sur GPU pour l’UI WebView)
+  if (cpu < 8 && ioTotal < 0.5 && gpuPct < 8) return 'idle';
   return 'active';
 }
 
@@ -1837,7 +1846,9 @@ async function refreshProcesses(options = {}) {
     list.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.pid;
-      opt.textContent = `${p.name} (PID ${p.pid}) - ${p.cpu_usage.toFixed(1)}% CPU`;
+      const rss = (p.memory_kb != null) ? ` · ${(Number(p.memory_kb) / 1024).toFixed(0)} MiB` : '';
+      const par = (p.parent_pid != null) ? ` ←${p.parent_pid}` : '';
+      opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${rss}`;
       sel.appendChild(opt);
     });
     if (state.autoProcessTarget) {
@@ -2166,6 +2177,12 @@ function renderMetrics(m) {
   set('rawGpuCoreClock', opt(m.raw.gpu_core_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawGpuMemClock', opt(m.raw.gpu_mem_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W'));
+  set('rawWebviewCpu', (m.raw.webview_host_cpu_sum != null && m.raw.webview_host_cpu_sum !== undefined)
+    ? (Number(m.raw.webview_host_cpu_sum).toFixed(1) + ' Σ%')
+    : na);
+  set('rawWebviewMem', (m.raw.webview_host_mem_mb != null && m.raw.webview_host_mem_mb !== undefined)
+    ? (Number(m.raw.webview_host_mem_mb) + ' MiB')
+    : na);
 
   // Activity state in raw metrics
   const actRaw = document.getElementById('rawActivity');

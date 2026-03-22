@@ -14,6 +14,7 @@ mod platform;
 mod telemetry;
 
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
@@ -53,14 +54,19 @@ pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
     pub cpu_usage: f64,
+    pub parent_pid: Option<u32>,
+    /// RSS approximative (KiB).
+    pub memory_kb: u64,
 }
 
 // ─── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
 fn list_processes() -> Result<Vec<ProcessInfo>, String> {
-    let mut sys = sysinfo::System::new_all();
-    sys.refresh_all();
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes();
+    thread::sleep(Duration::from_millis(220));
+    sys.refresh_processes();
     let mut list: Vec<ProcessInfo> = sys
         .processes()
         .iter()
@@ -68,6 +74,8 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
             pid: pid.as_u32(),
             name: p.name().to_string(),
             cpu_usage: p.cpu_usage() as f64,
+            parent_pid: p.parent().map(|pp| pp.as_u32()),
+            memory_kb: p.memory() / 1024,
         })
         .collect();
     list.sort_by(|a, b| {
@@ -587,6 +595,106 @@ fn clear_benchmark_history(benchmark_state: State<'_, SharedBenchmark>) -> Resul
     history.clear()
 }
 
+/// Création / affichage / fermeture / rechargement des fenêtres WebView (HUD).
+/// **Doit** s’exécuter sur le thread UI de l’app : WebView2 (Windows) et wry attendent le main thread
+/// pour les opérations COM / HWND (cf. raccourcis déjà marshalisés via `run_on_main_thread`).
+fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
+    const HUD_STALE_MS: u64 = 5000;
+    const HUD_RELOAD_BASE_COOLDOWN_MS: u64 = 4000;
+    const HUD_RELOAD_MAX_COOLDOWN_MS: u64 = 30000;
+    const HUD_RELOAD_MAX: u32 = 6;
+
+    let hud_state = app.state::<SharedHud>();
+    let hs = match hud_state.lock() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    if !hs.visible {
+        return;
+    }
+    if app.get_webview_window("hud").is_none() {
+        let _ = apply_hud_window_mode(
+            app,
+            hs.interactive,
+            &hs.preset,
+            hs.opacity,
+            hs.display_index,
+        );
+        if let Some(w) = app.get_webview_window("hud") {
+            let _ = w.hide();
+        }
+        let audit = app.state::<SharedAudit>();
+        let _ = audit_write(
+            &*audit,
+            "hud",
+            "window-recreated",
+            Some("warn"),
+            Some(serde_json::json!({
+                "preset": hs.preset,
+                "interactive": hs.interactive,
+                "display_index": hs.display_index
+            })),
+        );
+        return;
+    }
+
+    let hud_health = app.state::<SharedHudHealth>();
+    let mut health = match hud_health.lock() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let now = now_ms_local();
+    let stale = now.saturating_sub(health.last_ready_ms) > HUD_STALE_MS;
+    let exp = health.reload_count.min(3);
+    let cooldown_ms = (HUD_RELOAD_BASE_COOLDOWN_MS.saturating_mul(1u64 << exp))
+        .min(HUD_RELOAD_MAX_COOLDOWN_MS);
+    let since_reload = now.saturating_sub(health.last_reload_ms);
+    let cooldown_ok = since_reload > cooldown_ms;
+    if stale && cooldown_ok && health.reload_count < HUD_RELOAD_MAX {
+        if let Some(w) = app.get_webview_window("hud") {
+            let _ = w.hide();
+            let _ = w.close();
+        }
+        let _ = apply_hud_window_mode(
+            app,
+            hs.interactive,
+            &hs.preset,
+            hs.opacity,
+            hs.display_index,
+        );
+        if let Some(w) = app.get_webview_window("hud") {
+            let _ = w.show();
+        }
+        health.last_reload_ms = now;
+        health.reload_count = health.reload_count.saturating_add(1);
+        let audit = app.state::<SharedAudit>();
+        let _ = audit_write(
+            &*audit,
+            "hud",
+            "window-hard-recreate",
+            Some("warn"),
+            Some(serde_json::json!({
+                "reload_count": health.reload_count,
+                "last_ready_age_ms": now.saturating_sub(health.last_ready_ms),
+                "cooldown_ms": cooldown_ms
+            })),
+        );
+    } else if stale && !cooldown_ok {
+        let audit = app.state::<SharedAudit>();
+        let _ = audit_write(
+            &*audit,
+            "hud",
+            "watchdog-skip-backoff",
+            Some("info"),
+            Some(serde_json::json!({
+                "reload_count": health.reload_count,
+                "since_reload_ms": since_reload,
+                "cooldown_ms": cooldown_ms
+            })),
+        );
+    }
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
@@ -644,10 +752,13 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
+            let app = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            });
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -657,44 +768,54 @@ fn main() {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    let hud = app.state::<SharedHud>();
-                    if shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyH) {
-                        let mut hs = match hud.lock() {
-                            Ok(v) => v,
-                            Err(_) => return,
-                        };
-                        hs.visible = !hs.visible;
-                        if hs.visible {
+                    let toggle_hud = shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyH);
+                    let toggle_interactive =
+                        shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyJ);
+                    if !toggle_hud && !toggle_interactive {
+                        return;
+                    }
+                    let app = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if toggle_hud {
+                            let hud = app.state::<SharedHud>();
+                            let mut hs = match hud.lock() {
+                                Ok(v) => v,
+                                Err(_) => return,
+                            };
+                            hs.visible = !hs.visible;
+                            if hs.visible {
+                                let _ = apply_hud_window_mode(
+                                    &app,
+                                    hs.interactive,
+                                    &hs.preset,
+                                    hs.opacity,
+                                    hs.display_index,
+                                );
+                                if let Some(w) = app.get_webview_window("hud") {
+                                    let _ = w.show();
+                                }
+                            } else if let Some(w) = app.get_webview_window("hud") {
+                                let _ = w.hide();
+                            }
+                            let _ = app.emit("soulkernel://hud-state", hs.visible);
+                        }
+                        if toggle_interactive {
+                            let hud = app.state::<SharedHud>();
+                            let mut hs = match hud.lock() {
+                                Ok(v) => v,
+                                Err(_) => return,
+                            };
+                            hs.interactive = !hs.interactive;
                             let _ = apply_hud_window_mode(
-                                app,
+                                &app,
                                 hs.interactive,
                                 &hs.preset,
                                 hs.opacity,
                                 hs.display_index,
                             );
-                            if let Some(w) = app.get_webview_window("hud") {
-                                let _ = w.show();
-                            }
-                        } else if let Some(w) = app.get_webview_window("hud") {
-                            let _ = w.hide();
+                            let _ = app.emit("soulkernel://hud-interactive", hs.interactive);
                         }
-                        let _ = app.emit("soulkernel://hud-state", hs.visible);
-                    }
-                    if shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyJ) {
-                        let mut hs = match hud.lock() {
-                            Ok(v) => v,
-                            Err(_) => return,
-                        };
-                        hs.interactive = !hs.interactive;
-                        let _ = apply_hud_window_mode(
-                            app,
-                            hs.interactive,
-                            &hs.preset,
-                            hs.opacity,
-                            hs.display_index,
-                        );
-                        let _ = app.emit("soulkernel://hud-interactive", hs.interactive);
-                    }
+                    });
                 })
                 .build(),
         )
@@ -741,101 +862,12 @@ fn main() {
             let app_handle2 = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut hb = tokio::time::interval(Duration::from_millis(1500));
-                const HUD_STALE_MS: u64 = 5000;
-                const HUD_RELOAD_BASE_COOLDOWN_MS: u64 = 4000;
-                const HUD_RELOAD_MAX_COOLDOWN_MS: u64 = 30000;
-                const HUD_RELOAD_MAX: u32 = 6;
                 loop {
                     hb.tick().await;
-                    let hud_state = app_handle2.state::<SharedHud>();
-                    let hs = match hud_state.lock() {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    if !hs.visible {
-                        continue;
-                    }
-                    if app_handle2.get_webview_window("hud").is_none() {
-                        let _ = apply_hud_window_mode(
-                            &app_handle2,
-                            hs.interactive,
-                            &hs.preset,
-                            hs.opacity,
-                            hs.display_index,
-                        );
-                        if let Some(w) = app_handle2.get_webview_window("hud") {
-                            let _ = w.hide();
-                        }
-                        let audit = app_handle2.state::<SharedAudit>();
-                        let _ = audit_write(
-                            &*audit,
-                            "hud",
-                            "window-recreated",
-                            Some("warn"),
-                            Some(serde_json::json!({
-                                "preset": hs.preset,
-                                "interactive": hs.interactive,
-                                "display_index": hs.display_index
-                            })),
-                        );
-                        continue;
-                    }
-
-                    let hud_health = app_handle2.state::<SharedHudHealth>();
-                    let mut health = match hud_health.lock() {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let now = now_ms_local();
-                    let stale = now.saturating_sub(health.last_ready_ms) > HUD_STALE_MS;
-                    let exp = health.reload_count.min(3);
-                    let cooldown_ms = (HUD_RELOAD_BASE_COOLDOWN_MS.saturating_mul(1u64 << exp))
-                        .min(HUD_RELOAD_MAX_COOLDOWN_MS);
-                    let since_reload = now.saturating_sub(health.last_reload_ms);
-                    let cooldown_ok = since_reload > cooldown_ms;
-                    if stale && cooldown_ok && health.reload_count < HUD_RELOAD_MAX {
-                        if let Some(w) = app_handle2.get_webview_window("hud") {
-                            let _ = w.hide();
-                            let _ = w.close();
-                        }
-                        let _ = apply_hud_window_mode(
-                            &app_handle2,
-                            hs.interactive,
-                            &hs.preset,
-                            hs.opacity,
-                            hs.display_index,
-                        );
-                        if let Some(w) = app_handle2.get_webview_window("hud") {
-                            let _ = w.show();
-                        }
-                        health.last_reload_ms = now;
-                        health.reload_count = health.reload_count.saturating_add(1);
-                        let audit = app_handle2.state::<SharedAudit>();
-                        let _ = audit_write(
-                            &*audit,
-                            "hud",
-                            "window-hard-recreate",
-                            Some("warn"),
-                            Some(serde_json::json!({
-                                "reload_count": health.reload_count,
-                                "last_ready_age_ms": now.saturating_sub(health.last_ready_ms),
-                                "cooldown_ms": cooldown_ms
-                            })),
-                        );
-                    } else if stale && !cooldown_ok {
-                        let audit = app_handle2.state::<SharedAudit>();
-                        let _ = audit_write(
-                            &*audit,
-                            "hud",
-                            "watchdog-skip-backoff",
-                            Some("info"),
-                            Some(serde_json::json!({
-                                "reload_count": health.reload_count,
-                                "since_reload_ms": since_reload,
-                                "cooldown_ms": cooldown_ms
-                            })),
-                        );
-                    }
+                    let app = app_handle2.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        soulkernel_hud_watchdog_tick(&app);
+                    });
                 }
             });
 
