@@ -308,8 +308,9 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="compact-hud-item"><span>Rentable:</span> <strong id="hudRenta">-</strong></div>
     <div class="compact-hud-item"><span>Power:</span> <strong id="hudPower">-</strong></div>
     <div class="compact-hud-item"><span>Energie:</span> <strong id="hudEnergy">-</strong></div>
-    <div class="compact-hud-item"><span>CO₂ evite:</span> <strong id="hudCo2">-</strong></div>
+    <div class="compact-hud-item"><span>CO₂ (kWh mes.):</span> <strong id="hudCo2">-</strong></div>
     <div class="compact-hud-item"><span>CPU·h saved:</span> <strong id="hudCpuH">-</strong></div>
+    <div class="compact-hud-item"><span>RAM·GB·h:</span> <strong id="hudMemGh">-</strong></div>
   </div>
 </div>
 
@@ -381,6 +382,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <div class="raw-cell"><div class="raw-label">GPU mem</div><div class="raw-val" id="rawGpuMemClock">—</div></div>
         <div class="raw-cell"><div class="raw-label">Power (W)</div><div class="raw-val" id="rawPowerW">—</div></div>
         <div class="raw-cell"><div class="raw-label">Opt real (A/B)</div><div class="raw-val" id="rawOptReal">—</div></div>
+        <div class="raw-cell"><div class="raw-label">RAM·GB·H (tel.)</div><div class="raw-val" id="rawMemGbHTel">—</div></div>
         <div class="raw-cell"><div class="raw-label">Energy total</div><div class="raw-val" id="rawEnergyTotal">—</div></div>
         <div class="raw-cell"><div class="raw-label">Cost total</div><div class="raw-val" id="rawCostTotal">—</div></div>
         <div class="raw-cell"><div class="raw-label">Energy H/J/S/M/A</div><div class="raw-val" id="rawEnergyWindows">—</div></div>
@@ -467,15 +469,19 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
           <div class="green-it-label">CPU·H SAVED</div>
         </div>
         <div class="green-it-stat">
-          <div class="green-it-val" id="greenCo2">0</div>
-          <div class="green-it-label">KG CO₂ AVOIDED</div>
+          <div class="green-it-val" id="greenMemGh">0</div>
+          <div class="green-it-label">RAM·GB·H ÉPARGNÉS</div>
         </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenCo2">0</div>
+          <div class="green-it-label">KG CO₂ (kWh MES.)</div>
+        </div>
+      </div>
+      <div class="green-it-grid" style="margin-top:.35rem">
         <div class="green-it-stat">
           <div class="green-it-val" id="greenKwh">0</div>
           <div class="green-it-label">KWH MEASURED</div>
         </div>
-      </div>
-      <div class="green-it-grid" style="margin-top:.35rem">
         <div class="green-it-stat">
           <div class="green-it-val" id="greenDomeN">0</div>
           <div class="green-it-label">ACTIVATIONS</div>
@@ -484,16 +490,20 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
           <div class="green-it-val" id="greenDomeH">0</div>
           <div class="green-it-label">DOME HOURS</div>
         </div>
-        <div class="green-it-stat">
+      </div>
+      <div class="green-it-grid" style="margin-top:.35rem">
+        <div class="green-it-stat" style="grid-column:1 / -1">
           <div class="green-it-val" id="greenDomeD">0</div>
           <div class="green-it-label">∫𝒟 RÉELLE</div>
         </div>
       </div>
       <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
       <div class="green-it-hint" id="greenItHint" style="margin-top:.5rem;font-size:.78rem;line-height:1.35;color:var(--muted);max-width:42rem">
-        Les <strong>CPU·h économisées</strong> et l’intégrale <strong>∫𝒟</strong> ne comptent que lorsque l’activité machine est <strong>« ACTIF »</strong> (pas en veille média ni idle système). La nuit sans charge réelle, le dôme peut rester utile mais les gains mesurés restent faibles — regardez surtout <strong>heures dôme</strong> et les sessions de travail actives.
+        Les <strong>CPU·h</strong>, les <strong>RAM·GB·h</strong> et l’intégrale <strong>∫𝒟</strong> ne comptent que lorsque l’activité machine est <strong>« ACTIF »</strong> (pas en veille média ni idle système). La nuit sans charge réelle, le dôme peut rester utile mais les gains mesurés restent faibles — regardez surtout <strong>heures dôme</strong> et les sessions de travail actives.
         <br><br>
-        Le bloc GREEN IT met l’accent sur le <strong>CPU</strong> (cumul fiable dans le temps). <strong>RAM</strong> et <strong>GPU</strong> entrent dans σ(t), les métriques brutes (HUD) et le benchmark A/B (deltas médians). Sur Windows, <strong>SoulRAM</strong> (compression + trim du working set) vise le même axe « pression mémoire » que des outils type <strong>WinMemoryCleaner</strong> — pas un clone, mais une logique voisine ; l’économie RAM se lit surtout via l’usage mesuré et SoulRAM, pas via une « kg CO₂ RAM » isolée ici.
+        Les <strong>RAM·GB·h</strong> cumulent la baisse de <strong>pression mémoire</strong> sous dôme (activité ACTIF) par rapport à la baseline mesurée dôme OFF — même idée que les CPU·h, sans CO₂ dédié (pas de capteur « watts RAM » fiable). <strong>GPU</strong> reste dans σ(t), le HUD et le benchmark A/B. <strong>SoulRAM</strong> sur Windows suit un axe proche de <strong>WinMemoryCleaner</strong> (working set / cache) ; ce n’est pas un clone produit.
+        <br><br>
+        <strong>kWh, kg CO₂ et €</strong> du bloc ne s’affichent qu’avec une <strong>puissance (W) réelle</strong> (RAPL, batterie, etc.) : c’est l’intégrale de cette puissance × tarif / intensité carbone — une <strong>empreinte liée au suivi</strong>, pas un « CO₂ évité par le dôme » sans baseline énergétique de comparaison.
       </div>
     </div>
   </div>
@@ -1443,6 +1453,8 @@ async function ingestTelemetry(m) {
         cpu_pct: (m.raw.cpu_pct != null ? Number(m.raw.cpu_pct) : null),
         pi: (state.lastPi != null ? Number(state.lastPi) : null),
         machine_activity: state.machineActivity || 'active',
+        mem_used_mb: (m.raw.mem_used_mb != null ? Number(m.raw.mem_used_mb) : null),
+        mem_total_mb: (m.raw.mem_total_mb != null ? Number(m.raw.mem_total_mb) : null),
       }
     });
   } catch (_) {}
@@ -1456,6 +1468,8 @@ function renderTelemetrySummary(s) {
   const fmtEnergy = (w, key) => (w?.has_power_data ? `${f(w?.[key])}` : 'N/A');
   const gain = s.total?.kpi_gain_median_pct;
   set('rawOptReal', gain == null ? 'N/A' : gain.toFixed(2) + '%');
+  const mgb = s.total?.mem_gb_hours_saved;
+  set('rawMemGbHTel', mgb != null && Number.isFinite(Number(mgb)) ? Number(mgb).toFixed(3) : 'N/A');
   set('rawEnergyTotal', fmtEnergy(s.total, 'energy_kwh') + ' kWh');
   set('rawCostTotal', (s.total?.has_power_data ? f(s.total?.cost) : 'N/A') + ' ' + ccy);
   set('rawEnergyWindows',
@@ -1491,6 +1505,7 @@ function renderGreenItPanel(s) {
 
   // Main stats
   set('greenCpuH', f2(lt.total_cpu_hours_saved));
+  set('greenMemGh', f2(lt.total_mem_gb_hours_saved ?? 0));
   set('greenCo2', f3(lt.total_co2_avoided_kg));
   set('greenKwh', lt.has_real_power ? f3(lt.total_energy_kwh) : '--');
   set('greenDomeN', String(lt.total_dome_activations || 0));
@@ -1504,11 +1519,12 @@ function renderGreenItPanel(s) {
     let text = `Depuis le ${firstDate} : `;
     text += `<strong>${lt.total_dome_activations}</strong> activations, `;
     text += `<strong>${f2(lt.total_dome_hours)}</strong> h de dome, `;
-    text += `<strong>${f2(lt.total_cpu_hours_saved)}</strong> CPU-h economisees`;
+      text += `<strong>${f2(lt.total_cpu_hours_saved)}</strong> CPU-h (diff. mesure), `;
+    text += `<strong>${f2(lt.total_mem_gb_hours_saved ?? 0)}</strong> RAM·GB·h (diff. mesure)`;
     if (lt.has_real_power) {
-      text += ` | <strong>${f3(lt.total_energy_kwh)}</strong> kWh mesures`;
-      text += `, <strong>${f3(lt.total_co2_avoided_kg)}</strong> kg CO2 evites`;
-      text += `, <strong>${f2(lt.total_cost_saved)}</strong> ${s.pricing?.currency || 'EUR'} economises`;
+      text += ` | <strong>${f3(lt.total_energy_kwh)}</strong> kWh integres (capteur)`;
+      text += `, <strong>${f3(lt.total_co2_avoided_kg)}</strong> kg CO2 eq. (kWh × intensite)`;
+      text += `, <strong>${f2(lt.total_cost_saved)}</strong> ${s.pricing?.currency || 'EUR'} cout energie cumule`;
     }
     if (lt.avg_kpi_gain_pct != null) {
       text += ` | gain KPI median: <strong>${Number(lt.avg_kpi_gain_pct).toFixed(1)}%</strong>`;
@@ -1534,6 +1550,8 @@ function renderGreenItPanel(s) {
   if (hudCo2) hudCo2.textContent = lt.has_real_power ? f3(lt.total_co2_avoided_kg) + ' kg' : '--';
   const hudCpuH = document.getElementById('hudCpuH');
   if (hudCpuH) hudCpuH.textContent = f2(lt.total_cpu_hours_saved) + ' h';
+  const hudMemGh = document.getElementById('hudMemGh');
+  if (hudMemGh) hudMemGh.textContent = f2(lt.total_mem_gb_hours_saved ?? 0) + ' GB·h';
 }
 
 async function refreshTelemetrySummary(force = false) {
@@ -2682,9 +2700,11 @@ function buildSessionReportText() {
       lines.push('Fenetres kWh H/J/S/M/A: N/A');
     }
     lines.push('Optimisation reelle mediane A/B (historique global): ' + (t.total?.kpi_gain_median_pct == null ? 'N/A' : Number(t.total.kpi_gain_median_pct).toFixed(2) + '%'));
+    lines.push('CPU·h / RAM·GB·h (fenetre telemetrie): ' + f(t.total?.cpu_hours_saved) + ' / ' + f(t.total?.mem_gb_hours_saved));
     lines.push('Clean passif (h): ' + f(t.total?.passive_clean_h) + ' | ratio dome actif: ' + f((t.total?.dome_active_ratio ?? 0) * 100) + '%');
     const lt = t.lifetime;
     if (lt) {
+      lines.push('Vie entiere GREEN IT: CPU·h=' + Number(lt.total_cpu_hours_saved || 0).toFixed(3) + ' | RAM·GB·h=' + Number(lt.total_mem_gb_hours_saved || 0).toFixed(3));
       const idleH = Number(lt.total_idle_hours || 0);
       const mediaH = Number(lt.total_media_hours || 0);
       if (idleH > 0.01 || mediaH > 0.01) {
@@ -2734,7 +2754,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '0.1.4',
+      version: '0.1.5',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -3493,8 +3513,8 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'audit_log_event') return Promise.resolve(null);
   if (cmd === 'get_audit_log_path') return Promise.resolve('Hors Tauri');
   if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
-  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: {}, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 } });
-  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 });
+  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: { mem_gb_hours_saved: 0 }, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 } });
+  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 });
   if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
   if (cmd === 'set_energy_pricing') return Promise.resolve(null);
   if (cmd === 'open_system_hud') return Promise.resolve(null);

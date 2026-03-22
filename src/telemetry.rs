@@ -48,6 +48,12 @@ pub struct TelemetryIngestRequest {
     /// Machine activity state detected by the frontend.
     #[serde(default)]
     pub machine_activity: Option<MachineActivity>,
+    /// RAM utilisée (Mo) — pour cumul GREEN IT « RAM·GB·h ».
+    #[serde(default)]
+    pub mem_used_mb: Option<f64>,
+    /// RAM physique totale (Mo).
+    #[serde(default)]
+    pub mem_total_mb: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +73,11 @@ pub struct TelemetrySample {
     /// Machine activity state at this tick.
     #[serde(default)]
     pub machine_activity: Option<MachineActivity>,
+    /// Ratio RAM utilisée (0..1), dérivé de used/total à l’ingest.
+    #[serde(default)]
+    pub mem_used_ratio: Option<f64>,
+    #[serde(default)]
+    pub mem_total_mb: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -81,11 +92,13 @@ pub struct WindowSummary {
     pub dome_active_ratio: f64,
     pub passive_clean_h: f64,
     pub kpi_gain_median_pct: Option<f64>,
-    /// CPU·hours saved = ∫(cpu_baseline − cpu_dome) × dt / 3600.
-    /// Computed from measured CPU differential (dome ON vs OFF). Always real data.
+    /// CPU·h «épargnées» = modèle différentiel (baseline CPU dôme OFF vs mesure dôme ON), entrées `cpu_pct` réelles.
     pub cpu_hours_saved: f64,
     /// Real dome gain integral Σ(π_i × dt_i) for dome-active samples.
     pub dome_gain_integral: f64,
+    /// ∫ max(0, ratio_baseline − ratio_dome) × (total_GB) dt / 3600 — équivalent « gigaoctet-heures » de pression RAM évitée.
+    #[serde(default)]
+    pub mem_gb_hours_saved: f64,
     /// Ratio of idle samples in the window.
     pub idle_ratio: f64,
     /// Ratio of media samples in the window.
@@ -103,13 +116,13 @@ pub struct LifetimeGains {
     pub total_dome_hours: f64,
     /// CPU·hours saved (measured differential, always available).
     pub total_cpu_hours_saved: f64,
-    /// Total energy consumed while monitored (kWh). Only when power data available.
+    /// Énergie intégrée depuis le capteur de puissance (kWh). Zéro si pas de watts réels.
     pub total_energy_kwh: f64,
-    /// CO₂ avoided (kg). Computed from energy × pricing factor.
+    /// kg CO₂ équivalent = `total_energy_kwh` × facteur (empreinte liée au kWh mesuré, pas un «gain évité» sans baseline énergétique).
     pub total_co2_avoided_kg: f64,
-    /// Cost saved (currency). Computed from energy × pricing factor.
+    /// Coût cumulé = `total_energy_kwh` × prix (idem : pas des euros «économisés» par le dôme sans référence).
     pub total_cost_saved: f64,
-    /// Cumulative real dome gain integral Σ(π_i × dt_i) − n × (C_setup + C_rb).
+    /// ∫ π(t)·dt sur les ticks dôme ACTIF (π issu de la formule ; entrées r(t) mesurées côté OS).
     pub total_dome_gain_integral: f64,
     /// Median KPI gain % across all measurements.
     pub avg_kpi_gain_pct: Option<f64>,
@@ -121,6 +134,9 @@ pub struct LifetimeGains {
     pub total_idle_hours: f64,
     /// Total hours spent in media consumption (video/film).
     pub total_media_hours: f64,
+    /// Cumul RAM·GB·h (pression mémoire × temps, même principe que CPU·h).
+    #[serde(default)]
+    pub total_mem_gb_hours_saved: f64,
 }
 
 impl Default for LifetimeGains {
@@ -139,6 +155,7 @@ impl Default for LifetimeGains {
             has_real_power: false,
             total_idle_hours: 0.0,
             total_media_hours: 0.0,
+            total_mem_gb_hours_saved: 0.0,
         }
     }
 }
@@ -172,6 +189,9 @@ pub struct TelemetryState {
     /// Running average CPU% when dome is OFF (baseline).
     cpu_baseline_acc: f64,
     cpu_baseline_dt: f64,
+    /// Baseline ratio RAM utilisée (0..1) quand dôme OFF + ACTIF.
+    mem_baseline_acc: f64,
+    mem_baseline_dt: f64,
     /// Running KPI gains for lifetime median.
     kpi_gains_all: Vec<f64>,
     retention_ms: u64,
@@ -192,6 +212,8 @@ impl TelemetryState {
             last_dome_active: false,
             cpu_baseline_acc: 0.0,
             cpu_baseline_dt: 0.0,
+            mem_baseline_acc: 0.0,
+            mem_baseline_dt: 0.0,
             kpi_gains_all: Vec::new(),
             retention_ms: 370 * 24 * 3600 * 1000,
         };
@@ -237,6 +259,17 @@ impl TelemetryState {
         };
         self.last_ts_ms = Some(now_ms);
 
+        let (mem_used_ratio, mem_total_mb_stored) =
+            match (req.mem_used_mb, req.mem_total_mb) {
+                (Some(u), Some(t))
+                    if t > 0.0 && u.is_finite() && t.is_finite() =>
+                {
+                    let r = (u / t).clamp(0.0, 1.0);
+                    (Some(r), Some(t))
+                }
+                _ => (None, None),
+            };
+
         let sample = TelemetrySample {
             ts_ms: now_ms,
             dt_s,
@@ -247,6 +280,8 @@ impl TelemetryState {
             cpu_pct: req.cpu_pct.filter(|v| v.is_finite() && *v >= 0.0),
             pi: req.pi.filter(|v| v.is_finite()),
             machine_activity: req.machine_activity,
+            mem_used_ratio,
+            mem_total_mb: mem_total_mb_stored,
         };
 
         // ── Update lifetime gains ─────────────────────────────────────────
@@ -322,6 +357,23 @@ impl TelemetryState {
             0.0
         };
 
+        let mut mem_off_sum = 0.0;
+        let mut mem_off_dt = 0.0;
+        for s in self.ring.iter().filter(|s| s.ts_ms >= start_ms) {
+            let activity = s.machine_activity.unwrap_or(MachineActivity::Active);
+            if !s.dome_active && activity == MachineActivity::Active {
+                if let Some(r) = s.mem_used_ratio {
+                    mem_off_sum += r * s.dt_s;
+                    mem_off_dt += s.dt_s;
+                }
+            }
+        }
+        let mem_baseline_ratio = if mem_off_dt > 0.0 {
+            mem_off_sum / mem_off_dt
+        } else {
+            0.0
+        };
+
         // Second pass: aggregate all metrics.
         for s in self.ring.iter().filter(|s| s.ts_ms >= start_ms) {
             let activity = s.machine_activity.unwrap_or(MachineActivity::Active);
@@ -340,6 +392,13 @@ impl TelemetryState {
                 if let Some(cpu) = s.cpu_pct {
                     let delta_pct = (cpu_baseline_pct - cpu).max(0.0);
                     out.cpu_hours_saved += delta_pct * s.dt_s / 360_000.0;
+                }
+                if let (Some(r), Some(tmb)) = (s.mem_used_ratio, s.mem_total_mb) {
+                    let gb = tmb / 1024.0;
+                    if gb > 0.01 && mem_off_dt > 0.0 {
+                        let delta_gb = (mem_baseline_ratio - r).max(0.0) * gb;
+                        out.mem_gb_hours_saved += delta_gb * s.dt_s / 3600.0;
+                    }
                 }
                 // Real π integral.
                 if let Some(pi) = s.pi {
@@ -443,6 +502,22 @@ impl TelemetryState {
                 if let Some(pi) = s.pi {
                     self.lifetime.total_dome_gain_integral += pi * s.dt_s;
                 }
+
+                if let (Some(r), Some(tmb)) = (s.mem_used_ratio, s.mem_total_mb) {
+                    let gb = tmb / 1024.0;
+                    if gb > 0.01 {
+                        let baseline = if self.mem_baseline_dt > 0.0 {
+                            self.mem_baseline_acc / self.mem_baseline_dt
+                        } else {
+                            0.0
+                        };
+                        if baseline > 0.0 {
+                            let delta_gb = (baseline - r).max(0.0) * gb;
+                            self.lifetime.total_mem_gb_hours_saved +=
+                                delta_gb * s.dt_s / 3600.0;
+                        }
+                    }
+                }
             }
         } else if activity == MachineActivity::Active {
             // Dome OFF + Active: accumulate CPU baseline.
@@ -454,6 +529,15 @@ impl TelemetryState {
                     let ratio = 600.0 / self.cpu_baseline_dt;
                     self.cpu_baseline_acc *= ratio;
                     self.cpu_baseline_dt = 600.0;
+                }
+            }
+            if let Some(r) = s.mem_used_ratio {
+                self.mem_baseline_acc += r * s.dt_s;
+                self.mem_baseline_dt += s.dt_s;
+                if self.mem_baseline_dt > 600.0 {
+                    let ratio = 600.0 / self.mem_baseline_dt;
+                    self.mem_baseline_acc *= ratio;
+                    self.mem_baseline_dt = 600.0;
                 }
             }
         }
