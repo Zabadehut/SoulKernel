@@ -753,7 +753,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let app = app.clone();
-            let _ = app.run_on_main_thread(move || {
+            let _ = app.clone().run_on_main_thread(move || {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
@@ -775,7 +775,7 @@ fn main() {
                         return;
                     }
                     let app = app.clone();
-                    let _ = app.run_on_main_thread(move || {
+                    let _ = app.clone().run_on_main_thread(move || {
                         if toggle_hud {
                             let hud = app.state::<SharedHud>();
                             let mut hs = match hud.lock() {
@@ -865,7 +865,7 @@ fn main() {
                 loop {
                     hb.tick().await;
                     let app = app_handle2.clone();
-                    let _ = app.run_on_main_thread(move || {
+                    let _ = app.clone().run_on_main_thread(move || {
                         soulkernel_hud_watchdog_tick(&app);
                     });
                 }
