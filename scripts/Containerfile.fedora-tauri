@@ -1,0 +1,24 @@
+# Image de dev Tauri v2 (Fedora : glib ≥ 2.70, WebKitGTK 4.1) + Rust stable + tauri-cli.
+# Usage depuis la racine du dépôt :
+#   podman build -f scripts/Containerfile.fedora-tauri -t soulkernel-tauri-dev .
+#   ./scripts/rocky-tauri-dev.sh
+# Dans le conteneur : cargo tauri dev
+
+FROM quay.io/fedora/fedora:42
+
+RUN dnf -y update && dnf -y install \
+    curl pkgconf-pkg-config gcc gcc-c++ make cmake patchelf git \
+    openssl-devel gtk3-devel glib2-devel cairo-devel cairo-gobject-devel \
+    pango-devel gdk-pixbuf2-devel atk-devel librsvg2-devel \
+    webkit2gtk4.1-devel libsoup3-devel libappindicator-gtk3-devel \
+    && dnf clean all
+
+# Toolchain Rust + CLI Tauri (PATH pour les shells interactifs)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
+    && . "/root/.cargo/env" \
+    && cargo install tauri-cli --version '^2.0' --locked
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /work
+CMD ["/bin/bash"]

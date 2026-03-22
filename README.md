@@ -30,6 +30,8 @@ SoulKernel/
 │   ├── index.html       ← Seule UI embarquée (Tauri `frontendDist`, zero deps)
 │   └── hud.html         ← HUD overlay window
 ├── scripts/
+│   ├── rocky-tauri-dev.sh       ← Rocky 9 : shell dans l’image Fedora Tauri (voir § Dev)
+│   ├── Containerfile.fedora-tauri
 │   └── cargo-msvc.example.cmd  ← Modèle MSVC Windows (copier en `cargo-msvc.cmd` local, voir .gitignore)
 ├── gen/schemas/         ← Schémas Tauri (référence outils / IDE)
 ├── icons/               ← icon.ico, icon.png
@@ -77,8 +79,38 @@ cargo install tauri-cli
 # Linux extra deps (Debian/Ubuntu)
 sudo apt install libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libglib2.0-dev pkg-config
 
-# Linux extra deps (Rocky/Fedora/RHEL)
-sudo dnf install webkit2gtk3-devel openssl-devel gtk3-devel glib2-devel pkg-config
+# Linux extra deps (Fedora — adapté à Tauri v2 + WebKitGTK 4.1)
+sudo dnf install -y pkgconf-pkg-config gcc gcc-c++ make cmake patchelf openssl-devel gtk3-devel glib2-devel \
+  cairo-devel cairo-gobject-devel pango-devel gdk-pixbuf2-devel atk-devel librsvg2-devel \
+  webkit2gtk4.1-devel libsoup3-devel libappindicator-gtk3-devel
+
+# ── Rocky Linux 9 / RHEL 9 / Alma 9 : lire ceci avant de perdre du temps ─────────
+# Les dépôts EL9 restent en **glib 2.68.x**. Or gtk-rs / wry (Tauri 2) demandent
+# **glib / gio / gobject >= 2.70** dans pkg-config. Résultat typique :
+#   pkg-config ... 'glib-2.0 >= 2.70' → échec (« library not found »).
+# Vérifier sur ta machine :
+#   pkg-config --print-errors --cflags 'glib-2.0 >= 2.70'
+# Si ça échoue alors que glib2-devel est installé : **tu ne pourras pas compiler
+# Tauri v2 nativement sur cet OS** sans remplacer la stack système (déconseillé).
+# Solutions : **Toolbox / Distrobox Fedora 40+**, **VM Ubuntu 22.04+**, ou **Podman**
+# avec une image récente, en montant le dépôt :
+#
+# Image prête : voir `scripts/Containerfile.fedora-tauri` puis :
+#   podman build -f scripts/Containerfile.fedora-tauri -t soulkernel-tauri-dev .
+#   podman run -it --rm --network host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+#     -v "$HOME/dev/SoulKernel:/work:Z" -w /work soulkernel-tauri-dev
+#   # dans le conteneur : cargo tauri dev (Rust + tauri-cli sont dans l’image après rebuild du Containerfile)
+#
+# Sur l’hôte Rocky tu peux quand même faire **cargo clippy / cargo test** si les deps
+# Rust seules suffisent ; dès qu’il faut **lier WebKit/GTK**, il faut l’environnement récent.
+#
+# **Valider la GUI sans `tauri dev` sur Rocky** : déclencher le workflow GitHub
+# « Build Linux bundle (artifact) » (`.github/workflows/build-linux-artifact.yml`),
+# puis télécharger l’artefact `soulkernel-linux-bundle` (`.deb` / `.AppImage` dans
+# `target/release/bundle/` côté CI). Ce n’est pas du mode dev avec rechargement à chaud,
+# mais c’est adapté aux hôtes où la stack glib < 2.70 empêche le build Tauri 2 natif.
+# Si le binaire refuse de démarrer (glibc trop vieille sur l’hôte), tester sur une machine
+# plus récente ou s’appuyer sur le conteneur Fedora pour builder/lancer localement.
 ```
 
 ### Dev
@@ -88,6 +120,16 @@ cargo tauri dev
 # Ou lancer l’app sans hot-reload :
 cargo run
 ```
+
+**Rocky 9 / EL9 — GUI Tauri + itération sur `ui/`** : sur l’hôte, **`cargo tauri dev` ne peut pas linker** WebKit (glib système &lt; 2.70). Ce n’est pas une limite de ton code : il faut exécuter le **même dépôt** dans une couche où glib/WebKit sont récents. Le flux le plus direct :
+
+1. Une fois : `podman build -f scripts/Containerfile.fedora-tauri -t soulkernel-tauri-dev .`
+2. À chaque session : `./scripts/rocky-tauri-dev.sh` (monte le repo, réseau = hôte, X11 pour afficher la fenêtre sur ton bureau Rocky).
+3. Dans le conteneur : **`cargo tauri dev`** (Rust et `tauri-cli` sont installés dans l’image ; refaire un `podman build …` si tu as une ancienne image sans toolchain). Tu édites `ui/` **sur Rocky** : le watcher recharge la webview quand les fichiers changent. Ne relance pas `./scripts/rocky-tauri-dev.sh` depuis l’intérieur du conteneur — ce script est réservé à l’hôte.
+
+Si plus tard tu ajoutes un bundler (Vite, etc.) avec `devUrl` dans `tauri.conf.json`, tu pourras faire tourner le serveur de dev sur l’hôte et pointer la webview du conteneur vers `http://127.0.0.1:…` grâce à `--network host`.
+
+**GTK / « Failed to initialize GTK » dans le conteneur** : en général l’hôte n’autorise pas le **root** du conteneur sans cookie X11. Le script monte `~/.Xauthority` et force `GDK_BACKEND=x11`. Lance `./scripts/rocky-tauri-dev.sh` **sans** `sudo` depuis ta session graphique si possible. Si **SELinux** bloque encore le socket : `TAURI_PODMAN_LABEL_DISABLE=1 ./scripts/rocky-tauri-dev.sh` (uniquement en dev).
 
 **Windows (MSVC)** : si `cargo` ne trouve pas les outils de lien, ouvrir une *Developer Command Prompt* ou s’inspirer de `scripts/cargo-msvc.example.cmd` (copie locale `cargo-msvc.cmd`, ignorée par git).
 

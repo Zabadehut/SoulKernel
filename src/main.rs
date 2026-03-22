@@ -597,6 +597,38 @@ fn clear_benchmark_history(benchmark_state: State<'_, SharedBenchmark>) -> Resul
     history.clear()
 }
 
+/// Chemins des fichiers persistants (télémétrie, lifetime, benchmark, audit) pour preuve / audit externe.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceDataPaths {
+    pub telemetry_samples_jsonl: String,
+    pub lifetime_gains_json: String,
+    pub energy_pricing_json: String,
+    pub benchmark_sessions_jsonl: String,
+    pub audit_log_jsonl: String,
+}
+
+#[tauri::command]
+fn get_evidence_data_paths(audit: State<'_, SharedAudit>) -> Result<EvidenceDataPaths, String> {
+    let audit_log_jsonl = {
+        let mut g = audit.lock().map_err(|e| e.to_string())?;
+        if g.path.is_none() {
+            g.path = Some(default_audit_path());
+        }
+        g.path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .ok_or_else(|| "audit path unavailable".to_string())?
+    };
+    Ok(EvidenceDataPaths {
+        telemetry_samples_jsonl: default_telemetry_path().to_string_lossy().into_owned(),
+        lifetime_gains_json: default_telemetry_lifetime_path().to_string_lossy().into_owned(),
+        energy_pricing_json: default_telemetry_pricing_path().to_string_lossy().into_owned(),
+        benchmark_sessions_jsonl: default_benchmark_history_path().to_string_lossy().into_owned(),
+        audit_log_jsonl,
+    })
+}
+
 /// Création / affichage / fermeture / rechargement des fenêtres WebView (HUD).
 /// **Doit** s’exécuter sur le thread UI de l’app : WebView2 (Windows) et wry attendent le main thread
 /// pour les opérations COM / HWND (cf. raccourcis déjà marshalisés via `run_on_main_thread`).
@@ -917,6 +949,7 @@ fn main() {
             run_ab_benchmark,
             get_benchmark_history,
             clear_benchmark_history,
+            get_evidence_data_paths,
         ])
         .run(tauri::generate_context!())
         .expect("SoulKernel: failed to start Tauri runtime");

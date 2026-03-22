@@ -1,0 +1,46 @@
+# Bundle Linux Tauri (AppImage + .deb) en artefact — pour tester sur Rocky/EL9 sans compiler GTK localement.
+# Actions → ce workflow → « Run workflow » → télécharger l’artefact `soulkernel-linux-bundle`.
+name: Build Linux bundle (artifact)
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux-bundle:
+    # ubuntu-22.04 plutôt que -latest : glibc un peu moins récente, meilleure chance
+    # d’exécuter l’AppImage / le .deb sur Rocky 9 (glibc ~2.34) sans symboles trop neufs.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies (Tauri / WebKit)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-tauri-bundle
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2.0' --locked
+
+      - name: Build Tauri bundles
+        run: cargo tauri build
+
+      - name: Upload bundle directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: soulkernel-linux-bundle
+          path: target/release/bundle/
+          if-no-files-found: error

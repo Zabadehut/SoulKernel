@@ -147,6 +147,9 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .proof-arrow{color:var(--cpu);font-weight:700;}
 .gains-actions{display:flex;gap:.35rem;margin-top:.3rem;flex-wrap:wrap;}
 .gains-panel{background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:.4rem;font-size:.7rem;}
+.proof-trust-card{background:var(--s1);border:1px solid var(--cpu);border-left:3px solid var(--cpu);
+  border-radius:6px;padding:.55rem .65rem;margin-bottom:.5rem;font-size:.62rem;line-height:1.45;}
+.proof-trust-card .advisor-title{color:var(--cpu);margin-bottom:.35rem}
 .gains-summary{color:var(--io);margin-bottom:.3rem;}
 .gains-list{max-height:120px;overflow-y:auto;contain:layout paint;content-visibility:auto;}
 .gains-list .gains-row{display:flex;gap:.5rem;padding:.15rem 0;border-bottom:1px solid var(--border);color:var(--muted);}
@@ -228,9 +231,22 @@ body.view-benchmark .benchmark-view{display:block}
   .benchmark-shell{grid-template-columns:1fr}
 }
 .compact-hud.visible{display:block}
-body.view-compact main{grid-template-columns:1fr;grid-template-rows:auto;min-height:calc(100vh - 46px)}
-body.view-compact .panel-left, body.view-compact .panel-right, body.view-compact .panel-workloads, body.view-compact .panel-insights, body.view-compact .panel-bottom{display:none !important}
-body.view-compact .panel-center{grid-column:1;grid-row:1;padding:.7rem .85rem}
+/* Pilotage : formule + gains + workloads + pilotage dôme (plus de colonne vide inutile) */
+body.view-compact main{
+  display:flex;flex-direction:column;grid-template-columns:unset;grid-template-rows:unset;
+  gap:1px;min-height:calc(100vh - 46px);background:var(--border);
+}
+body.view-compact .panel-left,
+body.view-compact .panel-insights,
+body.view-compact .panel-bottom{display:none !important}
+body.view-compact .panel-center,
+body.view-compact .panel-workloads,
+body.view-compact .panel-right{
+  width:100%;grid-column:auto !important;grid-row:auto !important;padding:.75rem 1rem;
+}
+body.view-compact .panel-center{order:1}
+body.view-compact .panel-workloads{order:2}
+body.view-compact .panel-right{order:3}
 body.view-compact .panel-center .panel-title{margin-bottom:.45rem}
 body.hud-only{background:var(--bg);overflow:hidden}
 body.hud-only::before{display:none}
@@ -277,9 +293,9 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     </div>
   </div>
   <div class="status-bar">
-  <div class="view-switch" title="Basculer la densite de vue">
-    <button type="button" class="view-btn" id="btnViewCompact">Compact</button>
-    <button type="button" class="view-btn active" id="btnViewDetailed">Detaille</button>
+  <div class="view-switch" title="Pilotage = essentiel + contrôles · Standard = audit complet · Benchmark = preuve A/B">
+    <button type="button" class="view-btn" id="btnViewCompact">Pilotage</button>
+    <button type="button" class="view-btn active" id="btnViewDetailed">Standard</button>
     <button type="button" class="view-btn" id="btnViewBenchmark">Benchmark</button>
     <button type="button" class="view-btn" id="btnHudToggle">HUD OFF</button>
   </div>
@@ -292,7 +308,8 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 </header>
 
 <div class="compact-hud" id="compactHud">
-  <div class="compact-hud-title" id="hudDrag">HUD - CRUCIAL <span class="hud-badge" id="hudModeBadge">LOCK</span></div>
+  <div class="compact-hud-title" id="hudDrag">Survol (2ᵉ écran) <span class="hud-badge" id="hudModeBadge">LOCK</span></div>
+  <div style="font-size:.5rem;color:var(--muted);margin:-.2rem 0 .35rem;line-height:1.3">Lecture seule — activer le dôme et les preuves depuis la fenêtre principale.</div>
   <div class="compact-hud-grid">
     <div class="compact-hud-item"><span>Dome:</span> <strong id="hudDome">-</strong></div>
     <div class="compact-hud-item"><span>Activite:</span> <strong id="hudActivity">ACTIF</strong></div>
@@ -365,8 +382,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       <div class="res-label" id="lGPU">IOKit / sysfs / DXGI</div>
     </div>
 
-    <div style="margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--s3)">
-      <div class="panel-title" style="margin-bottom:.4rem">RAW METRICS</div>
+    <details class="advanced-fold" style="margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--s3)">
+      <summary>Données brutes & plateforme (audit, optionnel)</summary>
+      <div class="advanced-stack" style="margin-top:.45rem">
+      <div class="panel-title" style="margin-bottom:.4rem">Compteurs matériel</div>
       <div class="raw-grid">
         <div class="raw-cell"><div class="raw-label">MEM used</div><div class="raw-val" id="rawMemUsed">—</div></div>
         <div class="raw-cell"><div class="raw-label">MEM total</div><div class="raw-val" id="rawMemTotal">—</div></div>
@@ -390,17 +409,20 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <div class="raw-cell"><div class="raw-label">WebView hôte (ΣCPU)</div><div class="raw-val" id="rawWebviewCpu">—</div></div>
         <div class="raw-cell"><div class="raw-label">WebView hôte (RAM)</div><div class="raw-val" id="rawWebviewMem">—</div></div>
       </div>
-    </div>
-
-    <div style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--s3)">
-      <div class="panel-title" style="margin-bottom:.3rem">PLATFORM FEATURES</div>
-      <div class="feat-tags" id="featTags"></div>
-    </div>
+      <div style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--s3)">
+        <div class="panel-title" style="margin-bottom:.3rem">Fonctions plateforme</div>
+        <div class="feat-tags" id="featTags"></div>
+      </div>
+      </div>
+    </details>
   </div>
 
   <!-- CENTER: FORMULA -->
   <div class="panel panel-center">
     <div class="panel-title">FORMULE UNIFIÉE π(t)</div>
+    <div class="target-hint" style="margin:-.35rem 0 .65rem;max-width:36rem">
+      π et 𝒟 s’appuient sur <strong>r(t) mesuré</strong> (OS) et des coefficients explicites ; les <strong>CPU·h / RAM·GB·h</strong> sont des <strong>différentiels</strong> dôme ON vs baseline OFF. Pour convaincre un tiers : <strong>Benchmark A/B</strong> + export « preuves » ci-dessous.
+    </div>
 
     <div class="formula-zone" id="fZone">
       <div class="formula-main">
@@ -424,9 +446,12 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">rb</sub>
       </div>
       <div class="eq-result" id="domeVal" style="font-size:1.1rem">𝒟 = —</div>
-      <div class="formula-label">∫π(t)dt RÉELLE — GAIN NET MESURÉ</div>
+      <div class="formula-label">∫π·dt (session) — coûts d’affichage UI retirés du nombre montré</div>
     </div>
 
+    <details class="advanced-fold">
+      <summary>Détail du modèle (α, barres, friction)</summary>
+      <div class="advanced-stack">
     <div class="dome-vis">
       <div class="dome-title">ALLOCATION PAR DIMENSION · α · r(t)</div>
       <div class="dome-bars">
@@ -459,6 +484,8 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       <div class="metric-cell"><div class="metric-val" id="mFrein">—</div><div class="metric-name">FREIN σ</div></div>
       <div class="metric-cell"><div class="metric-val" id="mRenta">—</div><div class="metric-name">RENTABLE</div></div>
     </div>
+      </div>
+    </details>
 
     <!-- GREEN IT · IMPACT -->
     <div class="green-it-panel" id="greenItPanel">
@@ -480,7 +507,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       <div class="green-it-grid" style="margin-top:.35rem">
         <div class="green-it-stat">
           <div class="green-it-val" id="greenKwh">0</div>
-          <div class="green-it-label">KWH MEASURED</div>
+          <div class="green-it-label">KWH MESURÉS</div>
         </div>
         <div class="green-it-stat">
           <div class="green-it-val" id="greenDomeN">0</div>
@@ -498,13 +525,17 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         </div>
       </div>
       <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
-      <div class="green-it-hint" id="greenItHint" style="margin-top:.5rem;font-size:.78rem;line-height:1.35;color:var(--muted);max-width:42rem">
-        Les <strong>CPU·h</strong>, les <strong>RAM·GB·h</strong> et l’intégrale <strong>∫𝒟</strong> ne comptent que lorsque l’activité machine est <strong>« ACTIF »</strong> (pas en veille média ni idle système). La nuit sans charge réelle, le dôme peut rester utile mais les gains mesurés restent faibles — regardez surtout <strong>heures dôme</strong> et les sessions de travail actives.
-        <br><br>
-        Les <strong>RAM·GB·h</strong> cumulent la baisse de <strong>pression mémoire</strong> sous dôme (activité ACTIF) par rapport à la baseline mesurée dôme OFF — même idée que les CPU·h, sans CO₂ dédié (pas de capteur « watts RAM » fiable). <strong>GPU</strong> reste dans σ(t), le HUD et le benchmark A/B. <strong>SoulRAM</strong> sur Windows suit un axe proche de <strong>WinMemoryCleaner</strong> (working set / cache) ; ce n’est pas un clone produit.
-        <br><br>
-        <strong>kWh, kg CO₂ et €</strong> du bloc ne s’affichent qu’avec une <strong>puissance (W) réelle</strong> (RAPL, batterie, etc.) : c’est l’intégrale de cette puissance × tarif / intensité carbone — une <strong>empreinte liée au suivi</strong>, pas un « CO₂ évité par le dôme » sans baseline énergétique de comparaison.
+      <div class="green-it-hint" style="margin-top:.5rem;font-size:.74rem;line-height:1.35;color:var(--muted);max-width:42rem">
+        Compteurs <strong>ACTIF</strong> seulement (idle/média exclus). <strong>kWh / CO₂ / €</strong> = intégrale de la <strong>puissance mesurée</strong> × tarifs (pas un « gain dôme » sans double mesure énergétique).
       </div>
+      <details class="advanced-fold" style="margin-top:.4rem">
+        <summary style="font-size:.65rem;color:var(--mem)">Méthode complète & limites (pour audit / revue)</summary>
+        <div class="green-it-hint" style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted);border:none;padding:0;max-width:42rem">
+          Les <strong>CPU·h</strong> et <strong>RAM·GB·h</strong> comparent une <strong>baseline</strong> (dôme OFF, fenêtre glissante) aux échantillons <strong>dôme ON</strong> : ce sont des <strong>modèles différentiels</strong> à partir de pourcentages CPU et ratios RAM <strong>réellement lus</strong>, pas des wattmètres sur chaque ressource.
+          <br><br>
+          L’intégrale <strong>∫𝒟</strong> côté télémétrie utilise <strong>π(t)</strong> issu de la formule (paramètres κ, Σ, α visibles dans l’UI). <strong>SoulRAM</strong> (Windows) vise la pression mémoire (logique voisine d’outils type WinMemoryCleaner), sans équivalence produit.
+        </div>
+      </details>
     </div>
   </div>
 
@@ -552,35 +583,44 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
 
   <div class="panel panel-insights">
-    <div class="panel-title">SESSION � PREUVE / GAINS / LOG</div>
+    <div class="panel-title">PREUVES · SESSION · JOURNAL</div>
+    <div class="proof-trust-card">
+      <div class="advisor-title">Ce que vous pouvez défendre devant un tiers</div>
+      <div class="advisor-text" style="color:var(--text)">
+        <strong>1 — Mesures OS</strong> : CPU, RAM, GPU, I/O, parfois W (section repliée « Données brutes »).<br>
+        <strong>2 — Reproductible</strong> : onglet <strong>Benchmark</strong>, A/B sur <em>votre</em> commande KPI, export JSON.<br>
+        <strong>3 — Piste d’audit</strong> : échantillons temps, lifetime, audit sur disque — bouton pour copier chemins + méthode.
+      </div>
+      <div class="gains-actions" style="margin-top:.4rem">
+        <button type="button" class="ctrl-btn btn-primary" id="btnCopyEvidence" style="font-size:.62rem;padding:.28rem .5rem">Copier preuve (méthode + chemins)</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnCopyGains" style="font-size:.62rem;padding:.28rem .5rem">Copier rapport session</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnExportGains" style="font-size:.62rem;padding:.28rem .5rem">Exporter JSON</button>
+      </div>
+    </div>
     <div class="insights-grid">
-      <details class="fold" id="proofFold" open>
-        <summary>Preuve avant/apr�s</summary>
+      <details class="fold" id="proofFold">
+        <summary>Instantané avant / après dôme</summary>
         <div class="proof-panel" id="proofPanel">
-          <div class="proof-placeholder" id="proofPlaceholder">Activer le dome pour afficher une comparaison lisible avant/apres.</div>
+          <div class="proof-placeholder" id="proofPlaceholder">Activez le dôme pour comparer le snapshot matériel avant activation et l’état courant.</div>
           <div class="proof-compare" id="proofCompare" style="display:none">
-            <div class="proof-col"><div class="proof-label">Avant dome</div><div class="proof-metrics" id="proofBefore">�</div></div>
-            <div class="proof-arrow">-></div>
-            <div class="proof-col"><div class="proof-label">Maintenant</div><div class="proof-metrics" id="proofAfter">�</div></div>
+            <div class="proof-col"><div class="proof-label">Avant dôme</div><div class="proof-metrics" id="proofBefore">—</div></div>
+            <div class="proof-arrow">→</div>
+            <div class="proof-col"><div class="proof-label">Maintenant</div><div class="proof-metrics" id="proofAfter">—</div></div>
           </div>
           <div class="proof-placeholder" id="proofSummary" style="display:none;margin-top:.35rem"></div>
         </div>
       </details>
 
       <details class="fold" open>
-        <summary>Gains d�me</summary>
+        <summary>Historique des activations dôme</summary>
         <div class="gains-panel">
-          <div class="gains-summary" id="gainsSummary">� Aucune activation encore</div>
+          <div class="gains-summary" id="gainsSummary">— Aucune activation pour l’instant</div>
           <div class="gains-list" id="gainsList"></div>
-          <div class="gains-actions">
-            <button type="button" class="ctrl-btn btn-secondary" id="btnCopyGains" style="font-size:.7rem">Copier rapport complet</button>
-            <button type="button" class="ctrl-btn btn-secondary" id="btnExportGains" style="font-size:.7rem">Exporter (fichier)</button>
-          </div>
         </div>
       </details>
 
-      <details class="fold" open>
-        <summary>Log kernel</summary>
+      <details class="fold">
+        <summary>Journal technique</summary>
         <div class="log-panel" id="logPanel"></div>
       </details>
     </div>
@@ -2515,7 +2555,7 @@ function renderGainsHistory() {
     if (lt && lt.total_dome_activations > 0) {
       summary.textContent = `Vie entiere : ${lt.total_dome_activations} activation(s), D cumule = ${Number(lt.total_dome_gain_integral || 0).toFixed(2)}`;
     } else {
-      summary.textContent = '- Aucune activation encore';
+      summary.textContent = '— Aucune activation pour l’instant';
     }
     listEl.innerHTML = '';
     return;
@@ -2724,6 +2764,51 @@ function buildSessionReportText() {
   return lines.join('\n');
 }
 
+async function buildEvidencePackText() {
+  const lines = [];
+  lines.push('SoulKernel — dossier de preuve (méthode courte)');
+  lines.push('Généré: ' + new Date().toISOString());
+  lines.push('');
+  lines.push('=== Définitions (à citer tel quel) ===');
+  lines.push('• Mesures OS : collecte native (sysinfo + APIs plateforme). Pas de valeurs inventées : champ absent = non disponible.');
+  lines.push('• CPU·h / RAM·GB·h : modèle différentiel (baseline dôme OFF vs échantillons dôme ON), fenêtre ~10 min, activité ACTIF uniquement.');
+  lines.push('• ∫𝒟 (télémétrie) : Σ π·Δt avec π issu de la formule affichée (κ, Σmax, η, profil α).');
+  lines.push('• kWh, kg CO₂ eq., € : intégrale de la puissance (W) mesurée × tarifs saisis — empreinte du suivi, pas un « gain dôme » sans double mesure énergétique.');
+  lines.push('• Benchmark A/B : alternance reproductible OFF/ON sur UNE commande KPI de votre choix ; export JSON des sessions.');
+  lines.push('');
+  lines.push('=== Fichiers persistants (audit externe) ===');
+  if (!hasTauri) {
+    lines.push('(Lancer l’application Tauri pour obtenir les chemins réels sur cette machine.)');
+    return lines.join('\n');
+  }
+  try {
+    const p = await invoke('get_evidence_data_paths');
+    lines.push('Échantillons télémetrie (JSONL) : ' + (p.telemetrySamplesJsonl || ''));
+    lines.push('Cumul lifetime (JSON)     : ' + (p.lifetimeGainsJson || ''));
+    lines.push('Tarif énergie (JSON)      : ' + (p.energyPricingJson || ''));
+    lines.push('Sessions benchmark (JSONL): ' + (p.benchmarkSessionsJsonl || ''));
+    lines.push('Journal d’audit (JSONL)   : ' + (p.auditLogJsonl || ''));
+  } catch (e) {
+    lines.push('Erreur lecture chemins : ' + e);
+  }
+  lines.push('');
+  lines.push('Recommandation : joindre une exportation « Exporter JSON » (session) + une session benchmark + ces chemins pour revue indépendante.');
+  return lines.join('\n');
+}
+
+const btnCopyEvidence = document.getElementById('btnCopyEvidence');
+if (btnCopyEvidence) {
+  btnCopyEvidence.addEventListener('click', async () => {
+    try {
+      const txt = await buildEvidencePackText();
+      await navigator.clipboard.writeText(txt);
+      log('Preuve (méthode + chemins fichiers) copiée dans le presse-papier', 'ok');
+    } catch (e) {
+      log('Copie preuve échouée : ' + e, 'err');
+    }
+  });
+}
+
 document.getElementById('btnCopyGains').addEventListener('click', () => {
   const diag = benchmarkDiagPayload({
     export_mode: 'clipboard',
@@ -2772,6 +2857,11 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
         avg_dome_gain: state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length,
       } : null,
     };
+    try {
+      payload.evidence_data_paths = await invoke('get_evidence_data_paths');
+    } catch (_) {
+      payload.evidence_data_paths = null;
+    }
     const path = await invoke('export_gains_to_file', { content: JSON.stringify(payload, null, 2) });
     log('Export enregistré : ' + path, 'ok');
   } catch (e) {
@@ -3512,6 +3602,13 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'export_gains_to_file') return Promise.reject('Export fichier disponible uniquement dans l’app native.');
   if (cmd === 'audit_log_event') return Promise.resolve(null);
   if (cmd === 'get_audit_log_path') return Promise.resolve('Hors Tauri');
+  if (cmd === 'get_evidence_data_paths') return Promise.resolve({
+    telemetrySamplesJsonl: '(hors Tauri)',
+    lifetimeGainsJson: '(hors Tauri)',
+    energyPricingJson: '(hors Tauri)',
+    benchmarkSessionsJsonl: '(hors Tauri)',
+    auditLogJsonl: '(hors Tauri)',
+  });
   if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
   if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: { mem_gb_hours_saved: 0 }, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 } });
   if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 });
