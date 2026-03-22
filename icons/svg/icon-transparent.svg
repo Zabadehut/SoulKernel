@@ -1,0 +1,108 @@
+<svg width="1024" height="1024" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1E2A1E"/>
+      <stop offset="50%" stop-color="#0D160D"/>
+      <stop offset="100%" stop-color="#060E06"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#4AE896" stop-opacity="0.38"/>
+      <stop offset="40%" stop-color="#1C8E5F" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#040A04" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="sc">
+      <path d="M256,28 L440,80 C460,86 474,104 474,125 L474,240 C474,340 370,430 256,484 C142,430 38,340 38,240 L38,125 C38,104 52,86 72,80 Z"/>
+    </clipPath>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  
+
+  <!-- Shield body -->
+  <path d="M256,28 L440,80 C460,86 474,104 474,125 L474,240 C474,340 370,430 256,484 C142,430 38,340 38,240 L38,125 C38,104 52,86 72,80 Z"
+    fill="url(#shg)"/>
+
+  <!-- Top-left gleam -->
+  <rect x="38" y="28" width="240" height="210" fill="url(#rim)" clip-path="url(#sc)"/>
+
+  <!-- Inner shield structure ring -->
+  <path d="M256,68 L410,112 C425,117 435,130 435,146 L435,238 C435,318 346,398 256,444 C166,398 77,318 77,238 L77,146 C77,130 87,117 102,112 Z"
+    fill="none" stroke="#0E2E18" stroke-width="1.5"/>
+
+  <!-- Shield rim outer -->
+  <path d="M256,28 L440,80 C460,86 474,104 474,125 L474,240 C474,340 370,430 256,484 C142,430 38,340 38,240 L38,125 C38,104 52,86 72,80 Z"
+    fill="none" stroke="#1C8E5F" stroke-width="3.5" opacity="0.7"/>
+
+  <!-- Shield rim inner glint -->
+  <path d="M256,28 L440,80 C460,86 474,104 474,125 L474,240 C474,340 370,430 256,484 C142,430 38,340 38,240 L38,125 C38,104 52,86 72,80 Z"
+    fill="none" stroke="#34EA96" stroke-width="1" opacity="0.22"/>
+
+  <!-- Top edge highlight -->
+  <path d="M256,28 L72,80 C52,86 38,104 38,125 L38,185"
+    fill="none" stroke="#4AFF9A" stroke-width="2" opacity="0.18"/>
+
+  <!-- =================== GAUGES =================== -->
+  <!-- Track arcs (background) -->
+  <!-- CPU outer r=118 -->
+  <path d="M150.5,356.8 A118,118 0 1 1 361.5,356.8" fill="none" stroke="#091A0E" stroke-width="9" stroke-linecap="round"/>
+  <!-- CPU fill 72% of 252° = 181° starting from ~234° -->
+  <path d="M150.5,356.8 A118,118 0 1 1 330.2,193.6" fill="none" stroke="#22DD7A" stroke-width="9" stroke-linecap="round" opacity="0.95"/>
+
+  <!-- RAM r=94 -->
+  <path d="M168.5,344.2 A94,94 0 1 1 343.5,344.2" fill="none" stroke="#071408" stroke-width="8" stroke-linecap="round"/>
+  <!-- RAM fill 58% of 252° = 146° -->
+  <path d="M168.5,344.2 A94,94 0 1 1 311.8,208.2" fill="none" stroke="#12C870" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- σ stress r=70 -->
+  <path d="M188.0,331.5 A70,70 0 1 1 324.0,331.5" fill="none" stroke="#050E06" stroke-width="7" stroke-linecap="round"/>
+  <!-- σ fill 38% of 252° = 96° -->
+  <path d="M188.0,331.5 A70,70 0 1 1 275.0,190.5" fill="none" stroke="#0AA858" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Tick marks CPU -->
+  <line x1="256" y1="142" x2="256" y2="155" stroke="#0A2A14" stroke-width="1.5"/>
+  <line x1="138" y1="186" x2="147" y2="194" stroke="#0A2A14" stroke-width="1.5"/>
+  <line x1="374" y1="186" x2="365" y2="194" stroke="#0A2A14" stroke-width="1.5"/>
+  <line x1="256" y1="370" x2="256" y2="383" stroke="#0A2A14" stroke-width="1.5"/>
+
+  <!-- Gauge labels -->
+  <text x="145" y="360" fill="#0E5030" font-family="system-ui,sans-serif" font-size="18" font-weight="500">CPU</text>
+  <text x="143" y="383" fill="#22DD7A" font-family="system-ui,sans-serif" font-size="21" font-weight="700">72%</text>
+
+  <text x="292" y="374" fill="#0E5030" font-family="system-ui,sans-serif" font-size="18" font-weight="500">RAM</text>
+  <text x="290" y="397" fill="#12C870" font-family="system-ui,sans-serif" font-size="21" font-weight="700">58%</text>
+
+  <text x="390" y="340" fill="#0E5030" font-family="system-ui,sans-serif" font-size="17" font-weight="500">σ</text>
+  <text x="383" y="361" fill="#0AA858" font-family="system-ui,sans-serif" font-size="18" font-weight="700">38%</text>
+
+  <!-- =================== OCTAGON DOME =================== -->
+  <polygon points="256,190 302,214 316,260 302,306 256,330 210,306 196,260 210,214"
+    fill="none" stroke="#1C8E5F" stroke-width="1.4" opacity="0.45"/>
+
+  <!-- Structural lines -->
+  <line x1="256" y1="190" x2="256" y2="330" stroke="#0C4020" stroke-width="0.9" opacity="0.6"/>
+  <line x1="196" y1="260" x2="316" y2="260" stroke="#0C4020" stroke-width="0.9" opacity="0.6"/>
+  <line x1="210" y1="214" x2="302" y2="306" stroke="#0C4020" stroke-width="0.6" opacity="0.4"/>
+  <line x1="302" y1="214" x2="210" y2="306" stroke="#0C4020" stroke-width="0.6" opacity="0.4"/>
+
+  <!-- Octagon vertices dots -->
+  <circle cx="256" cy="190" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="302" cy="214" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="316" cy="260" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="302" cy="306" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="256" cy="330" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="210" cy="306" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="196" cy="260" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+  <circle cx="210" cy="214" r="2.2" fill="#1C8E5F" opacity="0.6"/>
+
+  <!-- =================== CORE =================== -->
+  <circle cx="256" cy="260" r="50" fill="#020C06" stroke="#0C4A28" stroke-width="1.8"/>
+  <circle cx="256" cy="260" r="38" fill="#041808" stroke="#165C34" stroke-width="1.2"/>
+  <circle cx="256" cy="260" r="27" fill="#0A4822"/>
+  <circle cx="256" cy="260" r="18" fill="#18A058" filter="url(#glow)"/>
+  <circle cx="256" cy="260" r="11" fill="#2EE09A"/>
+  <circle cx="256" cy="260" r="5" fill="#C0FFF0"/>
+  <circle cx="256" cy="260" r="2" fill="#FFFFFF"/>
+</svg>

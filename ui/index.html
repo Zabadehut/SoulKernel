@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SoulKernel</title>
+<link rel="icon" type="image/png" sizes="32x32" href="assets/brand/icon_32x32.png">
 <style>
 /* ── Identical visual shell to standalone version ────────── */
 :root {
@@ -19,8 +20,8 @@ header{display:flex;align-items:center;justify-content:space-between;
   padding:.6rem 1.4rem;background:var(--s1);border-bottom:1px solid var(--border);
   position:sticky;top:0;z-index:100;}
 .logo{display:flex;align-items:center;gap:.7rem;}
-.logo-mark{width:28px;height:28px;border:2px solid var(--cpu);border-radius:4px;
-  display:grid;place-items:center;font-size:.65rem;color:var(--cpu);}
+.logo-img{width:28px;height:28px;object-fit:contain;border-radius:6px;flex-shrink:0;
+  box-shadow:0 0 0 1px rgba(0,229,255,.28),0 2px 8px rgba(0,0,0,.25);}
 .logo-text{font-size:.85rem;letter-spacing:.15em;color:var(--hi);}
 .logo-sub{font-size:.6rem;color:var(--muted);letter-spacing:.08em;}
 .no-tauri-banner{background:#8b2635;color:#fff;padding:.5rem 1rem;text-align:center;font-size:.8rem;}
@@ -47,7 +48,14 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
   background:var(--cpu);border-radius:1px;}
 
 .resource-item{margin-bottom:1.1rem;}
-.res-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.3rem;}
+.res-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;gap:.35rem;}
+.res-header-start{display:flex;align-items:center;gap:.35rem;min-width:0;}
+.res-metric-icon{width:18px;height:18px;object-fit:contain;flex-shrink:0;border-radius:4px;opacity:.95;}
+.res-metric-icon--cpu{box-shadow:0 0 8px rgba(0,229,255,.3);}
+.res-metric-icon--mem{box-shadow:0 0 8px rgba(176,96,255,.28);}
+.res-metric-icon--lam{box-shadow:0 0 8px rgba(0,255,157,.22);}
+.res-metric-icon--io{box-shadow:0 0 8px rgba(255,179,0,.25);}
+.res-metric-icon--gpu{box-shadow:0 0 8px rgba(255,107,107,.22);}
 .res-name{font-size:.65rem;letter-spacing:.08em;}
 .res-val{font-size:.9rem;font-weight:700;}
 .bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
@@ -105,6 +113,9 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .wl-btn.active{border-color:var(--cpu);background:rgba(0,229,255,.05);
   box-shadow:0 0 10px rgba(0,229,255,.1);}
 .wl-icon{font-size:1rem;margin-bottom:.2rem;}
+.wl-ico{width:22px;height:22px;object-fit:contain;display:block;margin:0 auto .12rem;
+  border-radius:4px;opacity:.92;box-shadow:0 0 0 1px rgba(0,229,255,.1);}
+.wl-btn.active .wl-ico{box-shadow:0 0 0 1px var(--cpu),0 0 10px rgba(0,229,255,.12);}
 .wl-name{font-size:.55rem;color:var(--text);letter-spacing:.06em;}
 .wl-hint{font-size:.46rem;color:var(--muted);margin-top:.1rem;}
 
@@ -286,7 +297,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
 <header>
   <div class="logo">
-    <div class="logo-mark">◉</div>
+    <img class="logo-img" src="assets/brand/icon_32x32.png" width="28" height="28" alt="" aria-hidden="true">
     <div>
       <div class="logo-text">SoulKernel</div>
       <div class="logo-sub">PERFORMANCE DOME ORCHESTRATOR</div>
@@ -339,7 +350,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
     <div class="resource-item">
       <div class="res-header">
-        <span class="res-name" style="color:var(--cpu)">C(t) · CPU</span>
+        <span class="res-header-start">
+          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--cpu" alt="" aria-hidden="true" title="CPU — charge processeur r(t)">
+          <span class="res-name" style="color:var(--cpu)">C(t) · CPU</span>
+        </span>
         <span class="res-val" style="color:var(--cpu)" id="vCPU">—</span>
       </div>
       <div class="bar-track"><div class="bar-fill bar-cpu" id="bCPU" style="width:0"></div></div>
@@ -348,7 +362,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
     <div class="resource-item">
       <div class="res-header">
-        <span class="res-name" style="color:var(--mem)">M(t) · RAM</span>
+        <span class="res-header-start">
+          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--mem" alt="" aria-hidden="true" title="RAM — mémoire vive r(t)">
+          <span class="res-name" style="color:var(--mem)">M(t) · RAM</span>
+        </span>
         <span class="res-val" style="color:var(--mem)" id="vMEM">—</span>
       </div>
       <div class="bar-track"><div class="bar-fill bar-mem" id="bMEM" style="width:0"></div></div>
@@ -357,7 +374,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
     <div class="resource-item">
       <div class="res-header">
-        <span class="res-name" style="color:var(--io)">Λ(t) · COMPRESSION</span>
+        <span class="res-header-start">
+          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--lam" alt="" aria-hidden="true" title="Λ — compression mémoire (zRAM / swap)">
+          <span class="res-name" style="color:var(--io)">Λ(t) · COMPRESSION</span>
+        </span>
         <span class="res-val" style="color:var(--io)" id="vLAM">—</span>
       </div>
       <div class="bar-track"><div class="bar-fill bar-lam" id="bLAM" style="width:0"></div></div>
@@ -366,7 +386,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
     <div class="resource-item">
       <div class="res-header">
-        <span class="res-name" style="color:var(--gpu)">B<sub>io</sub>(t) · I/O</span>
+        <span class="res-header-start">
+          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--io" alt="" aria-hidden="true" title="I/O — bande passante disque r(t)">
+          <span class="res-name" style="color:var(--gpu)">B<sub>io</sub>(t) · I/O</span>
+        </span>
         <span class="res-val" style="color:var(--gpu)" id="vIO">—</span>
       </div>
       <div class="bar-track"><div class="bar-fill bar-io" id="bIO" style="width:0"></div></div>
@@ -375,7 +398,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
     <div class="resource-item">
       <div class="res-header">
-        <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
+        <span class="res-header-start">
+          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--gpu" alt="" aria-hidden="true" title="GPU — charge graphique r(t)">
+          <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
+        </span>
         <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
       </div>
       <div class="bar-track"><div class="bar-fill bar-gpu" id="bGPU" style="width:0"></div></div>
@@ -544,37 +570,37 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="panel-title">PROFIL WORKLOAD 𝒲</div>
     <div class="workload-grid" id="wlGrid">
       <div class="wl-btn active" data-wl="es">
-        <div class="wl-icon">🔍</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil workload Elasticsearch">
         <div class="wl-name">ELASTICSEARCH</div>
         <div class="wl-hint">α: 0.20/0.35/0.20/0.25/0</div>
       </div>
       <div class="wl-btn" data-wl="compile">
-        <div class="wl-icon">⚙️</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil compilation">
         <div class="wl-name">COMPILATION</div>
         <div class="wl-hint">α: 0.55/0.25/0.10/0.10/0</div>
       </div>
       <div class="wl-btn" data-wl="gamer">
-        <div class="wl-icon">G</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil gamer">
         <div class="wl-name">GAMER PERF</div>
         <div class="wl-hint">alpha: 0.45/0.20/0.05/0.05/0.25</div>
       </div>
       <div class="wl-btn" data-wl="ai">
-        <div class="wl-icon">🧠</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil IA / inférence">
         <div class="wl-name">AI INFERENCE</div>
         <div class="wl-hint">α: 0.15/0.20/0.05/0.05/0.55</div>
       </div>
       <div class="wl-btn" data-wl="backup">
-        <div class="wl-icon">💾</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil sauvegarde / I/O">
         <div class="wl-name">BACKUP</div>
         <div class="wl-hint">α: 0.15/0.15/0.30/0.40/0</div>
       </div>
       <div class="wl-btn" data-wl="sqlite">
-        <div class="wl-icon">🗃️</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil SQLite">
         <div class="wl-name">SQLITE</div>
         <div class="wl-hint">α: 0.20/0.10/0.05/0.65/0</div>
       </div>
       <div class="wl-btn" data-wl="oracle">
-        <div class="wl-icon">🏛️</div>
+        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil Oracle / base lourde">
         <div class="wl-name">ORACLE</div>
         <div class="wl-hint">α: 0.25/0.30/0.10/0.35/0</div>
       </div>
@@ -705,9 +731,19 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
             <span class="kappa-name" style="color:var(--io)">SoulRAM</span>
             <span class="kappa-num" id="soulRamStatus" style="color:var(--stress)">OFF</span>
           </div>
+          <p class="target-hint" style="margin:.25rem 0 .35rem;line-height:1.45">
+            <strong>À quoi ça sert :</strong> alléger la pression mémoire <em>hors dôme</em> — sur Windows, trim du working set des processus + activation de la compression mémoire (backend réel, droits admin) ;
+            sur Linux, cible zRAM selon la politique plateforme. Le curseur fixe un <strong>objectif de ratio</strong> pour cette politique, pas un « % de gain garanti ».
+            Les <strong>effets mesurables</strong> passent par la RAM utilisée / la télémétrie ci-dessous (pas de chiffre inventé).
+          </p>
           <div class="kappa-row" style="gap:.5rem;align-items:center">
             <input type="range" id="soulRamPct" min="5" max="60" step="1" value="20" style="flex:1">
             <span class="kappa-num" id="soulRamPctNum" style="color:var(--io)">20%</span>
+          </div>
+          <div class="proof-panel" id="soulRamTelemetryBox" style="margin-top:.3rem;padding:.35rem;font-size:.62rem;line-height:1.4">
+            <strong>Télémétrie réelle</strong>
+            <div id="soulRamTelemetryLine" style="margin-top:.2rem;color:var(--muted)">Chargez les métriques (app native) pour voir le cumul SoulRAM.</div>
+            <div id="soulRamPolicyLine" style="margin-top:.15rem;color:var(--muted)">Politique / compression : —</div>
           </div>
           <div class="gains-actions" style="margin-top:.35rem">
             <button type="button" class="ctrl-btn btn-secondary" id="btnSoulRamOn" style="font-size:.62rem;padding:.25rem .45rem">Activer SoulRAM</button>
@@ -722,13 +758,16 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         </div>
 
         <div class="advisor-panel" id="hudPanel" style="margin-top:.35rem">
-          <div class="advisor-title">HUD Overlay V2</div>
+          <div class="advisor-title">HUD Overlay (2ᵉ fenêtre)</div>
+          <p class="target-hint" style="margin:.2rem 0;line-height:1.45">
+            Fenêtre toujours au-dessus, alimentée par les mêmes métriques que l’app. Si le HUD ne s’affiche pas ou fait fermer l’app, utilise d’abord le bouton <strong>HUD ON</strong> dans la barre d’outils (il réinitialise le suivi santé WebView) ; évite d’ouvrir/fermer en rafale avec le raccourci seul.
+          </p>
           <div class="gains-actions" style="margin-top:.2rem">
             <button type="button" class="ctrl-btn btn-secondary" id="btnHudEdit" style="font-size:.62rem;padding:.25rem .45rem">Edition OFF</button>
           </div>
           <div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Ecran HUD</span><select id="hudDisplay" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="">Auto</option></select></div><div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Preset</span><select id="hudPreset" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="mini">Mini</option><option value="compact" selected>Compact</option><option value="detailed">Detaille</option></select></div>
           <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">Opacite</span><input id="hudOpacity" type="range" min="0.30" max="1" step="0.05" value="0.82" style="width:130px"><span class="kappa-num" id="hudOpacityNum" style="color:var(--cpu)">82%</span></div>
-          <div class="target-hint" style="margin-top:.2rem">Hotkeys globales: Alt+Shift+H (toggle HUD), Alt+Shift+J (edition).</div>
+          <div class="target-hint" style="margin-top:.2rem">Raccourcis : Alt+Shift+H (toggle), Alt+Shift+J (édition pointeur).</div>
         </div>
 
         <button class="ctrl-btn btn-secondary" id="btnInfo" type="button">Platform info</button>
@@ -1031,6 +1070,7 @@ let state = {
   pendingAdvice: null,
   soulRamActive: false,
   soulRamPercent: 20,
+  soulRamBackend: '',
   lastTaskbarPushTs: 0,
   policyMode: 'privileged',
   autoReapplyIntent: true,
@@ -1626,6 +1666,26 @@ function renderTelemetrySummary(s) {
 
   // ── GREEN IT panel ──────────────────────────────────────────────────────
   renderGreenItPanel(s);
+  renderSoulRamFromTelemetry(s);
+}
+
+function renderSoulRamFromTelemetry(s) {
+  const el = document.getElementById('soulRamTelemetryLine');
+  if (!el) return;
+  if (!s || !s.lifetime) {
+    el.textContent = 'Lance l’app native et laisse tourner la télémétrie pour cumuler les durées réelles.';
+    return;
+  }
+  const lt = s.lifetime;
+  const sh = Number(lt.soulram_active_hours ?? 0);
+  const pch = s.total?.passive_clean_h != null ? Number(s.total.passive_clean_h) : null;
+  const memGb = lt.total_mem_gb_hours_saved != null ? Number(lt.total_mem_gb_hours_saved) : 0;
+  el.innerHTML =
+    'Durée cumulée <strong>SoulRAM ON + dôme OFF</strong> (Δt entre échantillons réels) : <strong>' +
+    (Number.isFinite(sh) ? sh.toFixed(2) : '0') + ' h</strong> · ' +
+    'Même notion sur la fenêtre télémétrie courante : <strong>' +
+    (pch != null && Number.isFinite(pch) ? pch.toFixed(2) + ' h</strong>' : 'N/A</strong>') + '. ' +
+    '<span style="opacity:.9">Le cumul <strong>RAM·GB·h</strong> affiché ailleurs reflète surtout le <strong>dôme</strong> actif, pas un « gain SoulRAM » isolé.</span>';
 }
 
 function renderGreenItPanel(s) {
@@ -2107,6 +2167,7 @@ async function syncSoulRamStatus() {
     const s = await invoke('get_soulram_status');
     state.soulRamActive = !!s.active;
     state.soulRamPercent = Number(s.percent || 20);
+    state.soulRamBackend = (s.backend && String(s.backend)) || '';
     const slider = document.getElementById('soulRamPct');
     if (slider) slider.value = String(state.soulRamPercent);
     updateSoulRamUi();
@@ -2204,6 +2265,18 @@ async function loadPolicyStatus() {
     state.rebootPending = !!status?.reboot_pending;
     state.memoryCompressionEnabled = (status?.memory_compression_enabled ?? null);
     state.soulRamNeedsReboot = !!(state.rebootPending && state.memoryCompressionEnabled !== true);
+    const pol = document.getElementById('soulRamPolicyLine');
+    if (pol) {
+      const mc = status?.memory_compression_enabled;
+      pol.textContent =
+        'Backend SoulRAM : ' + (state.soulRamBackend || '—') +
+        ' · politique : ' + (state.policyMode || '—').toUpperCase() +
+        ' · admin : ' + (status?.is_admin ? 'oui' : 'non') +
+        ' · compression mémoire (OS) : ' +
+        (mc === true ? 'active' : mc === false ? 'inactive' : 'inconnu') +
+        (state.rebootPending ? ' · redémarrage signalé par l’OS' : '');
+      pol.style.color = 'var(--muted)';
+    }
     if (state.soulRamNeedsReboot) {
       log('Redemarrage Windows requis pour finaliser SoulRAM (Memory Compression).', 'warn');
     }
@@ -2946,7 +3019,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '0.1.7',
+      version: '1.0.0',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -3717,8 +3790,8 @@ function fallbackInvoke(cmd, args) {
     auditLogJsonl: '(hors Tauri)',
   });
   if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
-  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: { mem_gb_hours_saved: 0 }, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 } });
-  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0 });
+  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: { mem_gb_hours_saved: 0, passive_clean_h: 0 }, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 } });
+  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 });
   if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
   if (cmd === 'set_energy_pricing') return Promise.resolve(null);
   if (cmd === 'open_system_hud') return Promise.resolve(null);

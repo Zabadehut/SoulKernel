@@ -72,10 +72,23 @@ pub fn preset_to_size(preset: &str) -> (f64, f64) {
     }
 }
 
+/// Réinitialise le compteur « stale » du watchdog quand le HUD est (re)montré — évite les recréations
+/// en boucle si le raccourci clavier ouvre la fenêtre sans passer par `open_system_hud`.
+pub fn reset_hud_health_for_show(hud_health: &SharedHudHealth) {
+    if let Ok(mut h) = hud_health.lock() {
+        let now = now_ms_local();
+        h.last_ready_ms = now;
+        h.last_reload_ms = 0;
+        h.reload_count = 0;
+    }
+}
+
 pub fn list_displays_internal(app: &tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
+    // Ne pas faire échouer tout le HUD si `primary_monitor` est indisponible (Wayland, VM, drivers).
     let primary_name = app
         .primary_monitor()
-        .map_err(|e| e.to_string())?
+        .ok()
+        .flatten()
         .and_then(|m| m.name().cloned());
     let mons = app.available_monitors().map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(mons.len());
@@ -217,13 +230,7 @@ pub fn open_system_hud(
         let mut hs = hud.lock().map_err(|e| e.to_string())?;
         hs.visible = true;
     }
-    {
-        let mut health = hud_health.lock().map_err(|e| e.to_string())?;
-        let now = now_ms_local();
-        health.last_ready_ms = now;
-        health.last_reload_ms = 0;
-        health.reload_count = 0;
-    }
+    reset_hud_health_for_show(&*hud_health);
     let hs = hud.lock().map_err(|e| e.to_string())?;
     apply_hud_window_mode(
         &app,

@@ -22,7 +22,8 @@ use tokio::sync::mpsc;
 
 use audit::{audit_write, default_audit_path, now_ms_local, AuditState, SharedAudit};
 use hud::{
-    apply_hud_window_mode, cleanup_hud_before_exit, HudHealthState, HudOverlayData,
+    apply_hud_window_mode, cleanup_hud_before_exit, reset_hud_health_for_show, HudHealthState,
+    HudOverlayData,
     HudRuntimeState, SharedHud, SharedHudData, SharedHudHealth, SharedHudTx,
 };
 
@@ -633,7 +634,8 @@ fn get_evidence_data_paths(audit: State<'_, SharedAudit>) -> Result<EvidenceData
 /// **Doit** s’exécuter sur le thread UI de l’app : WebView2 (Windows) et wry attendent le main thread
 /// pour les opérations COM / HWND (cf. raccourcis déjà marshalisés via `run_on_main_thread`).
 fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
-    const HUD_STALE_MS: u64 = 5000;
+    // Marge large : WebView2 / wry peut mettre >5 s avant le premier `set_system_hud_ready`.
+    const HUD_STALE_MS: u64 = 12_000;
     const HUD_RELOAD_BASE_COOLDOWN_MS: u64 = 4000;
     const HUD_RELOAD_MAX_COOLDOWN_MS: u64 = 30000;
     const HUD_RELOAD_MAX: u32 = 6;
@@ -656,6 +658,10 @@ fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
         );
         if let Some(w) = app.get_webview_window("hud") {
             let _ = w.hide();
+        }
+        {
+            let hh = app.state::<SharedHudHealth>();
+            reset_hud_health_for_show(&*hh);
         }
         let audit = app.state::<SharedAudit>();
         let _ = audit_write(
@@ -699,8 +705,11 @@ fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
         if let Some(w) = app.get_webview_window("hud") {
             let _ = w.show();
         }
+        let age_before_ready_ms = now.saturating_sub(health.last_ready_ms);
         health.last_reload_ms = now;
         health.reload_count = health.reload_count.saturating_add(1);
+        // Sans ce « grace », last_ready reste vieux → stale au tick suivant → boucle de reload / crash WebView.
+        health.last_ready_ms = now;
         let audit = app.state::<SharedAudit>();
         let _ = audit_write(
             &*audit,
@@ -709,7 +718,7 @@ fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
             Some("warn"),
             Some(serde_json::json!({
                 "reload_count": health.reload_count,
-                "last_ready_age_ms": now.saturating_sub(health.last_ready_ms),
+                "last_ready_age_ms": age_before_ready_ms,
                 "cooldown_ms": cooldown_ms
             })),
         );
@@ -818,6 +827,8 @@ fn main() {
                             };
                             hs.visible = !hs.visible;
                             if hs.visible {
+                                let hh = app.state::<SharedHudHealth>();
+                                reset_hud_health_for_show(&*hh);
                                 let _ = apply_hud_window_mode(
                                     &app,
                                     hs.interactive,

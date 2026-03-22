@@ -137,6 +137,9 @@ pub struct LifetimeGains {
     /// Cumul RAM·GB·h (pression mémoire × temps, même principe que CPU·h).
     #[serde(default)]
     pub total_mem_gb_hours_saved: f64,
+    /// Heures cumulées d’échantillonnage avec SoulRAM actif et dôme inactif (Δt réels entre ticks télémétrie).
+    #[serde(default)]
+    pub soulram_active_hours: f64,
 }
 
 impl Default for LifetimeGains {
@@ -156,6 +159,7 @@ impl Default for LifetimeGains {
             total_idle_hours: 0.0,
             total_media_hours: 0.0,
             total_mem_gb_hours_saved: 0.0,
+            soulram_active_hours: 0.0,
         }
     }
 }
@@ -481,6 +485,10 @@ impl TelemetryState {
             self.lifetime.total_dome_activations += 1;
         }
         self.last_dome_active = s.dome_active;
+
+        if !s.dome_active && s.soulram_active {
+            self.lifetime.soulram_active_hours += s.dt_s / 3600.0;
+        }
 
         if s.dome_active {
             self.lifetime.total_dome_hours += s.dt_s / 3600.0;

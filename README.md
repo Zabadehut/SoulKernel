@@ -45,10 +45,10 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
 ## Développement
 
 - **CI multi-OS** : `.github/workflows/ci.yml` exécute `cargo clippy` et `cargo test` sur Ubuntu (dépendances WebKit Tauri), Windows et macOS. Ce workflow **ne crée pas** de page [Releases](https://github.com/Zabadehut/SoulKernel/releases) ni n’y dépose de fichiers — il ne fait que valider le code à chaque push/PR.
-- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v0.1.0` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
+- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.0.0` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
   ```bash
-  git tag v0.1.0   # adapter à la version du manifeste
-  git push origin v0.1.0
+  git tag v1.0.0   # adapter à la version du manifeste
+  git push origin v1.0.0
   ```
   Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert.
 - **MCP Cursor** (autonomie agent, docs, GitHub optionnel) : `.cursor/mcp.json` et `.cursor/README-MCP.md` — indexation légère : `.cursorignore` + `@codebase` dans le chat.

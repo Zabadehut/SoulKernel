@@ -1,6 +1,6 @@
 [package]
 name    = "soulkernel"
-version = "0.1.7"
+version = "1.0.0"
 edition = "2021"
 description = "SoulKernel — Performance Dome orchestrator"
 
