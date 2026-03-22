@@ -492,6 +492,8 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
       <div class="green-it-hint" id="greenItHint" style="margin-top:.5rem;font-size:.78rem;line-height:1.35;color:var(--muted);max-width:42rem">
         Les <strong>CPU·h économisées</strong> et l’intégrale <strong>∫𝒟</strong> ne comptent que lorsque l’activité machine est <strong>« ACTIF »</strong> (pas en veille média ni idle système). La nuit sans charge réelle, le dôme peut rester utile mais les gains mesurés restent faibles — regardez surtout <strong>heures dôme</strong> et les sessions de travail actives.
+        <br><br>
+        Le bloc GREEN IT met l’accent sur le <strong>CPU</strong> (cumul fiable dans le temps). <strong>RAM</strong> et <strong>GPU</strong> entrent dans σ(t), les métriques brutes (HUD) et le benchmark A/B (deltas médians). Sur Windows, <strong>SoulRAM</strong> (compression + trim du working set) vise le même axe « pression mémoire » que des outils type <strong>WinMemoryCleaner</strong> — pas un clone, mais une logique voisine ; l’économie RAM se lit surtout via l’usage mesuré et SoulRAM, pas via une « kg CO₂ RAM » isolée ici.
       </div>
     </div>
   </div>
@@ -717,6 +719,9 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         </div>
         <div class="advisor-text" id="kpiBenchSummary" style="margin-top:.35rem">Aucun benchmark A/B</div>
         <div class="advisor-text" id="kpiBenchLearned" style="margin-top:.25rem">Apprentissage benchmark: aucun historique pertinent</div>
+        <div class="advisor-text" style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted)">
+          Sous Windows, une sonde KPI lançait autrefois un processus console <strong>visible</strong> (pas de <code>CREATE_NO_WINDOW</code>) : chaque run pouvait faire clignoter une fenêtre. C’est corrigé côté moteur. Le résumé A/B ajoute des <strong>écarts médians après sonde</strong> sur RAM, GPU % et CPU % (positif = ressource moins chargée en phase ON) — ce sont des indicateurs complémentaires au temps wall-clock, avec du bruit possible.
+        </div>
       </div>
       <div class="advisor-panel">
         <div class="advisor-title">Base appliquee a l'application</div>
@@ -1247,20 +1252,43 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function percentile(values, p) {
+function medianSorted(sorted) {
+  const n = sorted.length;
+  if (n === 0) return null;
+  if (n % 2 === 1) return sorted[(n - 1) / 2];
+  return (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+}
+
+function medianOf(values) {
   if (!values || values.length === 0) return null;
-  const arr = [...values].sort((a, b) => a - b);
-  const idx = Math.ceil((p / 100) * arr.length) - 1;
-  return arr[Math.max(0, Math.min(arr.length - 1, idx))];
+  const sorted = [...values].sort((a, b) => a - b);
+  return medianSorted(sorted);
+}
+
+/** Percentile nearest-rank (aligné Rust benchmark) : rang = ceil(p/100 × n). */
+function percentileNearestRank(values, p) {
+  if (!values || values.length === 0 || p === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const rank = Math.ceil((p / 100) * n);
+  const idx = Math.max(0, Math.min(n - 1, rank - 1));
+  return sorted[idx];
+}
+
+function gainLowerIsBetterMedians(offVals, onVals, minPositive) {
+  const mo = medianOf(offVals);
+  const mn = medianOf(onVals);
+  if (mo == null || mn == null || mo < minPositive) return null;
+  return ((mo - mn) / mo) * 100;
 }
 
 function computeAbSummary(samples) {
   const off = samples.filter(s => s.phase === 'off' && s.success).map(s => s.duration_ms);
   const on = samples.filter(s => s.phase === 'on' && s.success).map(s => s.duration_ms);
-  const medianOff = percentile(off, 50);
-  const medianOn = percentile(on, 50);
-  const p95Off = percentile(off, 95);
-  const p95On = percentile(on, 95);
+  const medianOff = medianOf(off);
+  const medianOn = medianOf(on);
+  const p95Off = percentileNearestRank(off, 95);
+  const p95On = percentileNearestRank(on, 95);
   let gainMedianPct = null;
   let gainP95Pct = null;
   if (medianOff != null && medianOn != null && medianOff > 0) {
@@ -1269,6 +1297,15 @@ function computeAbSummary(samples) {
   if (p95Off != null && p95On != null && p95Off > 0) {
     gainP95Pct = ((p95Off - p95On) / p95Off) * 100;
   }
+
+  const numOk = v => v != null && Number.isFinite(Number(v));
+  const memOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.mem_after_gb)).map(s => Number(s.mem_after_gb));
+  const memOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.mem_after_gb)).map(s => Number(s.mem_after_gb));
+  const gpuOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.gpu_after_pct)).map(s => Number(s.gpu_after_pct));
+  const gpuOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.gpu_after_pct)).map(s => Number(s.gpu_after_pct));
+  const cpuOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.cpu_after_pct)).map(s => Number(s.cpu_after_pct));
+  const cpuOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.cpu_after_pct)).map(s => Number(s.cpu_after_pct));
+
   return {
     samples_off_ok: off.length,
     samples_on_ok: on.length,
@@ -1278,6 +1315,9 @@ function computeAbSummary(samples) {
     p95_on_ms: p95On,
     gain_median_pct: gainMedianPct,
     gain_p95_pct: gainP95Pct,
+    gain_mem_median_pct: gainLowerIsBetterMedians(memOff, memOn, 0.05),
+    gain_gpu_median_pct: gainLowerIsBetterMedians(gpuOff, gpuOn, 1),
+    gain_cpu_median_pct: gainLowerIsBetterMedians(cpuOff, cpuOn, 2),
   };
 }
 
@@ -1291,10 +1331,18 @@ function renderAbSummary(summary) {
     return;
   }
   const f = v => (v == null ? 'N/A' : v.toFixed(1));
+  const fg = k => (summary[k] == null || !Number.isFinite(Number(summary[k])) ? null : Number(summary[k]));
+  const resBits = [
+    fg('gain_mem_median_pct') != null ? `RAM ${f(fg('gain_mem_median_pct'))}%` : null,
+    fg('gain_gpu_median_pct') != null ? `GPU ${f(fg('gain_gpu_median_pct'))}%` : null,
+    fg('gain_cpu_median_pct') != null ? `CPU ${f(fg('gain_cpu_median_pct'))}%` : null,
+  ].filter(Boolean);
+  const resSuffix = resBits.length ? ` | apres sonde (med.): ${resBits.join(' · ')}` : '';
   el.textContent =
     `OFF median=${f(summary.median_off_ms)}ms p95=${f(summary.p95_off_ms)}ms | ` +
     `ON median=${f(summary.median_on_ms)}ms p95=${f(summary.p95_on_ms)}ms | ` +
-    `dernier benchmark: gain median=${f(summary.gain_median_pct)}% p95=${f(summary.gain_p95_pct)}%`;
+    `gain temps median=${f(summary.gain_median_pct)}% p95=${f(summary.gain_p95_pct)}%` +
+    resSuffix;
   const verdictEl = document.getElementById('benchmarkVerdict');
   if (verdictEl) {
     const gain = Number(summary.gain_median_pct ?? 0);
@@ -2612,7 +2660,9 @@ function buildSessionReportText() {
     lines.push('A/B KPI (dernier benchmark)');
     lines.push('OFF median/p95: ' + f(s.median_off_ms) + '/' + f(s.p95_off_ms) + ' ms');
     lines.push('ON  median/p95: ' + f(s.median_on_ms) + '/' + f(s.p95_on_ms) + ' ms');
-    lines.push('Gain median/p95: ' + f(s.gain_median_pct) + '% / ' + f(s.gain_p95_pct) + '%');
+    lines.push('Gain temps median/p95: ' + f(s.gain_median_pct) + '% / ' + f(s.gain_p95_pct) + '%');
+    const fr = k => (s[k] == null ? 'N/A' : Number(s[k]).toFixed(1) + '%');
+    lines.push('Gain RAM/GPU/CPU apres sonde (med.): ' + fr('gain_mem_median_pct') + ' / ' + fr('gain_gpu_median_pct') + ' / ' + fr('gain_cpu_median_pct'));
   }
 
 
@@ -2684,7 +2734,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '0.1.0',
+      version: '0.1.4',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,

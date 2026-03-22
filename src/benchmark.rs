@@ -66,6 +66,10 @@ pub struct BenchmarkSample {
     pub cpu_after_pct: Option<f64>,
     pub mem_before_gb: Option<f64>,
     pub mem_after_gb: Option<f64>,
+    #[serde(default)]
+    pub gpu_before_pct: Option<f64>,
+    #[serde(default)]
+    pub gpu_after_pct: Option<f64>,
     pub stdout_tail: String,
     pub stderr_tail: String,
 }
@@ -80,6 +84,15 @@ pub struct BenchmarkSummary {
     pub p95_on_ms: Option<f64>,
     pub gain_median_pct: Option<f64>,
     pub gain_p95_pct: Option<f64>,
+    /// Médiane RAM utilisée (Go) après sonde : (med_OFF − med_ON) / med_OFF × 100 ; positif = moins de RAM en phase ON.
+    #[serde(default)]
+    pub gain_mem_median_pct: Option<f64>,
+    /// Idem pour GPU % après sonde (si capteur disponible).
+    #[serde(default)]
+    pub gain_gpu_median_pct: Option<f64>,
+    /// Idem pour CPU % après sonde (seuil minimal pour éviter le bruit près de 0 %).
+    #[serde(default)]
+    pub gain_cpu_median_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +179,11 @@ pub async fn execute_probe(
             cmd.current_dir(ctrim);
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — évite le flash console par sonde
+    }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -186,16 +204,72 @@ pub async fn execute_probe(
     })
 }
 
-fn percentile(values: &[u64], p: u8) -> Option<f64> {
-    if values.is_empty() {
+fn median_sorted_u64(sorted: &[u64]) -> Option<f64> {
+    if sorted.is_empty() {
         return None;
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_unstable();
-    let idx = (((p as usize) * sorted.len()).div_ceil(100)).saturating_sub(1);
-    sorted
-        .get(idx.min(sorted.len().saturating_sub(1)))
-        .map(|v| *v as f64)
+    let n = sorted.len();
+    if n % 2 == 1 {
+        Some(sorted[n / 2] as f64)
+    } else {
+        Some((sorted[n / 2 - 1] + sorted[n / 2]) as f64 / 2.0)
+    }
+}
+
+/// Percentile « nearest rank » : rang = ceil(p/100 × n), index = rang − 1.
+fn percentile_nearest_rank_sorted(sorted: &[u64], p: u8) -> Option<f64> {
+    if sorted.is_empty() || p == 0 {
+        return None;
+    }
+    let n = sorted.len();
+    let rank = ((p as f64 / 100.0) * n as f64).ceil() as usize;
+    let idx = rank.saturating_sub(1).min(n - 1);
+    Some(sorted[idx] as f64)
+}
+
+fn median_f64(values: &[f64]) -> Option<f64> {
+    let mut v: Vec<f64> = values
+        .iter()
+        .copied()
+        .filter(|x| x.is_finite())
+        .collect();
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len();
+    if n % 2 == 1 {
+        Some(v[n / 2])
+    } else {
+        Some((v[n / 2 - 1] + v[n / 2]) / 2.0)
+    }
+}
+
+fn values_after_by_phase(
+    samples: &[BenchmarkSample],
+    phase: BenchmarkPhase,
+    pick: impl Fn(&BenchmarkSample) -> Option<f64>,
+) -> Vec<f64> {
+    samples
+        .iter()
+        .filter(|s| s.phase == phase && s.success)
+        .filter_map(pick)
+        .filter(|x| x.is_finite())
+        .collect()
+}
+
+/// Gain quand une baisse de la métrique est « mieux » (RAM, % GPU, % CPU après sonde).
+fn gain_pct_lower_is_better(
+    off_vals: &[f64],
+    on_vals: &[f64],
+    min_positive: f64,
+) -> Option<f64> {
+    let off_m = median_f64(off_vals)?;
+    let on_m = median_f64(on_vals)?;
+    if off_m < min_positive {
+        return None;
+    }
+    Some(((off_m - on_m) / off_m) * 100.0)
 }
 
 pub fn compute_summary(samples: &[BenchmarkSample]) -> BenchmarkSummary {
@@ -210,10 +284,15 @@ pub fn compute_summary(samples: &[BenchmarkSample]) -> BenchmarkSummary {
         .map(|s| s.duration_ms)
         .collect();
 
-    let median_off_ms = percentile(&off, 50);
-    let median_on_ms = percentile(&on, 50);
-    let p95_off_ms = percentile(&off, 95);
-    let p95_on_ms = percentile(&on, 95);
+    let mut off_sorted = off.clone();
+    off_sorted.sort_unstable();
+    let mut on_sorted = on.clone();
+    on_sorted.sort_unstable();
+
+    let median_off_ms = median_sorted_u64(&off_sorted);
+    let median_on_ms = median_sorted_u64(&on_sorted);
+    let p95_off_ms = percentile_nearest_rank_sorted(&off_sorted, 95);
+    let p95_on_ms = percentile_nearest_rank_sorted(&on_sorted, 95);
 
     let gain_median_pct = median_off_ms.and_then(|off_ms| {
         median_on_ms.and_then(|on_ms| {
@@ -234,6 +313,18 @@ pub fn compute_summary(samples: &[BenchmarkSample]) -> BenchmarkSummary {
         })
     });
 
+    let mem_off = values_after_by_phase(samples, BenchmarkPhase::Off, |s| s.mem_after_gb);
+    let mem_on = values_after_by_phase(samples, BenchmarkPhase::On, |s| s.mem_after_gb);
+    let gain_mem_median_pct = gain_pct_lower_is_better(&mem_off, &mem_on, 0.05);
+
+    let gpu_off = values_after_by_phase(samples, BenchmarkPhase::Off, |s| s.gpu_after_pct);
+    let gpu_on = values_after_by_phase(samples, BenchmarkPhase::On, |s| s.gpu_after_pct);
+    let gain_gpu_median_pct = gain_pct_lower_is_better(&gpu_off, &gpu_on, 1.0);
+
+    let cpu_off = values_after_by_phase(samples, BenchmarkPhase::Off, |s| s.cpu_after_pct);
+    let cpu_on = values_after_by_phase(samples, BenchmarkPhase::On, |s| s.cpu_after_pct);
+    let gain_cpu_median_pct = gain_pct_lower_is_better(&cpu_off, &cpu_on, 2.0);
+
     BenchmarkSummary {
         samples_off_ok: off.len(),
         samples_on_ok: on.len(),
@@ -243,6 +334,9 @@ pub fn compute_summary(samples: &[BenchmarkSample]) -> BenchmarkSummary {
         p95_on_ms,
         gain_median_pct,
         gain_p95_pct,
+        gain_mem_median_pct,
+        gain_gpu_median_pct,
+        gain_cpu_median_pct,
     }
 }
 

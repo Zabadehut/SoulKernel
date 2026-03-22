@@ -386,6 +386,8 @@ async fn run_ab_benchmark(
                 cpu_after_pct: after.as_ref().map(|m| m.raw.cpu_pct),
                 mem_before_gb: before.as_ref().map(|m| m.raw.mem_used_mb as f64 / 1024.0),
                 mem_after_gb: after.as_ref().map(|m| m.raw.mem_used_mb as f64 / 1024.0),
+                gpu_before_pct: before.as_ref().and_then(|m| m.raw.gpu_pct),
+                gpu_after_pct: after.as_ref().and_then(|m| m.raw.gpu_pct),
                 stdout_tail: probe.stdout_tail,
                 stderr_tail: probe.stderr_tail,
             });
