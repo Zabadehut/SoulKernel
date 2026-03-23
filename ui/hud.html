@@ -4,20 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SoulKernel HUD</title>
+<link rel="stylesheet" href="styles/design-tokens.css">
+<script src="vendor/lucide.min.js"></script>
 <style>
-:root {
-  --bg:#0b1320; --border:#1a3355; --cpu:#00e5ff; --text:#d0e8ff; --muted:#5a80a8;
-}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;overflow:hidden}
+body{background:var(--bg);color:var(--text);overflow:hidden}
 .hud{position:fixed;inset:8px;background:rgba(11,19,32,.92);border:1px solid var(--border);border-radius:8px;padding:.5rem .6rem;pointer-events:none}
 body.edit .hud{pointer-events:auto;border-color:var(--cpu);box-shadow:0 0 0 1px rgba(0,229,255,.35),0 8px 24px rgba(0,0,0,.35)}
-.hud-title{font-size:.56rem;letter-spacing:.12em;color:var(--cpu);margin-bottom:.35rem;cursor:default;user-select:none}
+.hud-title{font-size:.56rem;letter-spacing:.12em;color:var(--cpu);margin-bottom:.35rem;cursor:default;user-select:none;display:flex;align-items:center;gap:.35rem}
+.hud-title .pt-ico{width:13px;height:13px;display:inline-flex;color:var(--cpu)}
+.hud-title .pt-ico svg{width:13px;height:13px}
 body.edit .hud-title{cursor:move}
 .hud-badge{font-size:.5rem;color:var(--muted);margin-left:.35rem}
 .hud-grid{display:grid;grid-template-columns:1fr 1fr;gap:.24rem .68rem}
-.hud-item{font-size:.58rem;line-height:1.35}
-.hud-item span{color:var(--muted)}
+.hud-item{font-size:.58rem;line-height:1.35;display:flex;align-items:center;gap:.28rem}
+.hud-item .hud-row-ico{color:var(--muted);flex-shrink:0}
+.hud-item strong{margin-left:auto;font-weight:600}
 .hud.mini .hud-item{font-size:.52rem}
 .hud.mini .hud-grid{gap:.12rem .45rem}
 .hud.detailed .hud-grid{grid-template-columns:1fr}
@@ -26,19 +28,27 @@ body.edit .hud-title{cursor:move}
 </head>
 <body>
 <div class="hud" id="hudRoot">
-  <div class="hud-title" id="hudDrag">HUD - CRUCIAL <span class="hud-badge" id="hudMode">LOCK</span></div>
+  <div class="hud-title" id="hudDrag"><span class="pt-ico"><i data-lucide="panel-top"></i></span> HUD - CRUCIAL <span class="hud-badge" id="hudMode">LOCK</span></div>
   <div class="hud-grid">
-    <div class="hud-item"><span>Dome:</span> <strong id="dome">-</strong></div>
-    <div class="hud-item"><span>Sigma:</span> <strong id="sigma">-</strong></div>
-    <div class="hud-item"><span>Pi:</span> <strong id="pi">-</strong></div>
-    <div class="hud-item"><span>CPU:</span> <strong id="cpu">-</strong></div>
-    <div class="hud-item"><span>RAM:</span> <strong id="ram">-</strong></div>
-    <div class="hud-item"><span>Cible:</span> <strong id="target">-</strong></div>
-    <div class="hud-item"><span>Power:</span> <strong id="power">-</strong></div>
-    <div class="hud-item"><span>Energie:</span> <strong id="energy">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="orbit"></i></span><span>Dome:</span> <strong id="dome">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="sigma"></i></span><span>Sigma:</span> <strong id="sigma">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="pi"></i></span><span>Pi:</span> <strong id="pi">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="cpu"></i></span><span>CPU:</span> <strong id="cpu">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="memory-stick"></i></span><span>RAM:</span> <strong id="ram">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="crosshair"></i></span><span>Cible:</span> <strong id="target">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="zap"></i></span><span>Power:</span> <strong id="power">-</strong></div>
+    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="leaf"></i></span><span>Energie:</span> <strong id="energy">-</strong></div>
   </div>
 </div>
 <script>
+function refreshSoulKernelLucide() {
+  try {
+    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+      lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+    }
+  } catch (_) {}
+}
+refreshSoulKernelLucide();
 const t = window.__TAURI__;
 const invoke = t?.core?.invoke ? t.core.invoke : null;
 const root = document.getElementById('hudRoot');
@@ -109,4 +119,3 @@ refreshHud();
 </script>
 </body>
 </html>
-

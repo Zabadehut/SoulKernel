@@ -27,9 +27,14 @@ SoulKernel/
 │       ├── windows.rs   ← Job Objects, affinity, powercfg
 │       └── macos.rs     ← QoS, pmset, IOKit
 ├── ui/
-│   ├── index.html       ← Seule UI embarquée (Tauri `frontendDist`, zero deps)
-│   └── hud.html         ← HUD overlay window
+│   ├── index.html       ← UI embarquée (Tauri `frontendDist`, sans bundler npm)
+│   ├── hud.html         ← HUD overlay window
+│   ├── styles/
+│   │   └── design-tokens.css  ← tokens + styles Lucide (.lucide)
+│   └── vendor/
+│       └── lucide.min.js      ← Lucide UMD (offline, même version que `index.html`)
 ├── scripts/
+│   ├── sync-lucide-ui.sh        ← régénère ui/vendor/lucide.min.js (mise à jour Lucide)
 │   ├── rocky-tauri-dev.sh       ← Rocky 9 : shell dans l’image Fedora Tauri (voir § Dev)
 │   ├── Containerfile.fedora-tauri
 │   ├── trusted-sign.ps1         ← modèle optionnel (Trusted Signing / CI signé, si tu configures)
@@ -46,10 +51,10 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
 ## Développement
 
 - **CI multi-OS** : `.github/workflows/ci.yml` exécute `cargo clippy` et `cargo test` sur Ubuntu (dépendances WebKit Tauri), Windows et macOS. Ce workflow **ne crée pas** de page [Releases](https://github.com/Zabadehut/SoulKernel/releases) ni n’y dépose de fichiers — il ne fait que valider le code à chaque push/PR.
-- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.0.0` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
+- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.0.1` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
   ```bash
-  git tag v1.0.0   # adapter à la version du manifeste
-  git push origin v1.0.0
+  git tag v1.0.1   # adapter à la version du manifeste
+  git push origin v1.0.1
   ```
   Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
 - **Windows — signature** : les [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont construites avec **`--no-sign`** tant qu’aucun certificat n’est dans le dépôt (pas d’avertissement côté CI). **Build local** : `cargo tauri build --no-sign` si tu n’as pas encore de certificat. Quand tu auras un **certificat OV** ou un compte **Trusted Signing** éligible, tu pourras retirer `--no-sign` dans `.github/workflows/release.yml`, réactiver `bundle.windows.signCommand` / thumbprint dans `tauri.conf.json` et utiliser le modèle `scripts/trusted-sign.ps1` si besoin.
@@ -159,6 +164,8 @@ cargo tauri dev
 # Ou lancer l’app sans hot-reload :
 cargo run
 ```
+
+**UI 100 % offline** : icônes via `ui/vendor/lucide.min.js` (aucun CDN au runtime). Mise à jour du bundle : `./scripts/sync-lucide-ui.sh` (réseau uniquement pour régénérer le fichier). Typo : pile monospace système, sans Google Fonts.
 
 **Rocky 9 / EL9 — GUI Tauri + itération sur `ui/`** : sur l’hôte, **`cargo tauri dev` ne peut pas linker** WebKit (glib système &lt; 2.70). Ce n’est pas une limite de ton code : il faut exécuter le **même dépôt** dans une couche où glib/WebKit sont récents. Le flux le plus direct :
 

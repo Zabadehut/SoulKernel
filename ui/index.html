@@ -4,17 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SoulKernel</title>
+<link rel="stylesheet" href="styles/design-tokens.css">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/brand/icon_32x32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/brand/icon_192x192.png">
+<link rel="apple-touch-icon" href="assets/brand/icon_180x180.png">
+<script src="vendor/lucide.min.js"></script>
 <style>
-/* ── Identical visual shell to standalone version ────────── */
-:root {
-  --bg:#060a10;--s1:#0b1320;--s2:#0f1e30;--s3:#162840;
-  --border:#1a3355;--dim:#243f5e;
-  --cpu:#00e5ff;--mem:#b060ff;--io:#00ff9d;--gpu:#ffb300;
-  --stress:#ff3b5c;--text:#d0e8ff;--muted:#5a80a8;--hi:#ffffff;
-}
+/* Tokens: styles/design-tokens.css — ci-dessous: layout & panneaux uniquement */
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;font-size:14px;
+body{background:var(--bg);color:var(--text);font-size:14px;
   min-height:100vh;overflow-x:hidden;}
 header{display:flex;align-items:center;justify-content:space-between;
   padding:.6rem 1.4rem;background:var(--s1);border-bottom:1px solid var(--border);
@@ -43,19 +41,17 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .panel{background:var(--bg);padding:1rem 1.05rem;contain:layout paint style;}
 .panel-title{font-size:.66rem;letter-spacing:.14em;color:var(--muted);
   margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--s3);
-  display:flex;align-items:center;gap:.5rem;}
-.panel-title::before{content:';display:inline-block;width:4px;height:4px;
-  background:var(--cpu);border-radius:1px;}
+  display:flex;align-items:center;gap:.45rem;}
 
 .resource-item{margin-bottom:1.1rem;}
 .res-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;gap:.35rem;}
 .res-header-start{display:flex;align-items:center;gap:.35rem;min-width:0;}
-.res-metric-icon{width:18px;height:18px;object-fit:contain;flex-shrink:0;border-radius:4px;opacity:.95;}
-.res-metric-icon--cpu{box-shadow:0 0 8px rgba(0,229,255,.3);}
-.res-metric-icon--mem{box-shadow:0 0 8px rgba(176,96,255,.28);}
-.res-metric-icon--lam{box-shadow:0 0 8px rgba(0,255,157,.22);}
-.res-metric-icon--io{box-shadow:0 0 8px rgba(255,179,0,.25);}
-.res-metric-icon--gpu{box-shadow:0 0 8px rgba(255,107,107,.22);}
+.res-metric-icon{width:18px;height:18px;flex-shrink:0;border-radius:4px;opacity:.95;}
+.res-metric-icon--cpu{color:var(--cpu);box-shadow:0 0 8px rgba(0,229,255,.3);}
+.res-metric-icon--mem{color:var(--mem);box-shadow:0 0 8px rgba(176,96,255,.28);}
+.res-metric-icon--lam{color:var(--io);box-shadow:0 0 8px rgba(0,255,157,.22);}
+.res-metric-icon--io{color:var(--gpu);box-shadow:0 0 8px rgba(255,179,0,.25);}
+.res-metric-icon--gpu{color:#ff6b6b;box-shadow:0 0 8px rgba(255,107,107,.22);}
 .res-name{font-size:.65rem;letter-spacing:.08em;}
 .res-val{font-size:.9rem;font-weight:700;}
 .bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
@@ -113,9 +109,9 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .wl-btn.active{border-color:var(--cpu);background:rgba(0,229,255,.05);
   box-shadow:0 0 10px rgba(0,229,255,.1);}
 .wl-icon{font-size:1rem;margin-bottom:.2rem;}
-.wl-ico{width:22px;height:22px;object-fit:contain;display:block;margin:0 auto .12rem;
-  border-radius:4px;opacity:.92;box-shadow:0 0 0 1px rgba(0,229,255,.1);}
-.wl-btn.active .wl-ico{box-shadow:0 0 0 1px var(--cpu),0 0 10px rgba(0,229,255,.12);}
+.wl-ico{width:22px;height:22px;display:block;margin:0 auto .12rem;border-radius:4px;
+  opacity:.92;box-shadow:0 0 0 1px rgba(0,229,255,.1);color:var(--cpu);}
+.wl-btn.active .wl-ico{box-shadow:0 0 0 1px var(--cpu),0 0 10px rgba(0,229,255,.12);color:var(--hi);}
 .wl-name{font-size:.55rem;color:var(--text);letter-spacing:.06em;}
 .wl-hint{font-size:.46rem;color:var(--muted);margin-top:.1rem;}
 
@@ -130,7 +126,8 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 
 .controls{display:flex;flex-direction:column;gap:.35rem;}
 .controls-primary{margin-top:.55rem}
-.ctrl-btn{padding:.62rem .8rem;border-radius:6px;border:1px solid;font-family:inherit;
+.ctrl-btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;
+  padding:.62rem .8rem;border-radius:6px;border:1px solid;font-family:inherit;
   font-size:.64rem;letter-spacing:.08em;cursor:pointer;transition:all .2s;text-transform:uppercase;}
 .btn-primary{background:rgba(0,229,255,.08);border-color:var(--cpu);color:var(--cpu);}
 .btn-primary:hover{background:rgba(0,229,255,.15);box-shadow:0 0 15px rgba(0,229,255,.2);}
@@ -227,7 +224,7 @@ input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
 .compact-hud-item{font-size:.58rem;color:var(--text);line-height:1.35}
 .compact-hud-item span{color:var(--muted)}
 .view-switch{display:flex;gap:.35rem;align-items:center}
-.view-btn{padding:.18rem .5rem;border-radius:999px;border:1px solid var(--border);background:var(--s2);color:var(--muted);font-size:.56rem;letter-spacing:.08em;cursor:pointer}
+.view-btn{display:inline-flex;align-items:center;gap:.28rem;padding:.18rem .5rem;border-radius:999px;border:1px solid var(--border);background:var(--s2);color:var(--muted);font-size:.56rem;letter-spacing:.08em;cursor:pointer}
 .view-btn.active{border-color:var(--cpu);color:var(--cpu);background:rgba(0,229,255,.08)}
 .benchmark-view{display:none;padding:0 14px 18px}
 .benchmark-shell{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
@@ -273,9 +270,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   border-radius:6px;padding:.7rem 1rem;margin-top:.6rem;
   box-shadow:inset 0 0 0 1px rgba(0,255,157,.05);contain:layout paint style;}
 .green-it-title{font-size:.62rem;letter-spacing:.14em;color:var(--io);
-  margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem;}
-.green-it-title::before{content:'';display:inline-block;width:6px;height:6px;
-  background:var(--io);border-radius:50%;}
+  margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;}
 .green-it-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.35rem;}
 .green-it-stat{background:var(--s2);border:1px solid var(--border);border-radius:4px;
   padding:.35rem .5rem;text-align:center;}
@@ -305,10 +300,10 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   </div>
   <div class="status-bar">
   <div class="view-switch" title="Pilotage = essentiel + contrôles · Standard = audit complet · Benchmark = preuve A/B">
-    <button type="button" class="view-btn" id="btnViewCompact">Pilotage</button>
-    <button type="button" class="view-btn active" id="btnViewDetailed">Standard</button>
-    <button type="button" class="view-btn" id="btnViewBenchmark">Benchmark</button>
-    <button type="button" class="view-btn" id="btnHudToggle">HUD OFF</button>
+    <button type="button" class="view-btn" id="btnViewCompact"><span class="view-ico"><i data-lucide="layout-dashboard"></i></span> Pilotage</button>
+    <button type="button" class="view-btn active" id="btnViewDetailed"><span class="view-ico"><i data-lucide="layers"></i></span> Standard</button>
+    <button type="button" class="view-btn" id="btnViewBenchmark"><span class="view-ico"><i data-lucide="flask-conical"></i></span> Benchmark</button>
+    <button type="button" class="view-btn" id="btnHudToggle"><span class="view-ico"><i data-lucide="panel-top"></i></span> HUD OFF</button>
   </div>
     <div class="platform-badge" id="platformBadge">Connecting…</div>
     <div class="status-pill pill-ok" id="sysStatus">SYSTEM OK</div>
@@ -317,6 +312,38 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="clock" id="clk">--:--:--</div>
   </div>
 </header>
+
+<div class="metrics-strip" id="metricsStrip" role="region" aria-label="Synthèse σ π r(t)">
+  <div class="ms-seg ms-sigma">
+    <span class="ms-ico-wrap" id="stripSigmaIconWrap"><i data-lucide="sigma"></i></span>
+    <span class="ms-label">σ</span>
+    <span class="ms-val" id="stripSigma">—</span>
+  </div>
+  <div class="ms-seg ms-pi">
+    <span class="ms-ico-wrap" style="color:var(--primary)"><i data-lucide="pi"></i></span>
+    <span class="ms-label">π</span>
+    <span class="ms-val" id="stripPi">—</span>
+    <div class="ms-pi-wrap" style="--pi-pct:0" aria-hidden="true">
+      <div class="ms-pi-ring"></div>
+      <div class="ms-pi-arc" id="stripPiArc"></div>
+    </div>
+  </div>
+  <div class="ms-seg">
+    <span class="ms-ico-wrap" style="color:var(--cpu)"><i data-lucide="cpu"></i></span>
+    <span class="ms-label">CPU</span>
+    <div class="ms-mini-track"><div class="ms-mini-fill ms-mini-fill--cpu" id="stripCpuFill"></div></div>
+  </div>
+  <div class="ms-seg">
+    <span class="ms-ico-wrap" style="color:var(--mem)"><i data-lucide="memory-stick"></i></span>
+    <span class="ms-label">RAM</span>
+    <div class="ms-mini-track"><div class="ms-mini-fill ms-mini-fill--mem" id="stripMemFill"></div></div>
+  </div>
+  <div class="ms-seg">
+    <span class="ms-ico-wrap" style="color:var(--gpu)"><i data-lucide="hard-drive"></i></span>
+    <span class="ms-label">I/O</span>
+    <div class="ms-mini-track"><div class="ms-mini-fill ms-mini-fill--io" id="stripIoFill"></div></div>
+  </div>
+</div>
 
 <div class="compact-hud" id="compactHud">
   <div class="compact-hud-title" id="hudDrag">Survol (2ᵉ écran) <span class="hud-badge" id="hudModeBadge">LOCK</span></div>
@@ -346,12 +373,12 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
   <!-- LEFT -->
   <div class="panel panel-left">
-    <div class="panel-title">HARDWARE r(t) · LIVE</div>
+    <div class="panel-title"><span class="pt-ico"><i data-lucide="activity"></i></span><span>HARDWARE r(t) · LIVE</span></div>
 
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--cpu" alt="" aria-hidden="true" title="CPU — charge processeur r(t)">
+          <span class="res-metric-icon res-metric-icon--cpu" title="CPU — charge processeur r(t)"><i data-lucide="cpu"></i></span>
           <span class="res-name" style="color:var(--cpu)">C(t) · CPU</span>
         </span>
         <span class="res-val" style="color:var(--cpu)" id="vCPU">—</span>
@@ -363,7 +390,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--mem" alt="" aria-hidden="true" title="RAM — mémoire vive r(t)">
+          <span class="res-metric-icon res-metric-icon--mem" title="RAM — mémoire vive r(t)"><i data-lucide="memory-stick"></i></span>
           <span class="res-name" style="color:var(--mem)">M(t) · RAM</span>
         </span>
         <span class="res-val" style="color:var(--mem)" id="vMEM">—</span>
@@ -375,7 +402,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--lam" alt="" aria-hidden="true" title="Λ — compression mémoire (zRAM / swap)">
+          <span class="res-metric-icon res-metric-icon--lam" title="Λ — compression mémoire (zRAM / swap)"><i data-lucide="lambda"></i></span>
           <span class="res-name" style="color:var(--io)">Λ(t) · COMPRESSION</span>
         </span>
         <span class="res-val" style="color:var(--io)" id="vLAM">—</span>
@@ -387,7 +414,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--io" alt="" aria-hidden="true" title="I/O — bande passante disque r(t)">
+          <span class="res-metric-icon res-metric-icon--io" title="I/O — bande passante disque r(t)"><i data-lucide="hard-drive"></i></span>
           <span class="res-name" style="color:var(--gpu)">B<sub>io</sub>(t) · I/O</span>
         </span>
         <span class="res-val" style="color:var(--gpu)" id="vIO">—</span>
@@ -399,7 +426,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <img src="assets/brand/icon_32x32.png" width="18" height="18" class="res-metric-icon res-metric-icon--gpu" alt="" aria-hidden="true" title="GPU — charge graphique r(t)">
+          <span class="res-metric-icon res-metric-icon--gpu" title="GPU — charge graphique r(t)"><i data-lucide="gpu"></i></span>
           <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
         </span>
         <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
@@ -409,9 +436,9 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     </div>
 
     <details class="advanced-fold" style="margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--s3)">
-      <summary>Données brutes & plateforme (audit, optionnel)</summary>
+      <summary style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="microchip"></i></span> Données brutes & plateforme (audit, optionnel)</summary>
       <div class="advanced-stack" style="margin-top:.45rem">
-      <div class="panel-title" style="margin-bottom:.4rem">Compteurs matériel</div>
+      <div class="panel-title" style="margin-bottom:.4rem"><span class="pt-ico"><i data-lucide="gauge"></i></span><span>Compteurs matériel</span></div>
       <div class="raw-grid">
         <div class="raw-cell"><div class="raw-label">MEM used</div><div class="raw-val" id="rawMemUsed">—</div></div>
         <div class="raw-cell"><div class="raw-label">MEM total</div><div class="raw-val" id="rawMemTotal">—</div></div>
@@ -436,7 +463,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         <div class="raw-cell"><div class="raw-label">WebView hôte (RAM)</div><div class="raw-val" id="rawWebviewMem">—</div></div>
       </div>
       <div style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--s3)">
-        <div class="panel-title" style="margin-bottom:.3rem">Fonctions plateforme</div>
+        <div class="panel-title" style="margin-bottom:.3rem"><span class="pt-ico"><i data-lucide="puzzle"></i></span><span>Fonctions plateforme</span></div>
         <div class="feat-tags" id="featTags"></div>
       </div>
       </div>
@@ -445,7 +472,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
   <!-- CENTER: FORMULA -->
   <div class="panel panel-center">
-    <div class="panel-title">FORMULE UNIFIÉE π(t)</div>
+    <div class="panel-title"><span class="pt-ico"><i data-lucide="function-square"></i></span><span>FORMULE UNIFIÉE π(t)</span></div>
     <div class="target-hint" style="margin:-.35rem 0 .65rem;max-width:36rem">
       π et 𝒟 s’appuient sur <strong>r(t) mesuré</strong> (OS) et des coefficients explicites ; les <strong>CPU·h / RAM·GB·h</strong> sont des <strong>différentiels</strong> dôme ON vs baseline OFF. Pour convaincre un tiers : <strong>Benchmark A/B</strong> + export « preuves » ci-dessous.
     </div>
@@ -476,7 +503,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     </div>
 
     <details class="advanced-fold">
-      <summary>Détail du modèle (α, barres, friction)</summary>
+      <summary style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="bar-chart-3"></i></span> Détail du modèle (α, barres, friction)</summary>
       <div class="advanced-stack">
     <div class="dome-vis">
       <div class="dome-title">ALLOCATION PAR DIMENSION · α · r(t)</div>
@@ -515,7 +542,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
     <!-- GREEN IT · IMPACT -->
     <div class="green-it-panel" id="greenItPanel">
-      <div class="green-it-title">GREEN IT · IMPACT <span class="green-it-source" id="greenItSource">—</span></div>
+      <div class="green-it-title"><span class="pt-ico" style="color:var(--io)"><i data-lucide="leaf"></i></span><span>GREEN IT · IMPACT</span><span class="green-it-source" id="greenItSource">—</span></div>
       <div class="green-it-grid">
         <div class="green-it-stat">
           <div class="green-it-val" id="greenCpuH">0</div>
@@ -555,7 +582,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         Compteurs <strong>ACTIF</strong> seulement (idle/média exclus). <strong>kWh / CO₂ / €</strong> = intégrale de la <strong>puissance mesurée</strong> × tarifs (pas un « gain dôme » sans double mesure énergétique).
       </div>
       <details class="advanced-fold" style="margin-top:.4rem">
-        <summary style="font-size:.65rem;color:var(--mem)">Méthode complète & limites (pour audit / revue)</summary>
+        <summary style="font-size:.65rem;color:var(--mem);display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:12px;height:12px"><i data-lucide="book-open"></i></span> Méthode complète & limites (pour audit / revue)</summary>
         <div class="green-it-hint" style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted);border:none;padding:0;max-width:42rem">
           Les <strong>CPU·h</strong> et <strong>RAM·GB·h</strong> comparent une <strong>baseline</strong> (dôme OFF, fenêtre glissante) aux échantillons <strong>dôme ON</strong> : ce sont des <strong>modèles différentiels</strong> à partir de pourcentages CPU et ratios RAM <strong>réellement lus</strong>, pas des wattmètres sur chaque ressource.
           <br><br>
@@ -567,40 +594,40 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
   <!-- CENTER BOTTOM: WORKLOADS -->
   <div class="panel panel-workloads">
-    <div class="panel-title">PROFIL WORKLOAD 𝒲</div>
+    <div class="panel-title"><span class="pt-ico"><i data-lucide="layers"></i></span><span>PROFIL WORKLOAD 𝒲</span></div>
     <div class="workload-grid" id="wlGrid">
       <div class="wl-btn active" data-wl="es">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil workload Elasticsearch">
+        <span class="wl-ico" title="Profil workload Elasticsearch"><i data-lucide="globe"></i></span>
         <div class="wl-name">ELASTICSEARCH</div>
         <div class="wl-hint">α: 0.20/0.35/0.20/0.25/0</div>
       </div>
       <div class="wl-btn" data-wl="compile">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil compilation">
+        <span class="wl-ico" title="Profil compilation"><i data-lucide="wrench"></i></span>
         <div class="wl-name">COMPILATION</div>
         <div class="wl-hint">α: 0.55/0.25/0.10/0.10/0</div>
       </div>
       <div class="wl-btn" data-wl="gamer">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil gamer">
+        <span class="wl-ico" title="Profil gamer"><i data-lucide="gamepad-2"></i></span>
         <div class="wl-name">GAMER PERF</div>
         <div class="wl-hint">alpha: 0.45/0.20/0.05/0.05/0.25</div>
       </div>
       <div class="wl-btn" data-wl="ai">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil IA / inférence">
+        <span class="wl-ico" title="Profil IA / inférence"><i data-lucide="brain-circuit"></i></span>
         <div class="wl-name">AI INFERENCE</div>
         <div class="wl-hint">α: 0.15/0.20/0.05/0.05/0.55</div>
       </div>
       <div class="wl-btn" data-wl="backup">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil sauvegarde / I/O">
+        <span class="wl-ico" title="Profil sauvegarde / I/O"><i data-lucide="save"></i></span>
         <div class="wl-name">BACKUP</div>
         <div class="wl-hint">α: 0.15/0.15/0.30/0.40/0</div>
       </div>
       <div class="wl-btn" data-wl="sqlite">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil SQLite">
+        <span class="wl-ico" title="Profil SQLite"><i data-lucide="database"></i></span>
         <div class="wl-name">SQLITE</div>
         <div class="wl-hint">α: 0.20/0.10/0.05/0.65/0</div>
       </div>
       <div class="wl-btn" data-wl="oracle">
-        <img src="assets/brand/icon_24x24.png" class="wl-ico" alt="" aria-hidden="true" title="Profil Oracle / base lourde">
+        <span class="wl-ico" title="Profil Oracle / base lourde"><i data-lucide="server"></i></span>
         <div class="wl-name">ORACLE</div>
         <div class="wl-hint">α: 0.25/0.30/0.10/0.35/0</div>
       </div>
@@ -609,23 +636,23 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
 
   <div class="panel panel-insights">
-    <div class="panel-title">PREUVES · SESSION · JOURNAL</div>
+    <div class="panel-title"><span class="pt-ico"><i data-lucide="shield-check"></i></span><span>PREUVES · SESSION · JOURNAL</span></div>
     <div class="proof-trust-card">
-      <div class="advisor-title">Ce que vous pouvez défendre devant un tiers</div>
+      <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="badge-check"></i></span><span>Ce que vous pouvez défendre devant un tiers</span></div>
       <div class="advisor-text" style="color:var(--text)">
         <strong>1 — Mesures OS</strong> : CPU, RAM, GPU, I/O, parfois W (section repliée « Données brutes »).<br>
         <strong>2 — Reproductible</strong> : onglet <strong>Benchmark</strong>, A/B sur <em>votre</em> commande KPI, export JSON.<br>
         <strong>3 — Piste d’audit</strong> : échantillons temps, lifetime, audit sur disque — bouton pour copier chemins + méthode.
       </div>
       <div class="gains-actions" style="margin-top:.4rem">
-        <button type="button" class="ctrl-btn btn-primary" id="btnCopyEvidence" style="font-size:.62rem;padding:.28rem .5rem">Copier preuve (méthode + chemins)</button>
-        <button type="button" class="ctrl-btn btn-secondary" id="btnCopyGains" style="font-size:.62rem;padding:.28rem .5rem">Copier rapport session</button>
-        <button type="button" class="ctrl-btn btn-secondary" id="btnExportGains" style="font-size:.62rem;padding:.28rem .5rem">Exporter JSON</button>
+        <button type="button" class="ctrl-btn btn-primary" id="btnCopyEvidence" style="font-size:.62rem;padding:.28rem .5rem"><span class="btn-ico"><i data-lucide="clipboard-copy"></i></span> Copier preuve (méthode + chemins)</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnCopyGains" style="font-size:.62rem;padding:.28rem .5rem"><span class="btn-ico"><i data-lucide="file-text"></i></span> Copier rapport session</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnExportGains" style="font-size:.62rem;padding:.28rem .5rem"><span class="btn-ico"><i data-lucide="download"></i></span> Exporter JSON</button>
       </div>
     </div>
     <div class="insights-grid">
       <details class="fold" id="proofFold">
-        <summary>Instantané avant / après dôme</summary>
+        <summary style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="git-compare"></i></span> Instantané avant / après dôme</summary>
         <div class="proof-panel" id="proofPanel">
           <div class="proof-placeholder" id="proofPlaceholder">Activez le dôme pour comparer le snapshot matériel avant activation et l’état courant.</div>
           <div class="proof-compare" id="proofCompare" style="display:none">
@@ -638,7 +665,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       </details>
 
       <details class="fold" open>
-        <summary>Historique des activations dôme</summary>
+        <summary style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="history"></i></span> Historique des activations dôme</summary>
         <div class="gains-panel">
           <div class="gains-summary" id="gainsSummary">— Aucune activation pour l’instant</div>
           <div class="gains-list" id="gainsList"></div>
@@ -646,7 +673,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
       </details>
 
       <details class="fold">
-        <summary>Journal technique</summary>
+        <summary style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="scroll-text"></i></span> Journal technique</summary>
         <div class="log-panel" id="logPanel"></div>
       </details>
     </div>
@@ -654,16 +681,16 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 
   <!-- RIGHT -->
   <div class="panel panel-right">
-    <div class="panel-title">STRESS GLOBAL Σ(t) · LIVE</div>
+    <div class="panel-title"><span class="pt-ico" style="color:var(--stress)"><i data-lucide="gauge"></i></span><span>STRESS GLOBAL Σ(t) · LIVE</span></div>
     <div class="sigma-gauge">
       <div class="sigma-fill" id="sigmaFill" style="height:0"></div>
       <div class="sigma-val" id="sigmaVal">—</div>
     <div class="sigma-label" id="sigmaSubLabel">PSI + STEAL + MEM PRESSURE</div>
     </div>
 
-    <div class="panel-title">PARAMÈTRES</div>
+    <div class="panel-title"><span class="pt-ico"><i data-lucide="sliders-horizontal"></i></span><span>PARAMÈTRES</span></div>
     <div class="pilotage-card">
-      <div class="pilotage-title">Pilotage intelligent</div>
+      <div class="pilotage-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="color:var(--io)"><i data-lucide="sparkles"></i></span><span>Pilotage intelligent</span></div>
       <div class="kappa-ctrl">
         <div class="kappa-row">
           <span class="kappa-name" style="color:var(--io)">Policy moteur</span>
@@ -701,7 +728,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="kappa-ctrl">
       <div class="kappa-row">
         <span class="kappa-name" style="color:var(--mem)">Processus cible</span>
-        <button type="button" class="ctrl-btn btn-secondary" id="btnRefreshProcesses" style="font-size:.65rem;padding:.15rem .4rem">Rafraîchir</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnRefreshProcesses" style="font-size:.65rem;padding:.15rem .4rem"><span class="btn-ico"><i data-lucide="refresh-cw"></i></span> Rafraîchir</button>
       </div>
             <div class="target-tools">
         <label class="target-auto">
@@ -717,18 +744,18 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     </div>
 
     <div class="advisor-panel">
-      <div class="advisor-title">Recommandation live</div>
+      <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="radio-tower"></i></span><span>Recommandation live</span></div>
       <div class="advisor-text" id="tuningAdvice">En attente des metriques...</div>
       <div class="advisor-actions">
-        <button type="button" class="ctrl-btn btn-secondary" id="btnApplyAdvice" style="font-size:.62rem;padding:.25rem .45rem">Appliquer</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnApplyAdvice" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="check"></i></span> Appliquer</button>
       </div>
     </div>
     <details class="advanced-fold" id="advancedFold">
-      <summary>Outils avances</summary>
+      <summary style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="wrench"></i></span> Outils avances</summary>
       <div class="advanced-stack">
         <div class="kappa-ctrl" id="soulRamPanel">
           <div class="kappa-row">
-            <span class="kappa-name" style="color:var(--io)">SoulRAM</span>
+            <span class="kappa-name" style="color:var(--io);display:inline-flex;align-items:center;gap:.3rem"><span class="pt-ico" style="width:13px;height:13px;color:var(--io)"><i data-lucide="memory-stick"></i></span> SoulRAM</span>
             <span class="kappa-num" id="soulRamStatus" style="color:var(--stress)">OFF</span>
           </div>
           <p class="target-hint" style="margin:.25rem 0 .35rem;line-height:1.45">
@@ -746,38 +773,38 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
             <div id="soulRamPolicyLine" style="margin-top:.15rem;color:var(--muted)">Politique / compression : —</div>
           </div>
           <div class="gains-actions" style="margin-top:.35rem">
-            <button type="button" class="ctrl-btn btn-secondary" id="btnSoulRamOn" style="font-size:.62rem;padding:.25rem .45rem">Activer SoulRAM</button>
-            <button type="button" class="ctrl-btn btn-danger" id="btnSoulRamOff" style="font-size:.62rem;padding:.25rem .45rem">Desactiver SoulRAM</button>
+            <button type="button" class="ctrl-btn btn-secondary" id="btnSoulRamOn" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="power"></i></span> Activer SoulRAM</button>
+            <button type="button" class="ctrl-btn btn-danger" id="btnSoulRamOff" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="power-off"></i></span> Desactiver SoulRAM</button>
           </div>
         </div>
         <div class="advisor-panel" id="adaptivePanel" style="margin-top:.35rem">
-          <div class="advisor-title">Mode adaptatif (low overhead)</div>
+          <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="orbit"></i></span><span>Mode adaptatif (low overhead)</span></div>
           <label class="target-auto"><input type="checkbox" id="adaptiveEnabled"> Adaptive engine</label>
           <label class="target-auto" style="margin-top:.2rem"><input type="checkbox" id="adaptiveAutoDome" checked> Auto Dome</label>
           <div class="advisor-text" id="adaptiveStatus" style="margin-top:.3rem">OFF</div>
         </div>
 
         <div class="advisor-panel" id="hudPanel" style="margin-top:.35rem">
-          <div class="advisor-title">HUD Overlay (2ᵉ fenêtre)</div>
+          <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="monitor"></i></span><span>HUD Overlay (2ᵉ fenêtre)</span></div>
           <p class="target-hint" style="margin:.2rem 0;line-height:1.45">
             Fenêtre toujours au-dessus, alimentée par les mêmes métriques que l’app. Si le HUD ne s’affiche pas ou fait fermer l’app, utilise d’abord le bouton <strong>HUD ON</strong> dans la barre d’outils (il réinitialise le suivi santé WebView) ; évite d’ouvrir/fermer en rafale avec le raccourci seul.
           </p>
           <div class="gains-actions" style="margin-top:.2rem">
-            <button type="button" class="ctrl-btn btn-secondary" id="btnHudEdit" style="font-size:.62rem;padding:.25rem .45rem">Edition OFF</button>
+            <button type="button" class="ctrl-btn btn-secondary" id="btnHudEdit" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="mouse-pointer-2"></i></span> Edition OFF</button>
           </div>
           <div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Ecran HUD</span><select id="hudDisplay" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="">Auto</option></select></div><div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Preset</span><select id="hudPreset" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="mini">Mini</option><option value="compact" selected>Compact</option><option value="detailed">Detaille</option></select></div>
           <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">Opacite</span><input id="hudOpacity" type="range" min="0.30" max="1" step="0.05" value="0.82" style="width:130px"><span class="kappa-num" id="hudOpacityNum" style="color:var(--cpu)">82%</span></div>
           <div class="target-hint" style="margin-top:.2rem">Raccourcis : Alt+Shift+H (toggle), Alt+Shift+J (édition pointeur).</div>
         </div>
 
-        <button class="ctrl-btn btn-secondary" id="btnInfo" type="button">Platform info</button>
+        <button class="ctrl-btn btn-secondary" id="btnInfo" type="button"><span class="btn-ico"><i data-lucide="info"></i></span> Platform info</button>
       </div>
     </details>
     </div>
 
     <div class="controls controls-primary">
-      <button class="ctrl-btn btn-primary"   id="btnDome">ACTIVER DOME</button>
-      <button class="ctrl-btn btn-danger"    id="btnReset">ROLLBACK</button>
+      <button class="ctrl-btn btn-primary"   id="btnDome"><span class="btn-ico"><i data-lucide="rocket"></i></span> ACTIVER DOME</button>
+      <button class="ctrl-btn btn-danger"    id="btnReset"><span class="btn-ico"><i data-lucide="rotate-ccw"></i></span> ROLLBACK</button>
     </div>
 </div>
 
@@ -794,7 +821,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
   <div class="benchmark-shell">
     <div class="benchmark-column">
       <div class="advisor-panel" id="benchPanel">
-        <div class="advisor-title">KPI externe A/B</div>
+        <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="terminal"></i></span><span>KPI externe A/B</span></div>
         <input id="kpiCommand" class="target-select" type="text" value="cargo" placeholder="Commande KPI">
         <input id="kpiArgs" class="target-select" type="text" value="check" placeholder="Arguments KPI" style="margin-top:.25rem">
         <div class="kappa-row" style="margin-top:.35rem;gap:.5rem">
@@ -802,9 +829,9 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
           <input id="kpiRuns" class="target-select" type="number" min="5" max="20" value="5" style="width:74px;padding:.2rem .35rem">
         </div>
         <div class="gains-actions" style="margin-top:.35rem">
-          <button type="button" class="ctrl-btn btn-secondary" id="btnRunAB" style="font-size:.62rem;padding:.25rem .45rem">Run A/B</button>
-          <button type="button" class="ctrl-btn btn-secondary" id="btnExportAB" style="font-size:.62rem;padding:.25rem .45rem">Exporter A/B</button>
-          <button type="button" class="ctrl-btn btn-danger" id="btnClearAB" style="font-size:.62rem;padding:.25rem .45rem">Reset A/B</button>
+          <button type="button" class="ctrl-btn btn-secondary" id="btnRunAB" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="play"></i></span> Run A/B</button>
+          <button type="button" class="ctrl-btn btn-secondary" id="btnExportAB" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="download"></i></span> Exporter A/B</button>
+          <button type="button" class="ctrl-btn btn-danger" id="btnClearAB" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="trash-2"></i></span> Reset A/B</button>
         </div>
         <div class="advisor-text" id="kpiBenchSummary" style="margin-top:.35rem">Aucun benchmark A/B</div>
         <div class="advisor-text" id="kpiBenchLearned" style="margin-top:.25rem">Apprentissage benchmark: aucun historique pertinent</div>
@@ -813,25 +840,25 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
         </div>
       </div>
       <div class="advisor-panel">
-        <div class="advisor-title">Base appliquee a l'application</div>
+        <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="database"></i></span><span>Base appliquee a l'application</span></div>
         <div class="advisor-text">Le meilleur benchmark connu devient la base par defaut des reglages de l'application pour ce workload et cette commande KPI. La recommandation live ne part plus de zero: elle ajuste autour de cette base selon la charge reelle.</div>
       </div>
     </div>
     <div class="benchmark-column">
       <div class="advisor-panel">
-        <div class="advisor-title">Energie benchmark</div>
+        <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="color:var(--warning)"><i data-lucide="zap"></i></span><span>Energie benchmark</span></div>
         <div class="kappa-row" style="margin-top:.1rem;gap:.4rem"><span class="kappa-name">Prix electricite (EUR/kWh)</span><input id="energyPrice" class="target-select" type="text" inputmode="decimal" value="0.22" placeholder="0,194" title="Accepte 0,194 ou 0.194" style="width:110px;padding:.2rem .35rem"></div>
         <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">CO2 (kg/kWh)</span><input id="energyCo2" class="target-select" type="text" inputmode="decimal" value="0.05" placeholder="0,024" title="Accepte 0,024 ou 0.024" style="width:110px;padding:.2rem .35rem"></div>
-        <button type="button" class="ctrl-btn btn-secondary" id="btnApplyEnergyPricing" style="font-size:.62rem;padding:.25rem .45rem;margin-top:.3rem">Appliquer tarif energie</button>
+        <button type="button" class="ctrl-btn btn-secondary" id="btnApplyEnergyPricing" style="font-size:.62rem;padding:.25rem .45rem;margin-top:.3rem"><span class="btn-ico"><i data-lucide="coins"></i></span> Appliquer tarif energie</button>
         <div class="advisor-text" id="energyPricingStatus" style="margin-top:.3rem">Tarif actif: chargement...</div>
         <div class="target-hint" style="margin-top:.2rem">Sauvegarde locale automatique (pricing.json). L'economie reelle s'affiche seulement si la puissance (W) est disponible.</div>
       </div>
       <div class="advisor-panel">
-        <div class="advisor-title">Verdict benchmark</div>
+        <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico"><i data-lucide="scale"></i></span><span>Verdict benchmark</span></div>
         <div class="advisor-text" id="benchmarkVerdict">Aucun benchmark charge.</div>
       </div>
       <div class="advisor-panel">
-        <div class="advisor-title">Top benchmark</div>
+        <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="color:var(--warning)"><i data-lucide="trophy"></i></span><span>Top benchmark</span></div>
         <div class="bench-top-list" id="benchmarkTopList">
           <div class="advisor-text">Aucun classement disponible.</div>
         </div>
@@ -841,6 +868,13 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 </section>
 
 <script>
+function refreshSoulKernelLucide() {
+  try {
+    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+      lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+    }
+  } catch (_) {}
+}
 // ─── Tauri bridge (v2: __TAURI__.core.invoke + tauriReady pour éviter race) ─────
 let hasTauri = false;
 let rawInvoke = (cmd, args) => fallbackInvoke(cmd, args);
@@ -1560,16 +1594,18 @@ function renderBenchmarkTop(topSessions) {
   const top = Array.isArray(topSessions) ? topSessions : [];
   if (!top.length) {
     el.innerHTML = '<div class="advisor-text">Aucun classement disponible.</div>';
+    refreshSoulKernelLucide();
     return;
   }
   const f = v => (v == null ? 'N/A' : Number(v).toFixed(1) + '%');
   el.innerHTML = top.map(item => (
     `<div class="bench-top-item">` +
-      `<div class="bench-top-title">#${item.rank} score=${Number(item.composite_score || 0).toFixed(2)} | ${item.started_at}</div>` +
+      `<div class="bench-top-title" style="display:flex;align-items:center;gap:.35rem"><span class="pt-ico" style="width:13px;height:13px"><i data-lucide="award"></i></span><span>#${item.rank} score=${Number(item.composite_score || 0).toFixed(2)} | ${item.started_at}</span></div>` +
       `<div class="bench-top-meta">gain median=${f(item.gain_median_pct)} | p95=${f(item.gain_p95_pct)} | runs=${item.runs_per_state}/etat</div>` +
       `<div class="bench-top-meta">κ=${Number(item.kappa).toFixed(1)} | Σmax=${Number(item.sigma_max).toFixed(2)} | η=${Number(item.eta).toFixed(2)} | wl=${item.workload}</div>` +
     `</div>`
   )).join('');
+  refreshSoulKernelLucide();
 }
 
 function applyBenchmarkLearning(advice, sourceLabel = 'benchmark-history') {
@@ -2474,6 +2510,43 @@ function renderMetrics(m) {
     actRaw.style.color = a === 'active' ? 'var(--io)' : 'var(--gpu)';
   }
   updateSystemStatus(m);
+  updateMetricsStrip(m);
+}
+
+/** Barre σ / π / mini r(t) sous le header */
+function updateMetricsStrip(m) {
+  const strip = document.getElementById('metricsStrip');
+  const sSig = document.getElementById('stripSigma');
+  const sPi = document.getElementById('stripPi');
+  const piWrap = document.querySelector('.ms-pi-wrap');
+  if (sSig) sSig.textContent = (m && m.sigma != null) ? Number(m.sigma).toFixed(2) : '—';
+  const pi = typeof state.lastPi === 'number' ? state.lastPi : null;
+  if (sPi) sPi.textContent = pi != null ? pi.toFixed(3) : '—';
+  if (piWrap && pi != null) {
+    const p = Math.min(1, Math.max(0, pi));
+    piWrap.style.setProperty('--pi-pct', p.toFixed(4));
+  }
+  if (strip && m && m.sigma != null) {
+    const sig = Number(m.sigma);
+    strip.classList.toggle('ms-danger', sig >= 0.85);
+    strip.classList.toggle('ms-warn', sig >= 0.55 && sig < 0.85);
+  }
+  const sigmaSeg = document.querySelector('.ms-seg.ms-sigma');
+  if (sigmaSeg && m && m.sigma != null) {
+    sigmaSeg.classList.toggle('ms-pulse', Number(m.sigma) >= 0.65);
+  }
+  const sigWrap = document.getElementById('stripSigmaIconWrap');
+  if (sigWrap && m && m.sigma != null) {
+    const sg = Number(m.sigma);
+    sigWrap.classList.toggle('ms-ico-wrap--danger', sg >= 0.65);
+    sigWrap.classList.toggle('ms-ico-wrap--success', sg < 0.35);
+  }
+  const fcpu = document.getElementById('stripCpuFill');
+  const fmem = document.getElementById('stripMemFill');
+  const fio = document.getElementById('stripIoFill');
+  if (fcpu) fcpu.style.transform = 'scaleX(' + (m && m.cpu != null ? Number(m.cpu).toFixed(4) : '0') + ')';
+  if (fmem) fmem.style.transform = 'scaleX(' + (m && m.mem != null ? Number(m.mem).toFixed(4) : '0') + ')';
+  if (fio) fio.style.transform = 'scaleX(' + (m && m.io_bandwidth != null ? Number(m.io_bandwidth).toFixed(4) : '0') + ')';
 }
 
 function setBar(id, val, _label) {
@@ -2550,6 +2623,8 @@ function renderFormula(m) {
     const el = document.getElementById('dc'+i);
     if (el) el.style.transform = `scaleY(${Math.max(0.06, a * r[i]).toFixed(4)})`;
   });
+
+  updateMetricsStrip(m);
 }
 
 // ─── Platform info ────────────────────────────────────────────────────────────
@@ -3019,7 +3094,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '1.0.0',
+      version: '1.0.1',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -3370,7 +3445,8 @@ if (!HUD_ONLY && window.__TAURI__?.event?.listen) {
     const bHud = document.getElementById('btnHudToggle');
     if (bHud) {
       bHud.classList.toggle('active', state.hudVisible);
-      bHud.textContent = state.hudVisible ? 'HUD ON' : 'HUD OFF';
+      bHud.innerHTML = '<span class="view-ico"><i data-lucide="panel-top"></i></span> ' + (state.hudVisible ? 'HUD ON' : 'HUD OFF');
+      refreshSoulKernelLucide();
     }
     saveRuntimeSettings();
   }).catch(e => log('HUD event.listen blocked: ' + e, 'warn'));
@@ -3408,7 +3484,8 @@ async function setHudVisible(on) {
   const bHud = document.getElementById('btnHudToggle');
   if (bHud) {
     bHud.classList.toggle('active', state.hudVisible);
-    bHud.textContent = state.hudVisible ? 'HUD ON' : 'HUD OFF';
+    bHud.innerHTML = '<span class="view-ico"><i data-lucide="panel-top"></i></span> ' + (state.hudVisible ? 'HUD ON' : 'HUD OFF');
+    refreshSoulKernelLucide();
   }
 
   if (!HUD_ONLY && hasTauri) {
@@ -3550,8 +3627,9 @@ async function setHudInteractive(on) {
   if (m) m.textContent = state.hudInteractive ? 'EDIT' : 'LOCK';
   const b = document.getElementById('btnHudEdit');
   if (b) {
-    b.textContent = state.hudInteractive ? 'Edition ON' : 'Edition OFF';
+    b.innerHTML = '<span class="btn-ico"><i data-lucide="mouse-pointer-2"></i></span> ' + (state.hudInteractive ? 'Edition ON' : 'Edition OFF');
     b.classList.toggle('active', state.hudInteractive);
+    refreshSoulKernelLucide();
   }
   if (!HUD_ONLY && hasTauri && state.hudVisible) {
     try { await invoke('set_system_hud_interactive', { interactive: state.hudInteractive }); } catch (_) {}
@@ -3807,6 +3885,7 @@ function fallbackInvoke(cmd, args) {
 (async () => {
   if (HUD_ONLY) {
     await initHudOnlyMode();
+    refreshSoulKernelLucide();
     return;
   }
   loadRuntimeSettings();
@@ -3835,6 +3914,7 @@ function fallbackInvoke(cmd, args) {
   saveRuntimeSettings();
   scheduleNextPoll();
   setInterval(() => refreshProcesses({ userInitiated: false }), PROCESS_REFRESH_MS);
+  refreshSoulKernelLucide();
 })();
 </script>
 </body>

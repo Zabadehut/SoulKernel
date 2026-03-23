@@ -1,0 +1,207 @@
+/**
+ * SoulKernel — design tokens (production)
+ * Icônes: Lucide (CDN) — refreshSoulKernelLucide() après injection DOM
+ */
+/* Typo 100 % offline : pile monospace système (pas de Google Fonts) */
+:root {
+  --bg: #0b0f14;
+  --panel: #121821;
+  --s1: #0b1320;
+  --s2: #0f1e30;
+  --s3: #162840;
+  --border: #1a3355;
+  --dim: #243f5e;
+  --primary: #00d4ff;
+  --success: #00ff88;
+  --warning: #ffb020;
+  --danger: #ff3b3b;
+  --text: #d6e2f0;
+  --muted: #5a80a8;
+  --hi: #ffffff;
+  --cpu: #00d4ff;
+  --mem: #b060ff;
+  --io: #00ff9d;
+  --gpu: #ffb300;
+  --stress: #ff3b5c;
+  --strip-bg: rgba(11, 15, 20, 0.88);
+  --strip-glow: rgba(0, 212, 255, 0.12);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Lucide — instrumentation (stroke fin) */
+svg.lucide {
+  flex-shrink: 0;
+}
+.pt-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cpu);
+  width: 15px;
+  height: 15px;
+}
+.pt-ico svg.lucide {
+  width: 15px;
+  height: 15px;
+}
+.btn-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+}
+.btn-ico svg.lucide {
+  width: 15px;
+  height: 15px;
+}
+.view-ico svg.lucide {
+  width: 12px;
+  height: 12px;
+}
+.ms-ico-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.ms-ico-wrap svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+.ms-ico-wrap--danger {
+  color: var(--danger);
+}
+.ms-ico-wrap--success {
+  color: var(--success);
+}
+.res-metric-icon svg.lucide {
+  width: 18px;
+  height: 18px;
+}
+.wl-ico svg.lucide {
+  width: 22px;
+  height: 22px;
+}
+.hud-row-ico svg.lucide {
+  width: 11px;
+  height: 11px;
+  opacity: 0.9;
+}
+
+/* Barre métriques top (HUD synthèse) */
+.metrics-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px var(--strip-glow);
+}
+.metrics-strip.ms-danger {
+  box-shadow: 0 0 16px rgba(255, 59, 59, 0.25);
+}
+.metrics-strip.ms-warn {
+  box-shadow: 0 0 12px rgba(255, 176, 32, 0.18);
+}
+
+.ms-seg {
+  flex: 1 1 auto;
+  min-width: 72px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--strip-bg);
+  border-left: 1px solid rgba(26, 51, 85, 0.6);
+}
+.ms-seg:first-child {
+  border-left: none;
+}
+
+.ms-label {
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  min-width: 1.2em;
+}
+
+.ms-val {
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  margin-left: auto;
+}
+
+.ms-mini-track {
+  flex: 1;
+  height: 4px;
+  background: var(--s2);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 48px;
+  max-width: 120px;
+}
+.ms-mini-fill {
+  height: 100%;
+  border-radius: 2px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ms-mini-fill--cpu {
+  background: linear-gradient(90deg, #005f6e, var(--cpu));
+}
+.ms-mini-fill--mem {
+  background: linear-gradient(90deg, #4a1880, var(--mem));
+}
+.ms-mini-fill--io {
+  background: linear-gradient(90deg, #664500, var(--gpu));
+}
+
+.ms-pi-wrap {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+.ms-pi-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--s3);
+  box-shadow: inset 0 0 8px rgba(0, 212, 255, 0.08);
+}
+.ms-pi-arc {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--primary) calc(var(--pi-pct, 0) * 1turn),
+    transparent 0
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 0);
+}
+
+/* σ pulse quand stress élevé */
+.ms-sigma.ms-pulse .ms-val {
+  animation: sk-pulse 1.5s ease-in-out infinite;
+}
+@keyframes sk-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.glow-active {
+  box-shadow: 0 0 12px var(--primary);
+}
