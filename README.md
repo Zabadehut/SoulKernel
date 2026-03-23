@@ -32,6 +32,7 @@ SoulKernel/
 ├── scripts/
 │   ├── rocky-tauri-dev.sh       ← Rocky 9 : shell dans l’image Fedora Tauri (voir § Dev)
 │   ├── Containerfile.fedora-tauri
+│   ├── trusted-sign.ps1         ← Azure Trusted Signing (bundles Windows signés en CI)
 │   └── cargo-msvc.example.cmd  ← Modèle MSVC Windows (copier en `cargo-msvc.cmd` local, voir .gitignore)
 ├── gen/schemas/         ← Schémas Tauri (référence outils / IDE)
 ├── icons/               ← icon.ico, icon.png
@@ -50,8 +51,46 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
   git tag v1.0.0   # adapter à la version du manifeste
   git push origin v1.0.0
   ```
-  Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert.
+  Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
+- **Signature Windows (Azure Trusted Signing)** : cible ~**10 $/mois** (petit compte [Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/overview)). Le pipeline installe `trusted-signing-cli` et appelle `scripts/trusted-sign.ps1` (voir `bundle.windows.signCommand` dans `tauri.conf.json`). Définir des **secrets** GitHub Actions : `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` (application Azure), `AZURE_CODE_SIGNING_ENDPOINT` (ex. `https://<région>.codesigning.azure.net`), `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`, `AZURE_CERTIFICATE_PROFILE_NAME`. Guide rapide : [Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/quickstart), [trusted-signing-cli](https://github.com/Levminer/trusted-signing-cli). **Build local sans compte Azure** : `cargo tauri build --no-sign`.
 - **MCP Cursor** (autonomie agent, docs, GitHub optionnel) : `.cursor/mcp.json` et `.cursor/README-MCP.md` — indexation légère : `.cursorignore` + `@codebase` dans le chat.
+
+## Téléchargements — confiance et sécurité par OS
+
+Les binaires sur [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont **produits par la CI** à partir du code public. Tant qu’il n’y a **pas de certificat de signature de code** (payant), les systèmes peuvent afficher des avertissements : c’est **normal** ; les empreintes **SHA256** permettent seulement de vérifier que le fichier n’a pas été modifié **après** publication sur GitHub (intégrité), pas d’établir l’identité légale d’un éditeur comme le ferait un certificat.
+
+### Vérifier une release (SHA256)
+
+1. Télécharge l’installateur **et** le fichier **`SHA256SUMS`** attaché à la même release.
+2. Dans le dossier qui contient les deux :
+   ```bash
+   sha256sum -c SHA256SUMS
+   ```
+   Sous Windows (PowerShell), si `sha256sum` n’est pas dispo, compare manuellement avec la liste dans la description de la release ou utilise un outil tiers pour calculer le hash du fichier.
+
+### Windows
+
+- **SmartScreen / « Windows a protégé votre PC » / éditeur inconnu** : arrive souvent sur les `.exe` / `.msi` **téléchargés depuis Internet** sans signature reconnue. Clique sur **Plus d’infos** puis **Exécuter quand même** si tu fais confiance au dépôt et à la release.
+- **Fichier bloqué** : clic droit sur le fichier → **Propriétés** → coche **Débloquer** si la case est présente → OK.
+- **Antivirus** : en cas de faux positif rare, signale-le à l’éditeur de l’AV ou utilise une exclusion **à ta discrétion** (ne recommande pas d’exclusions génériques à toute la communauté).
+
+### macOS
+
+- Après téléchargement, si macOS refuse d’ouvrir l’app : **Réglages système → Confidentialité et sécurité** et autorise l’ouverture, ou clic droit sur l’app / le `.dmg` → **Ouvrir** → confirmer.
+- Si Gatekeeper mentionne un développeur non identifié : même logique — ouvrir depuis le **Finder** avec clic droit **Ouvrir** la première fois.
+
+### Linux
+
+- **AppImage** : après téléchargement, rendre exécutable puis lancer :
+  ```bash
+  chmod +x SoulKernel_*.AppImage
+  ./SoulKernel_*.AppImage
+  ```
+- **.deb** : installe avec ton gestionnaire de paquets ou `sudo apt install ./fichier.deb` (Debian/Ubuntu).
+
+### Quand un certificat sera disponible
+
+Une fois un **certificat de signature de code** (individuel ou autre) obtenu, les installateurs pourront être **signés** ; les avertissements du type « éditeur inconnu » deviennent en général **moins fréquents** après accumulation de réputation. En attendant, la combinaison **CI publique + SHA256** vise à rassurer la communauté sur l’**intégrité** des fichiers.
 
 ## Tauri Commands (invoke)
 

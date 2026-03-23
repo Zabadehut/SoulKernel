@@ -11,6 +11,7 @@ permissions:
   contents: write
 
 jobs:
+  # Builds + upload des installateurs (matrice OS / arch).
   publish-tauri:
     strategy:
       fail-fast: false
@@ -47,10 +48,21 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version '^2.0' --locked
 
+      # Azure Trusted Signing (~10 $/mois) : https://learn.microsoft.com/azure/trusted-signing/
+      - name: Install trusted-signing-cli (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: cargo install trusted-signing-cli --version '^0.9' --locked
+
       # Pas de tag « v1 » sur le dépôt ; dernière ligne stable v0.x (mars 2026).
       - uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CODE_SIGNING_ENDPOINT: ${{ secrets.AZURE_CODE_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
         with:
           tagName: v__VERSION__
           releaseName: 'SoulKernel v__VERSION__'
@@ -61,3 +73,90 @@ jobs:
           tauriScript: cargo tauri
           # tauri-action ≥0.6 : `includeUpdaterJson` (plus `uploadUpdaterJson`).
           includeUpdaterJson: false
+
+  # Après tous les builds : empreintes SHA256 dans les notes de release + fichier SHA256SUMS.
+  release-checksums:
+    name: Release — empreintes SHA256
+    needs: publish-tauri
+    runs-on: ubuntu-latest
+    steps:
+      - name: SHA256 des assets + mise à jour des notes de release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rel-assets
+          gh release download "${TAG}" --dir /tmp/rel-assets -R "${REPO}"
+          python3 << 'PY'
+          import hashlib
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          tag = os.environ["TAG"]
+          repo = os.environ["REPO"]
+          asset_dir = pathlib.Path("/tmp/rel-assets")
+
+          skip = {"SHA256SUMS"}
+          lines = []
+          for p in sorted(asset_dir.iterdir()):
+              if p.is_file() and p.name not in skip:
+                  digest = hashlib.sha256(p.read_bytes()).hexdigest()
+                  lines.append(f"{digest}  {p.name}")
+
+          checksums_text = "\n".join(lines)
+          if not checksums_text.strip():
+              print("Aucun fichier dans les assets, abandon.", file=sys.stderr)
+              sys.exit(1)
+
+          body = subprocess.run(
+              ["gh", "release", "view", tag, "--repo", repo, "--json", "body", "-q", ".body"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+
+          begin = "<!-- BEGIN_SHA256_CHECKSUMS -->"
+          end = "<!-- END_SHA256_CHECKSUMS -->"
+          pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.DOTALL)
+          body = pattern.sub("", body)
+
+          block = (
+              f"\n{begin}\n"
+              "## Empreintes SHA256 (intégrité des fichiers)\n\n"
+              "Chaque ligne permet de vérifier que le fichier téléchargé n’a pas été altéré "
+              f"(voir le README du dépôt, section « Téléchargements — confiance et sécurité par OS »).\n\n"
+              "```\n"
+              f"{checksums_text}\n"
+              f"```\n{end}\n"
+          )
+          new_body = body.rstrip() + block
+
+          with open("/tmp/release-body.md", "w", encoding="utf-8") as f:
+              f.write(new_body)
+
+          sums_path = pathlib.Path("/tmp/SHA256SUMS")
+          sums_path.write_text(checksums_text + "\n", encoding="utf-8")
+
+          subprocess.run(
+              ["gh", "release", "edit", tag, "--repo", repo, "--notes-file", "/tmp/release-body.md"],
+              check=True,
+          )
+          subprocess.run(
+              [
+                  "gh",
+                  "release",
+                  "upload",
+                  tag,
+                  "/tmp/SHA256SUMS",
+                  "--repo",
+                  repo,
+                  "--clobber",
+              ],
+              check=True,
+          )
+          PY

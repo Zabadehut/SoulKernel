@@ -21,6 +21,8 @@
 .tmp_*.ts
 .tmp_*.json
 soulkernel_gains_*.json
+# Échantillons télémétrie / énergie locaux (ne pas versionner)
+soulkernel_energy_samples.jsonl
 nul
 # Wrapper MSVC local (voir scripts/cargo-msvc.example.cmd)
 /cargo-msvc.cmd
