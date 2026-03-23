@@ -649,13 +649,7 @@ fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
         return;
     }
     if app.get_webview_window("hud").is_none() {
-        let _ = apply_hud_window_mode(
-            app,
-            hs.interactive,
-            &hs.preset,
-            hs.opacity,
-            hs.display_index,
-        );
+        let _ = apply_hud_window_mode(app, &hs);
         if let Some(w) = app.get_webview_window("hud") {
             let _ = w.hide();
         }
@@ -695,13 +689,7 @@ fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
             let _ = w.hide();
             let _ = w.close();
         }
-        let _ = apply_hud_window_mode(
-            app,
-            hs.interactive,
-            &hs.preset,
-            hs.opacity,
-            hs.display_index,
-        );
+        let _ = apply_hud_window_mode(app, &hs);
         if let Some(w) = app.get_webview_window("hud") {
             let _ = w.show();
         }
@@ -781,6 +769,12 @@ fn main() {
         preset: "compact".to_string(),
         opacity: 0.82,
         display_index: None,
+        size_mode: "screen".to_string(),
+        screen_width_pct: 22.0,
+        screen_height_pct: 28.0,
+        manual_width: 420.0,
+        manual_height: 260.0,
+        visible_metrics: hud::default_visible_metrics(),
     }));
 
     let (hud_tx_ch, mut hud_rx_ch) = mpsc::unbounded_channel::<HudOverlayData>();
@@ -829,13 +823,7 @@ fn main() {
                             if hs.visible {
                                 let hh = app.state::<SharedHudHealth>();
                                 reset_hud_health_for_show(&*hh);
-                                let _ = apply_hud_window_mode(
-                                    &app,
-                                    hs.interactive,
-                                    &hs.preset,
-                                    hs.opacity,
-                                    hs.display_index,
-                                );
+                                let _ = apply_hud_window_mode(&app, &hs);
                                 if let Some(w) = app.get_webview_window("hud") {
                                     let _ = w.show();
                                 }
@@ -851,13 +839,7 @@ fn main() {
                                 Err(_) => return,
                             };
                             hs.interactive = !hs.interactive;
-                            let _ = apply_hud_window_mode(
-                                &app,
-                                hs.interactive,
-                                &hs.preset,
-                                hs.opacity,
-                                hs.display_index,
-                            );
+                            let _ = apply_hud_window_mode(&app, &hs);
                             let _ = app.emit("soulkernel://hud-interactive", hs.interactive);
                         }
                     });
@@ -897,7 +879,11 @@ fn main() {
                         }
                         _ = tick.tick() => {
                             if let Some(payload) = latest.take() {
-                                let _ = app_handle.emit_to("hud", "soulkernel://hud", payload);
+                                let main = app_handle.clone();
+                                let emit = app_handle.clone();
+                                let _ = main.run_on_main_thread(move || {
+                                    let _ = emit.emit_to("hud", "soulkernel://hud", payload);
+                                });
                             }
                         }
                     }
@@ -946,10 +932,12 @@ fn main() {
             hud::set_system_hud_display,
             hud::set_system_hud_interactive,
             hud::set_system_hud_preset,
+            hud::set_system_hud_presentation,
             hud::set_system_hud_data,
             hud::get_system_hud_data,
             hud::get_system_hud_config,
             hud::set_system_hud_ready,
+            hud::set_hud_window_size,
             audit::audit_log_event,
             audit::get_audit_log_path,
             ingest_telemetry_sample,

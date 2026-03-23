@@ -1,6 +1,6 @@
 /**
  * SoulKernel — design tokens (production)
- * Icônes: Lucide (CDN) — refreshSoulKernelLucide() après injection DOM
+ * Icônes: Lucide local (vendor) — refreshSoulKernelLucide() après injection DOM
  */
 /* Typo 100 % offline : pile monospace système (pas de Google Fonts) */
 :root {
@@ -31,6 +31,10 @@
 /* Lucide — instrumentation (stroke fin) */
 svg.lucide {
   flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .pt-ico {
   display: inline-flex;

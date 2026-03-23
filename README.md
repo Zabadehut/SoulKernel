@@ -51,10 +51,10 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
 ## Développement
 
 - **CI multi-OS** : `.github/workflows/ci.yml` exécute `cargo clippy` et `cargo test` sur Ubuntu (dépendances WebKit Tauri), Windows et macOS. Ce workflow **ne crée pas** de page [Releases](https://github.com/Zabadehut/SoulKernel/releases) ni n’y dépose de fichiers — il ne fait que valider le code à chaque push/PR.
-- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.0.1` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
+- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.0.2` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
   ```bash
-  git tag v1.0.1   # adapter à la version du manifeste
-  git push origin v1.0.1
+  git tag v1.0.2   # adapter à la version du manifeste
+  git push origin v1.0.2
   ```
   Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
 - **Windows — signature** : les [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont construites avec **`--no-sign`** tant qu’aucun certificat n’est dans le dépôt (pas d’avertissement côté CI). **Build local** : `cargo tauri build --no-sign` si tu n’as pas encore de certificat. Quand tu auras un **certificat OV** ou un compte **Trusted Signing** éligible, tu pourras retirer `--no-sign` dans `.github/workflows/release.yml`, réactiver `bundle.windows.signCommand` / thumbprint dans `tauri.conf.json` et utiliser le modèle `scripts/trusted-sign.ps1` si besoin.

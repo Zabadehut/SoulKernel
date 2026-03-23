@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="hud-stretch">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,44 +7,355 @@
 <link rel="stylesheet" href="styles/design-tokens.css">
 <script src="vendor/lucide.min.js"></script>
 <style>
+/* hud-stretch : % ecran / manuel — #hudRoot remplit la WebView (plus de trou noir). hud-compact : mode contenu + auto-taille fenetre. */
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);overflow:hidden}
-.hud{position:fixed;inset:8px;background:rgba(11,19,32,.92);border:1px solid var(--border);border-radius:8px;padding:.5rem .6rem;pointer-events:none}
-body.edit .hud{pointer-events:auto;border-color:var(--cpu);box-shadow:0 0 0 1px rgba(0,229,255,.35),0 8px 24px rgba(0,0,0,.35)}
-.hud-title{font-size:.56rem;letter-spacing:.12em;color:var(--cpu);margin-bottom:.35rem;cursor:default;user-select:none;display:flex;align-items:center;gap:.35rem}
-.hud-title .pt-ico{width:13px;height:13px;display:inline-flex;color:var(--cpu)}
-.hud-title .pt-ico svg{width:13px;height:13px}
-body.edit .hud-title{cursor:move}
-.hud-badge{font-size:.5rem;color:var(--muted);margin-left:.35rem}
-.hud-grid{display:grid;grid-template-columns:1fr 1fr;gap:.24rem .68rem}
-.hud-item{font-size:.58rem;line-height:1.35;display:flex;align-items:center;gap:.28rem}
-.hud-item .hud-row-ico{color:var(--muted);flex-shrink:0}
-.hud-item strong{margin-left:auto;font-weight:600}
-.hud.mini .hud-item{font-size:.52rem}
-.hud.mini .hud-grid{gap:.12rem .45rem}
-.hud.detailed .hud-grid{grid-template-columns:1fr}
-.hud.detailed .hud-item{font-size:.62rem}
+html.hud-compact,html.hud-compact body{
+  height:auto;
+  min-height:0;
+  width:100%;
+}
+html.hud-compact body{display:block}
+html.hud-stretch,html.hud-stretch body{
+  height:100%;
+  width:100%;
+  min-height:0;
+}
+html.hud-stretch body{
+  display:flex;
+  flex-direction:column;
+}
+html{
+  display:block;
+  width:100%;
+  background:transparent !important;
+}
+body{
+  margin:0;
+  background:transparent !important;
+  color:var(--text);
+  overflow:hidden;
+  font-size:13px;
+  -webkit-font-smoothing:antialiased;
+}
+
+.hud{
+  --hud-pad:0.65rem 0.75rem;
+  --hud-radius:8px;
+  --hud-line:rgba(0,212,255,.14);
+  /* Opacité = fond uniquement (texte + bordure nets ; pas de fade global sur tout le bloc) */
+  --hud-opacity:0.82;
+  position:relative;
+  isolation:isolate;
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  padding:var(--hud-pad);
+  pointer-events:none;
+  border-radius:var(--hud-radius);
+  background:linear-gradient(
+    145deg,
+    rgba(15,22,38,calc(0.97 * var(--hud-opacity))) 0%,
+    rgba(8,12,20,calc(0.94 * var(--hud-opacity))) 100%
+  );
+  border:1px solid var(--border);
+  box-shadow:
+    0 0 0 1px rgba(0,212,255,.1),
+    0 8px 32px rgba(0,0,0,.4),
+    inset 0 1px 0 rgba(255,255,255,.05);
+  backdrop-filter:blur(10px);
+}
+body.edit .hud{
+  pointer-events:auto;
+  border-color:rgba(0,212,255,.45);
+  box-shadow:
+    0 0 0 1px rgba(0,212,255,.35),
+    0 16px 48px rgba(0,0,0,.5),
+    inset 0 1px 0 rgba(0,212,255,.12);
+}
+
+.hud-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:0.5rem;
+  padding-bottom:0.55rem;
+  margin-bottom:0.45rem;
+  border-bottom:1px solid var(--hud-line);
+  flex-shrink:0;
+  width:100%;
+  min-width:0;
+}
+.hud-brand{
+  display:flex;
+  align-items:center;
+  gap:0.45rem;
+  min-width:0;
+}
+.hud-brand-mark{
+  width:8px;
+  height:8px;
+  border-radius:2px;
+  background:linear-gradient(135deg,var(--cpu),var(--mem));
+  box-shadow:0 0 10px rgba(0,212,255,.4);
+  flex-shrink:0;
+}
+.hud-brand-text{min-width:0}
+.hud-brand-name{
+  font-size:0.62rem;
+  font-weight:700;
+  letter-spacing:0.14em;
+  color:var(--hi);
+  text-transform:uppercase;
+  line-height:1.2;
+}
+.hud-brand-sub{
+  font-size:0.52rem;
+  letter-spacing:0.06em;
+  color:var(--muted);
+  margin-top:0.12rem;
+}
+.hud-pill{
+  font-size:0.5rem;
+  font-weight:700;
+  letter-spacing:0.12em;
+  padding:0.2rem 0.45rem;
+  border-radius:999px;
+  border:1px solid var(--dim);
+  color:var(--muted);
+  background:rgba(0,0,0,.25);
+  flex-shrink:0;
+}
+body.edit .hud-pill{
+  border-color:var(--cpu);
+  color:var(--cpu);
+  background:rgba(0,212,255,.08);
+}
+
+.hud-drag{
+  cursor:default;
+  user-select:none;
+  flex:1;
+  min-width:0;
+}
+body.edit .hud-drag{cursor:move}
+
+html.hud-compact .hud{flex:0 0 auto}
+html.hud-stretch .hud{flex:1;min-height:0}
+
+/* Défilement : en stretch la zone scroll prend le reste sous le header (grille en haut). */
+.hud-scroll{
+  width:100%;
+  min-width:0;
+  min-height:0;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
+html.hud-compact .hud-scroll{flex:0 0 auto;max-height:32rem}
+html.hud-stretch .hud-scroll{flex:1;max-height:none}
+.hud-scroll::-webkit-scrollbar{width:6px}
+.hud-scroll::-webkit-scrollbar-track{background:rgba(0,0,0,.2);border-radius:3px}
+.hud-scroll::-webkit-scrollbar-thumb{background:rgba(0,212,255,.28);border-radius:3px}
+.hud-scroll{scrollbar-width:thin;scrollbar-color:rgba(0,212,255,.35) rgba(0,0,0,.2)}
+
+.hud-metrics{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:0.38rem 0.65rem;
+  align-content:start;
+  width:100%;
+  min-width:0;
+}
+
+.hud-tile{
+  display:flex;
+  flex-direction:column;
+  gap:0.2rem;
+  padding:0.42rem 0.5rem;
+  border-radius:8px;
+  background:rgba(0,0,0,.22);
+  border:1px solid rgba(26,51,85,.6);
+  min-width:0;
+  transition:border-color .15s, box-shadow .15s;
+}
+body.edit .hud-tile:hover{
+  border-color:rgba(0,212,255,.25);
+}
+
+.hud-tile-head{
+  display:flex;
+  align-items:center;
+  gap:0.35rem;
+}
+.hud-ico{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:16px;
+  height:16px;
+  flex-shrink:0;
+  border-radius:4px;
+  color:inherit;
+  opacity:0.95;
+}
+.hud-ico svg.lucide{
+  width:14px;
+  height:14px;
+  stroke-width:1.75;
+}
+.hud-lbl{
+  font-size:0.52rem;
+  font-weight:600;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
+  color:var(--muted);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.hud-val{
+  font-size:0.72rem;
+  font-weight:600;
+  font-variant-numeric:tabular-nums;
+  color:var(--text);
+  line-height:1.25;
+  word-break:break-word;
+}
+
+/* Couleurs sémantiques (icône + valeur) */
+.hud-tile--dome{--tile-accent:var(--io)}
+.hud-tile--sigma{--tile-accent:var(--stress)}
+.hud-tile--pi{--tile-accent:var(--cpu)}
+.hud-tile--cpu{--tile-accent:var(--cpu)}
+.hud-tile--ram{--tile-accent:var(--mem)}
+.hud-tile--tgt{--tile-accent:var(--muted)}
+.hud-tile--pwr{--tile-accent:var(--gpu)}
+.hud-tile--eco{--tile-accent:var(--io)}
+
+.hud-tile--dome .hud-ico,
+.hud-tile--sigma .hud-ico,
+.hud-tile--pi .hud-ico,
+.hud-tile--cpu .hud-ico,
+.hud-tile--ram .hud-ico,
+.hud-tile--tgt .hud-ico,
+.hud-tile--pwr .hud-ico,
+.hud-tile--eco .hud-ico{
+  color:var(--tile-accent);
+  background:rgba(255,255,255,.03);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.hud-tile--dome .hud-val{color:var(--io)}
+.hud-tile--sigma .hud-val{color:var(--stress)}
+.hud-tile--pi .hud-val{color:var(--cpu)}
+.hud-tile--cpu .hud-val{color:var(--cpu)}
+.hud-tile--ram .hud-val{color:var(--mem)}
+.hud-tile--tgt .hud-val{color:var(--text)}
+.hud-tile--pwr .hud-val{color:var(--gpu)}
+.hud-tile--eco .hud-val{color:var(--io)}
+
+/* Presets — hauteurs variables : le défilement .hud-metrics évite le contenu coupé */
+.hud.mini{--hud-pad:0.4rem 0.45rem}
+.hud.mini .hud-brand-name{font-size:0.56rem}
+.hud.mini .hud-brand-sub{font-size:0.48rem;display:none}
+.hud.mini .hud-val{font-size:clamp(0.58rem,2.8vmin,0.66rem)}
+.hud.mini .hud-lbl{font-size:0.46rem}
+.hud.mini .hud-metrics{gap:0.24rem 0.4rem}
+.hud.mini .hud-tile{padding:0.32rem 0.4rem}
+.hud.mini .hud-ico svg.lucide{width:12px;height:12px}
+.hud.mini .hud-ico{width:14px;height:14px}
+.hud.mini .hud-header{padding-bottom:0.4rem;margin-bottom:0.35rem}
+
+.hud.compact .hud-val{font-size:clamp(0.64rem,3.2vmin,0.74rem)}
+
+.hud.detailed .hud-metrics{grid-template-columns:1fr}
+.hud.detailed .hud-tile{flex-direction:row;align-items:center;justify-content:space-between}
+.hud.detailed .hud-tile-head{flex:1;min-width:0}
+.hud.detailed .hud-val{text-align:right;max-width:58%;font-size:clamp(0.72rem,3vmin,0.82rem)}
 </style>
 </head>
 <body>
-<div class="hud" id="hudRoot">
-  <div class="hud-title" id="hudDrag"><span class="pt-ico"><i data-lucide="panel-top"></i></span> HUD - CRUCIAL <span class="hud-badge" id="hudMode">LOCK</span></div>
-  <div class="hud-grid">
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="orbit"></i></span><span>Dome:</span> <strong id="dome">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="sigma"></i></span><span>Sigma:</span> <strong id="sigma">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="pi"></i></span><span>Pi:</span> <strong id="pi">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="cpu"></i></span><span>CPU:</span> <strong id="cpu">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="memory-stick"></i></span><span>RAM:</span> <strong id="ram">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="crosshair"></i></span><span>Cible:</span> <strong id="target">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="zap"></i></span><span>Power:</span> <strong id="power">-</strong></div>
-    <div class="hud-item"><span class="hud-row-ico"><i data-lucide="leaf"></i></span><span>Energie:</span> <strong id="energy">-</strong></div>
+<div class="hud compact" id="hudRoot">
+  <header class="hud-header">
+    <div class="hud-drag" id="hudDrag">
+      <div class="hud-brand">
+        <span class="hud-brand-mark" aria-hidden="true"></span>
+        <div class="hud-brand-text">
+          <div class="hud-brand-name">SoulKernel</div>
+          <div class="hud-brand-sub">HUD · performance live</div>
+        </div>
+      </div>
+    </div>
+    <span class="hud-pill" id="hudMode">VERROU</span>
+  </header>
+  <div class="hud-scroll">
+  <div class="hud-metrics">
+    <div class="hud-tile hud-tile--dome" data-metric="dome">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="Dôme"><i data-lucide="orbit"></i></span>
+        <span class="hud-lbl">Dôme</span>
+      </div>
+      <span class="hud-val" id="dome">—</span>
+    </div>
+    <div class="hud-tile hud-tile--sigma" data-metric="sigma">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="Sigma"><i data-lucide="activity"></i></span>
+        <span class="hud-lbl">Sigma Σ</span>
+      </div>
+      <span class="hud-val" id="sigma">—</span>
+    </div>
+    <div class="hud-tile hud-tile--pi" data-metric="pi">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="Rendement π"><i data-lucide="gauge"></i></span>
+        <span class="hud-lbl">Rendement π</span>
+      </div>
+      <span class="hud-val" id="pi">—</span>
+    </div>
+    <div class="hud-tile hud-tile--cpu" data-metric="cpu">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="CPU"><i data-lucide="cpu"></i></span>
+        <span class="hud-lbl">CPU</span>
+      </div>
+      <span class="hud-val" id="cpu">—</span>
+    </div>
+    <div class="hud-tile hud-tile--ram" data-metric="ram">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="RAM"><i data-lucide="memory-stick"></i></span>
+        <span class="hud-lbl">RAM</span>
+      </div>
+      <span class="hud-val" id="ram">—</span>
+    </div>
+    <div class="hud-tile hud-tile--tgt" data-metric="target">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="Cible"><i data-lucide="crosshair"></i></span>
+        <span class="hud-lbl">Cible</span>
+      </div>
+      <span class="hud-val" id="target">—</span>
+    </div>
+    <div class="hud-tile hud-tile--pwr" data-metric="power">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="Puissance"><i data-lucide="zap"></i></span>
+        <span class="hud-lbl">Puissance</span>
+      </div>
+      <span class="hud-val" id="power">—</span>
+    </div>
+    <div class="hud-tile hud-tile--eco" data-metric="energy">
+      <div class="hud-tile-head">
+        <span class="hud-ico" title="Énergie"><i data-lucide="leaf"></i></span>
+        <span class="hud-lbl">Énergie</span>
+      </div>
+      <span class="hud-val" id="energy">—</span>
+    </div>
+  </div>
   </div>
 </div>
 <script>
 function refreshSoulKernelLucide() {
   try {
     if (typeof lucide !== 'undefined' && lucide.createIcons) {
-      lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+      lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });
     }
   } catch (_) {}
 }
@@ -58,20 +369,99 @@ let interactive = false;
 let lastDataSig = '';
 let lastCfgSig = '';
 let lastReadyPing = 0;
+let _hudFitLast = { w: 0, h: 0 };
+let _hudFitTimer = null;
+/** @type {'screen'|'content'|'manual'} */
+let sizeMode = 'screen';
 
-function set(id, v){ const el=document.getElementById(id); if(el) el.textContent = v ?? 'N/A'; }
-function setPreset(p){
-  root.classList.remove('mini','compact','detailed');
+function syncHudLayoutChrome() {
+  const html = document.documentElement;
+  if (sizeMode === 'content') {
+    html.classList.add('hud-compact');
+    html.classList.remove('hud-stretch');
+  } else {
+    html.classList.add('hud-stretch');
+    html.classList.remove('hud-compact');
+  }
+}
+
+function applyMetricVisibility(cfg) {
+  const vm = cfg && cfg.visible_metrics;
+  if (!vm || !Array.isArray(vm)) return;
+  const set = new Set(vm);
+  document.querySelectorAll('.hud-tile[data-metric]').forEach((el) => {
+    const k = el.getAttribute('data-metric');
+    el.style.display = set.has(k) ? '' : 'none';
+  });
+}
+
+function scheduleHudWindowFit() {
+  if (!invoke || !root) return;
+  if (sizeMode !== 'content') return;
+  clearTimeout(_hudFitTimer);
+  _hudFitTimer = setTimeout(async () => {
+    try {
+      const pad = 10;
+      const r = root.getBoundingClientRect();
+      const w = Math.ceil(Math.max(r.width, root.scrollWidth) + pad);
+      const h = Math.ceil(
+        Math.max(r.height, root.scrollHeight, root.offsetHeight) + pad
+      );
+      if (Math.abs(w - _hudFitLast.w) < 2 && Math.abs(h - _hudFitLast.h) < 2) return;
+      _hudFitLast = { w, h };
+      await invoke('set_hud_window_size', { width: w, height: h });
+    } catch (_) {}
+  }, 90);
+}
+
+function runHudFitBurst() {
+  if (sizeMode !== 'content') return;
+  scheduleHudWindowFit();
+  setTimeout(scheduleHudWindowFit, 40);
+  setTimeout(scheduleHudWindowFit, 180);
+  setTimeout(scheduleHudWindowFit, 450);
+}
+
+function set(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v ?? 'N/A';
+}
+function setPreset(p) {
+  root.classList.remove('mini', 'compact', 'detailed');
   root.classList.add(p === 'mini' ? 'mini' : (p === 'detailed' ? 'detailed' : 'compact'));
+  refreshSoulKernelLucide();
+  if (sizeMode === 'content') {
+    _hudFitLast = { w: 0, h: 0 };
+    scheduleHudWindowFit();
+  }
 }
-function setInteractive(on){
-  interactive = !!on;
+function setInteractive(on) {
+  const next = !!on;
+  if (interactive === next) return;
+  interactive = next;
   document.body.classList.toggle('edit', interactive);
-  mode.textContent = interactive ? 'EDIT' : 'LOCK';
+  mode.textContent = interactive ? 'ÉDIT' : 'VERROU';
+  if (sizeMode === 'content') {
+    _hudFitLast = { w: 0, h: 0 };
+    scheduleHudWindowFit();
+  }
 }
-function renderPayload(p){
-  set('dome', p.dome); set('sigma', p.sigma); set('pi', p.pi); set('cpu', p.cpu);
-  set('ram', p.ram); set('target', p.target); set('power', p.power); set('energy', p.energy);
+function setHudOpacity(o) {
+  if (!root) return;
+  const v = Math.max(0.3, Math.min(1, Number(o)));
+  if (!Number.isFinite(v)) return;
+  root.style.setProperty('--hud-opacity', String(v));
+}
+
+function renderPayload(p) {
+  set('dome', p.dome);
+  set('sigma', p.sigma);
+  set('pi', p.pi);
+  set('cpu', p.cpu);
+  set('ram', p.ram);
+  set('target', p.target);
+  set('power', p.power);
+  set('energy', p.energy);
 }
 
 async function refreshHud() {
@@ -88,6 +478,7 @@ async function refreshHud() {
       if (sig !== lastDataSig) {
         lastDataSig = sig;
         renderPayload(data);
+        scheduleHudWindowFit();
       }
     }
   } catch (_) {}
@@ -95,11 +486,27 @@ async function refreshHud() {
   try {
     const cfg = await invoke('get_system_hud_config');
     if (cfg) {
-      const sig = JSON.stringify(cfg);
+      const sig = JSON.stringify({
+        preset: cfg.preset,
+        interactive: cfg.interactive,
+        opacity: cfg.opacity,
+        size_mode: cfg.size_mode,
+        screen_width_pct: cfg.screen_width_pct,
+        screen_height_pct: cfg.screen_height_pct,
+        manual_width: cfg.manual_width,
+        manual_height: cfg.manual_height,
+        visible_metrics: cfg.visible_metrics,
+      });
       if (sig !== lastCfgSig) {
         lastCfgSig = sig;
+        if (cfg.size_mode === 'screen' || cfg.size_mode === 'content' || cfg.size_mode === 'manual') {
+          sizeMode = cfg.size_mode;
+        }
+        syncHudLayoutChrome();
         setPreset(cfg.preset);
         setInteractive(!!cfg.interactive);
+        if (typeof cfg.opacity === 'number') setHudOpacity(cfg.opacity);
+        applyMetricVisibility(cfg);
       }
     }
   } catch (_) {}
@@ -112,10 +519,44 @@ if (drag && t?.window?.getCurrentWindow) {
   });
 }
 
+(async () => {
+  if (t?.event?.listen) {
+    try {
+      await t.event.listen('soulkernel://hud-config', (ev) => {
+        const cfg = ev.payload || {};
+        if (cfg.size_mode === 'screen' || cfg.size_mode === 'content' || cfg.size_mode === 'manual') {
+          sizeMode = cfg.size_mode;
+        }
+        syncHudLayoutChrome();
+        if (cfg.preset) setPreset(cfg.preset);
+        if (typeof cfg.interactive === 'boolean') setInteractive(cfg.interactive);
+        if (typeof cfg.opacity === 'number') setHudOpacity(cfg.opacity);
+        applyMetricVisibility(cfg);
+        runHudFitBurst();
+      });
+    } catch (_) {}
+  }
+})();
+
+syncHudLayoutChrome();
 setPreset('compact');
 setInteractive(false);
+setHudOpacity(0.82);
 setInterval(refreshHud, 250);
 refreshHud();
+if (root && typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => {
+    if (sizeMode === 'content') scheduleHudWindowFit();
+  }).observe(root);
+}
+if (document.readyState === 'complete') {
+  runHudFitBurst();
+} else {
+  window.addEventListener('load', runHudFitBurst);
+}
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => runHudFitBurst());
+});
 </script>
 </body>
 </html>

@@ -14,8 +14,8 @@
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-size:14px;
   min-height:100vh;overflow-x:hidden;}
-header{display:flex;align-items:center;justify-content:space-between;
-  padding:.6rem 1.4rem;background:var(--s1);border-bottom:1px solid var(--border);
+header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem .75rem;
+  padding:.6rem min(1.4rem,3vw);background:var(--s1);border-bottom:1px solid var(--border);
   position:sticky;top:0;z-index:100;}
 .logo{display:flex;align-items:center;gap:.7rem;}
 .logo-img{width:28px;height:28px;object-fit:contain;border-radius:6px;flex-shrink:0;
@@ -24,7 +24,7 @@ header{display:flex;align-items:center;justify-content:space-between;
 .logo-sub{font-size:.6rem;color:var(--muted);letter-spacing:.08em;}
 .no-tauri-banner{background:#8b2635;color:#fff;padding:.5rem 1rem;text-align:center;font-size:.8rem;}
 .no-tauri-banner strong{color:#ffcc00;}
-.status-bar{display:flex;gap:1.2rem;align-items:center;}
+.status-bar{display:flex;gap:.6rem 1rem;align-items:center;flex-wrap:wrap;justify-content:flex-end;min-width:0;}
 .status-pill{padding:.2rem .7rem;border-radius:999px;border:1px solid;
   font-size:.62rem;letter-spacing:.1em;}
 .pill-ok{border-color:var(--io);color:var(--io);}
@@ -36,9 +36,9 @@ header{display:flex;align-items:center;justify-content:space-between;
 .platform-badge{font-size:.55rem;padding:.15rem .6rem;border-radius:999px;
   border:1px solid var(--mem);color:var(--mem);}
 
-main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto auto 1fr auto;
-  gap:1px;background:var(--border);min-height:calc(100vh - 46px);}
-.panel{background:var(--bg);padding:1rem 1.05rem;contain:layout paint style;}
+main{display:grid;grid-template-columns:minmax(200px,260px) minmax(0,1fr) minmax(200px,280px);grid-template-rows:auto auto 1fr auto;
+  gap:1px;background:var(--border);min-height:calc(100vh - 46px);min-width:0;width:100%;}
+.panel{background:var(--bg);padding:1rem 1.05rem;contain:layout paint style;min-width:0;}
 .panel-title{font-size:.66rem;letter-spacing:.14em;color:var(--muted);
   margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--s3);
   display:flex;align-items:center;gap:.45rem;}
@@ -46,17 +46,18 @@ main{display:grid;grid-template-columns:240px 1fr 260px;grid-template-rows:auto 
 .resource-item{margin-bottom:1.1rem;}
 .res-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem;gap:.35rem;}
 .res-header-start{display:flex;align-items:center;gap:.35rem;min-width:0;}
-.res-metric-icon{width:18px;height:18px;flex-shrink:0;border-radius:4px;opacity:.95;}
-.res-metric-icon--cpu{color:var(--cpu);box-shadow:0 0 8px rgba(0,229,255,.3);}
-.res-metric-icon--mem{color:var(--mem);box-shadow:0 0 8px rgba(176,96,255,.28);}
-.res-metric-icon--lam{color:var(--io);box-shadow:0 0 8px rgba(0,255,157,.22);}
-.res-metric-icon--io{color:var(--gpu);box-shadow:0 0 8px rgba(255,179,0,.25);}
-.res-metric-icon--gpu{color:#ff6b6b;box-shadow:0 0 8px rgba(255,107,107,.22);}
+.res-metric-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex-shrink:0;border-radius:4px;opacity:1;}
+.res-metric-icon svg.lucide{filter:drop-shadow(0 0 4px currentColor);}
+.res-metric-icon--cpu{color:var(--cpu);}
+.res-metric-icon--mem{color:var(--mem);}
+.res-metric-icon--lam{color:var(--io);}
+.res-metric-icon--io{color:var(--gpu);}
+.res-metric-icon--gpu{color:#ff6b6b;}
 .res-name{font-size:.65rem;letter-spacing:.08em;}
 .res-val{font-size:.9rem;font-weight:700;}
 .bar-track{height:6px;background:var(--s2);border-radius:2px;overflow:hidden;}
 .bar-fill{height:100%;border-radius:2px;transition:transform .35s cubic-bezier(.4,0,.2,1);position:relative;transform-origin:left center;transform:scaleX(0);will-change:transform;}
-.bar-fill::after{content:';position:absolute;right:0;top:0;bottom:0;width:6px;
+.bar-fill::after{content:'';position:absolute;right:0;top:0;bottom:0;width:6px;
   background:inherit;border-radius:0 2px 2px 0;opacity:.8;}
 .bar-cpu{background:linear-gradient(90deg,#005f6e,var(--cpu));}
 .bar-mem{background:linear-gradient(90deg,#4a1880,var(--mem));}
@@ -275,13 +276,41 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 .green-it-stat{background:var(--s2);border:1px solid var(--border);border-radius:4px;
   padding:.35rem .5rem;text-align:center;}
 .green-it-val{font-size:.85rem;font-weight:700;color:var(--io);}
-.green-it-label{font-size:.46rem;color:var(--muted);margin-top:.1rem;letter-spacing:.08em;}
+.green-it-label{font-size:.52rem;color:var(--muted);margin-top:.12rem;letter-spacing:.06em;line-height:1.25;}
 .green-it-source{display:inline-block;font-size:.5rem;padding:.12rem .45rem;border-radius:999px;
   border:1px solid var(--io);color:var(--io);margin-left:.5rem;}
 .green-it-lifetime{font-size:.56rem;color:var(--text);margin-top:.45rem;line-height:1.5;}
 .green-it-lifetime strong{color:var(--io);}
 .sigma-gauge.green-saving{border-color:var(--io);
   box-shadow:0 0 12px rgba(0,255,157,.15),inset 0 0 8px rgba(0,255,157,.04);}
+
+/* Vue étroite : une colonne, pas de débordement horizontal */
+@media (max-width:1200px){
+  main{grid-template-columns:minmax(160px,1fr) minmax(0,1.15fr) minmax(160px,1fr);}
+  .panel{padding:.85rem min(.95rem,2.5vw);}
+}
+@media (max-width:1050px){
+  main{
+    grid-template-columns:1fr;
+    grid-template-rows:auto;
+    grid-auto-rows:auto;
+  }
+  .panel-left,.panel-center,.panel-workloads,.panel-insights,.panel-right,.panel-bottom{
+    grid-column:1 / -1 !important;
+    grid-row:auto !important;
+  }
+  .panel-right{flex-direction:column;}
+  .insights-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .green-it-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:.45rem;}
+  .workload-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:.35rem;}
+  .dome-bars{grid-template-columns:repeat(5,minmax(0,1fr));}
+}
+@media (max-width:640px){
+  .insights-grid,.green-it-grid{grid-template-columns:1fr;}
+  .workload-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .metrics-row{grid-template-columns:repeat(2,1fr);}
+  .logo-sub{font-size:.54rem;}
+}
 </style>
 </head>
 <body>
@@ -339,7 +368,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="ms-mini-track"><div class="ms-mini-fill ms-mini-fill--mem" id="stripMemFill"></div></div>
   </div>
   <div class="ms-seg">
-    <span class="ms-ico-wrap" style="color:var(--gpu)"><i data-lucide="hard-drive"></i></span>
+    <span class="ms-ico-wrap" style="color:var(--gpu)"><i data-lucide="arrow-down-up"></i></span>
     <span class="ms-label">I/O</span>
     <div class="ms-mini-track"><div class="ms-mini-fill ms-mini-fill--io" id="stripIoFill"></div></div>
   </div>
@@ -402,7 +431,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <span class="res-metric-icon res-metric-icon--lam" title="Λ — compression mémoire (zRAM / swap)"><i data-lucide="lambda"></i></span>
+          <span class="res-metric-icon res-metric-icon--lam" title="Λ — compression mémoire (zRAM / swap)"><i data-lucide="archive"></i></span>
           <span class="res-name" style="color:var(--io)">Λ(t) · COMPRESSION</span>
         </span>
         <span class="res-val" style="color:var(--io)" id="vLAM">—</span>
@@ -414,7 +443,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <span class="res-metric-icon res-metric-icon--io" title="I/O — bande passante disque r(t)"><i data-lucide="hard-drive"></i></span>
+          <span class="res-metric-icon res-metric-icon--io" title="I/O — bande passante disque r(t)"><i data-lucide="arrow-down-up"></i></span>
           <span class="res-name" style="color:var(--gpu)">B<sub>io</sub>(t) · I/O</span>
         </span>
         <span class="res-val" style="color:var(--gpu)" id="vIO">—</span>
@@ -426,7 +455,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
     <div class="resource-item">
       <div class="res-header">
         <span class="res-header-start">
-          <span class="res-metric-icon res-metric-icon--gpu" title="GPU — charge graphique r(t)"><i data-lucide="gpu"></i></span>
+          <span class="res-metric-icon res-metric-icon--gpu" title="GPU — charge graphique r(t)"><i data-lucide="monitor-play"></i></span>
           <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
         </span>
         <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
@@ -793,6 +822,27 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
             <button type="button" class="ctrl-btn btn-secondary" id="btnHudEdit" style="font-size:.62rem;padding:.25rem .45rem"><span class="btn-ico"><i data-lucide="mouse-pointer-2"></i></span> Edition OFF</button>
           </div>
           <div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Ecran HUD</span><select id="hudDisplay" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="">Auto</option></select></div><div class="kappa-row" style="margin-top:.3rem;gap:.4rem"><span class="kappa-name">Preset</span><select id="hudPreset" class="target-select" style="width:130px;padding:.2rem .35rem"><option value="mini">Mini</option><option value="compact" selected>Compact</option><option value="detailed">Detaille</option></select></div>
+          <div class="kappa-row" style="margin-top:.3rem;gap:.4rem;align-items:center;flex-wrap:wrap"><span class="kappa-name">Taille</span><select id="hudSizeMode" class="target-select" style="width:150px;padding:.2rem .35rem" title="Ecran % = pourcentage de la resolution native de l’ecran HUD selectionne"><option value="screen">% ecran actif</option><option value="content">Contenu (ajuste)</option><option value="manual">Manuel (px)</option></select></div>
+          <div id="hudSizeScreen">
+            <div class="kappa-row" style="margin-top:.25rem;gap:.4rem;align-items:center"><span class="kappa-name">Largeur</span><input id="hudScreenW" type="range" min="8" max="50" step="1" value="22" style="width:120px"><span class="kappa-num" id="hudScreenWNum" style="color:var(--cpu);min-width:2.5rem">22%</span></div>
+            <div class="kappa-row" style="margin-top:.2rem;gap:.4rem;align-items:center"><span class="kappa-name">Hauteur</span><input id="hudScreenH" type="range" min="8" max="50" step="1" value="28" style="width:120px"><span class="kappa-num" id="hudScreenHNum" style="color:var(--cpu);min-width:2.5rem">28%</span></div>
+            <div class="target-hint" id="hudActiveResHint" style="margin-top:.2rem;font-size:.58rem;line-height:1.35">Ecran actif : —</div>
+          </div>
+          <div id="hudSizeManual" style="display:none">
+            <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">L (px)</span><input id="hudManW" type="number" min="240" max="1600" value="420" class="target-select" style="width:92px;padding:.2rem .35rem"></div>
+            <div class="kappa-row" style="margin-top:.2rem;gap:.4rem"><span class="kappa-name">H (px)</span><input id="hudManH" type="number" min="120" max="1200" value="260" class="target-select" style="width:92px;padding:.2rem .35rem"></div>
+          </div>
+          <div class="kappa-row" style="margin-top:.35rem"><span class="kappa-name">Metriques</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.15rem .45rem;font-size:.58rem;margin-top:.12rem;line-height:1.35">
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="dome" checked> Dome</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="sigma" checked> Sigma</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="pi" checked> Pi</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="cpu" checked> CPU</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="ram" checked> RAM</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="target" checked> Cible</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="power" checked> Puissance</label>
+            <label class="target-auto"><input type="checkbox" class="hud-metric-cb" data-metric="energy" checked> Energie</label>
+          </div>
           <div class="kappa-row" style="margin-top:.25rem;gap:.4rem"><span class="kappa-name">Opacite</span><input id="hudOpacity" type="range" min="0.30" max="1" step="0.05" value="0.82" style="width:130px"><span class="kappa-num" id="hudOpacityNum" style="color:var(--cpu)">82%</span></div>
           <div class="target-hint" style="margin-top:.2rem">Raccourcis : Alt+Shift+H (toggle), Alt+Shift+J (édition pointeur).</div>
         </div>
@@ -1057,7 +1107,7 @@ function initTauri() {
   rawInvoke = invokeFn;
   const banner = document.getElementById('noTauriBanner');
   if (banner) banner.style.display = 'none';
-  log('Tauri runtime connect� � m�triques r�elles', 'ok');
+  log('Tauri connecté — métriques réelles (backend natif)', 'ok');
   rawInvoke('get_audit_log_path').then(p => {
     state.auditLogPath = p;
     log('Audit JSONL: ' + p, 'ok');
@@ -1149,7 +1199,14 @@ let state = {
   hudPreset: 'compact',
   hudDisplayIndex: null,
   hudOpacity: 0.82,
+  hudSizeMode: 'screen',
+  hudScreenWidthPct: 22,
+  hudScreenHeightPct: 28,
+  hudManualWidth: 420,
+  hudManualHeight: 260,
+  hudVisibleMetrics: ['dome', 'sigma', 'pi', 'cpu', 'ram', 'target', 'power', 'energy'],
 };
+const HUD_METRIC_DEFAULTS = ['dome', 'sigma', 'pi', 'cpu', 'ram', 'target', 'power', 'energy'];
 const MAX_DOME_HISTORY = 30;
 const PROCESS_REFRESH_MS = 7000;
 const ADAPTIVE_WORKLOAD_CONFIRM_CYCLES = 3;
@@ -1247,9 +1304,18 @@ async function poll() {
       const na = v => (v != null ? String(v) : 'N/A');
       const memUsed = (r.mem_used_mb / 1024).toFixed(2);
       const memTotal = (r.mem_total_mb / 1024).toFixed(2);
-      log(`M�triques r�cup�r�es � ${r.platform}`, 'ok');
-      log(`  CPU: ${r.cpu_pct.toFixed(1)}% | RAM: ${memUsed}/${memTotal} GB | swap: ${r.swap_used_mb}/${r.swap_total_mb} MB`, 'info');
-      log(`  zram: ${na(r.zram_used_mb)} MB | I/O R/W: ${na(r.io_read_mb_s)}/${na(r.io_write_mb_s)} MB/s | GPU: ${na(r.gpu_pct)}% | PSI cpu/mem: ${na(r.psi_cpu != null ? (r.psi_cpu*100).toFixed(1) : null)}%/${na(r.psi_mem != null ? (r.psi_mem*100).toFixed(1) : null)}%`, 'info');
+      const sigma = (m.sigma != null ? Number(m.sigma).toFixed(3) : '—');
+      const psi = (r.psi_cpu != null && r.psi_mem != null)
+        ? `${(r.psi_cpu * 100).toFixed(0)} % / ${(r.psi_mem * 100).toFixed(0)} %`
+        : 'n/a';
+      log(
+        `Métriques OK · ${r.platform} · CPU ${r.cpu_pct.toFixed(1)} % · RAM ${memUsed}/${memTotal} Go · σ=${sigma} · PSI ${psi}`,
+        'ok',
+      );
+      log(
+        `Détail (1 ligne) — swap ${r.swap_used_mb}/${r.swap_total_mb} Mo · zRAM ${na(r.zram_used_mb)} Mo · I/O R/W ${na(r.io_read_mb_s)}/${na(r.io_write_mb_s)} Mo/s · GPU ${na(r.gpu_pct)} %`,
+        'info',
+      );
     }
     // Detect machine activity state
     state.machineActivity = detectMachineActivity(m);
@@ -2181,7 +2247,7 @@ async function refreshProcesses(options = {}) {
     setProcessRefreshInfo();
 
     if (userInitiated || list.length !== state.lastProcessCount) {
-      log(`Liste processus: ${list.length} entrees`, 'ok');
+      log(`Liste processus : ${list.length} entrées`, 'ok');
     }
     state.lastProcessCount = list.length;
   } catch (e) {
@@ -2227,6 +2293,14 @@ function saveRuntimeSettings() {
       hudPreset: state.hudPreset,
       hudDisplayIndex: state.hudDisplayIndex,
       hudOpacity: Number(state.hudOpacity || 0.82),
+      hudSizeMode: state.hudSizeMode || 'screen',
+      hudScreenWidthPct: Number(state.hudScreenWidthPct) || 22,
+      hudScreenHeightPct: Number(state.hudScreenHeightPct) || 28,
+      hudManualWidth: Number(state.hudManualWidth) || 420,
+      hudManualHeight: Number(state.hudManualHeight) || 260,
+      hudVisibleMetrics: Array.isArray(state.hudVisibleMetrics) && state.hudVisibleMetrics.length
+        ? state.hudVisibleMetrics.slice()
+        : HUD_METRIC_DEFAULTS.slice(),
     }));
   } catch (_) {}
 }
@@ -2253,6 +2327,14 @@ function loadRuntimeSettings() {
     if (cfg.hudPreset === 'mini' || cfg.hudPreset === 'compact' || cfg.hudPreset === 'detailed') state.hudPreset = cfg.hudPreset;
     if (typeof cfg.hudDisplayIndex === 'number' || cfg.hudDisplayIndex === null) state.hudDisplayIndex = cfg.hudDisplayIndex;
     if (typeof cfg.hudOpacity === 'number') state.hudOpacity = Math.max(0.3, Math.min(1.0, cfg.hudOpacity));
+    if (cfg.hudSizeMode === 'screen' || cfg.hudSizeMode === 'content' || cfg.hudSizeMode === 'manual') {
+      state.hudSizeMode = cfg.hudSizeMode;
+    }
+    if (typeof cfg.hudScreenWidthPct === 'number') state.hudScreenWidthPct = Math.max(8, Math.min(50, cfg.hudScreenWidthPct));
+    if (typeof cfg.hudScreenHeightPct === 'number') state.hudScreenHeightPct = Math.max(8, Math.min(50, cfg.hudScreenHeightPct));
+    if (typeof cfg.hudManualWidth === 'number') state.hudManualWidth = Math.max(240, Math.min(1600, cfg.hudManualWidth));
+    if (typeof cfg.hudManualHeight === 'number') state.hudManualHeight = Math.max(120, Math.min(1200, cfg.hudManualHeight));
+    if (Array.isArray(cfg.hudVisibleMetrics) && cfg.hudVisibleMetrics.length) state.hudVisibleMetrics = cfg.hudVisibleMetrics.filter(Boolean);
   } catch (_) {}
 }
 
@@ -3094,7 +3176,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '1.0.1',
+      version: '1.0.2',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -3419,6 +3501,7 @@ if (hudDisplayEl) {
     if (hasTauri && state.hudVisible) {
       try { await invoke('set_system_hud_display', { display_index: state.hudDisplayIndex }); } catch (_) {}
     }
+    try { await updateHudActiveResHint(); } catch (_) {}
     saveRuntimeSettings();
   });
 }
@@ -3491,6 +3574,7 @@ async function setHudVisible(on) {
   if (!HUD_ONLY && hasTauri) {
     try {
       if (state.hudVisible) {
+        await applyHudPresentation();
         await invoke('open_system_hud');
         await invoke('set_system_hud_display', { display_index: state.hudDisplayIndex });
       }
@@ -3582,6 +3666,128 @@ function applyHudPresetClass(target, preset) {
   target.classList.add(preset === 'mini' ? 'hud-mini' : (preset === 'detailed' ? 'hud-detailed' : 'hud-compact'));
 }
 
+function buildHudPresentationPayload() {
+  const vm = (state.hudVisibleMetrics && state.hudVisibleMetrics.length)
+    ? state.hudVisibleMetrics.slice()
+    : HUD_METRIC_DEFAULTS.slice();
+  return {
+    preset: state.hudPreset,
+    opacity: Number(state.hudOpacity || 0.82),
+    size_mode: state.hudSizeMode || 'screen',
+    screen_width_pct: Number(state.hudScreenWidthPct) || 22,
+    screen_height_pct: Number(state.hudScreenHeightPct) || 28,
+    manual_width: Number(state.hudManualWidth) || 420,
+    manual_height: Number(state.hudManualHeight) || 260,
+    visible_metrics: vm,
+  };
+}
+
+function readHudVisibleMetricsFromDom() {
+  const cbs = document.querySelectorAll('.hud-metric-cb');
+  const out = [];
+  cbs.forEach((cb) => {
+    if (cb.checked) out.push(cb.dataset.metric);
+  });
+  return out.length ? out : HUD_METRIC_DEFAULTS.slice();
+}
+
+function syncHudSizePanels() {
+  const mode = state.hudSizeMode || 'screen';
+  const screenEl = document.getElementById('hudSizeScreen');
+  const manualEl = document.getElementById('hudSizeManual');
+  if (screenEl) screenEl.style.display = mode === 'screen' ? '' : 'none';
+  if (manualEl) manualEl.style.display = mode === 'manual' ? '' : 'none';
+}
+
+function syncHudPanelFromState() {
+  const sm = document.getElementById('hudSizeMode');
+  if (sm) sm.value = state.hudSizeMode || 'screen';
+  const sw = document.getElementById('hudScreenW');
+  const swn = document.getElementById('hudScreenWNum');
+  const wv = Math.max(8, Math.min(50, Number(state.hudScreenWidthPct) || 22));
+  if (sw) sw.value = String(wv);
+  if (swn) swn.textContent = wv + '%';
+  const sh = document.getElementById('hudScreenH');
+  const shn = document.getElementById('hudScreenHNum');
+  const hv = Math.max(8, Math.min(50, Number(state.hudScreenHeightPct) || 28));
+  if (sh) sh.value = String(hv);
+  if (shn) shn.textContent = hv + '%';
+  const mw = document.getElementById('hudManW');
+  const mh = document.getElementById('hudManH');
+  if (mw) mw.value = String(Math.max(240, Math.min(1600, Number(state.hudManualWidth) || 420)));
+  if (mh) mh.value = String(Math.max(120, Math.min(1200, Number(state.hudManualHeight) || 260)));
+  const set = new Set(state.hudVisibleMetrics && state.hudVisibleMetrics.length ? state.hudVisibleMetrics : HUD_METRIC_DEFAULTS);
+  document.querySelectorAll('.hud-metric-cb').forEach((cb) => {
+    cb.checked = set.has(cb.dataset.metric);
+  });
+  syncHudSizePanels();
+}
+
+async function updateHudActiveResHint() {
+  const hint = document.getElementById('hudActiveResHint');
+  if (!hint || !hasTauri) return;
+  try {
+    const list = await invoke('list_displays');
+    if (!list || !list.length) {
+      hint.textContent = 'Ecran actif : —';
+      return;
+    }
+    let d = null;
+    if (state.hudDisplayIndex != null) d = list.find(x => x.index === state.hudDisplayIndex);
+    if (!d) d = list.find(x => x.is_primary) || list[0];
+    if (!d) return;
+    const sf = (d.scale_factor != null) ? Number(d.scale_factor).toFixed(2) : '?';
+    const wp = Math.round(Number(state.hudScreenWidthPct) || 22);
+    const hp = Math.round(Number(state.hudScreenHeightPct) || 28);
+    hint.textContent = 'Ecran ref. : ' + d.width + '×' + d.height + ' px, echelle ' + sf + ' — fenetre ~ ' + wp + '% × ' + hp + '% de cette surface (mode % ecran).';
+  } catch (_) {}
+}
+
+function wireHudLayoutControls() {
+  const sm = document.getElementById('hudSizeMode');
+  if (sm) {
+    sm.addEventListener('change', () => {
+      state.hudSizeMode = sm.value === 'content' || sm.value === 'manual' ? sm.value : 'screen';
+      syncHudSizePanels();
+      applyHudPresentation();
+    });
+  }
+  const sw = document.getElementById('hudScreenW');
+  const swn = document.getElementById('hudScreenWNum');
+  if (sw && swn) {
+    sw.addEventListener('input', () => {
+      state.hudScreenWidthPct = Math.max(8, Math.min(50, parseInt(sw.value, 10) || 22));
+      swn.textContent = state.hudScreenWidthPct + '%';
+    });
+    sw.addEventListener('change', () => applyHudPresentation());
+  }
+  const sh = document.getElementById('hudScreenH');
+  const shn = document.getElementById('hudScreenHNum');
+  if (sh && shn) {
+    sh.addEventListener('input', () => {
+      state.hudScreenHeightPct = Math.max(8, Math.min(50, parseInt(sh.value, 10) || 28));
+      shn.textContent = state.hudScreenHeightPct + '%';
+    });
+    sh.addEventListener('change', () => applyHudPresentation());
+  }
+  const mw = document.getElementById('hudManW');
+  const mh = document.getElementById('hudManH');
+  if (mw) mw.addEventListener('change', () => {
+    state.hudManualWidth = Math.max(240, Math.min(1600, parseInt(mw.value, 10) || 420));
+    applyHudPresentation();
+  });
+  if (mh) mh.addEventListener('change', () => {
+    state.hudManualHeight = Math.max(120, Math.min(1200, parseInt(mh.value, 10) || 260));
+    applyHudPresentation();
+  });
+  document.querySelectorAll('.hud-metric-cb').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      state.hudVisibleMetrics = readHudVisibleMetricsFromDom();
+      applyHudPresentation();
+    });
+  });
+}
+
 async function refreshHudDisplays() {
   const sel = document.getElementById('hudDisplay');
   if (!sel) return;
@@ -3598,11 +3804,15 @@ async function refreshHudDisplays() {
     });
     sel.value = (prev == null ? '' : String(prev));
     if (sel.value === '' && prev != null) state.hudDisplayIndex = null;
+    await updateHudActiveResHint();
   } catch (_) {}
 }
 async function applyHudPresentation() {
   state.hudPreset = (state.hudPreset === 'mini' || state.hudPreset === 'detailed') ? state.hudPreset : 'compact';
   state.hudOpacity = Math.max(0.3, Math.min(1.0, Number(state.hudOpacity || 0.82)));
+  if (document.querySelectorAll('.hud-metric-cb').length) {
+    state.hudVisibleMetrics = readHudVisibleMetricsFromDom();
+  }
 
   const h = document.getElementById('compactHud');
   applyHudPresetClass(h, state.hudPreset);
@@ -3614,7 +3824,7 @@ async function applyHudPresentation() {
 
   if (!HUD_ONLY && hasTauri && state.hudVisible) {
     try {
-      await invoke('set_system_hud_preset', { preset: state.hudPreset, opacity: state.hudOpacity });
+      await invoke('set_system_hud_presentation', { payload: buildHudPresentationPayload() });
     } catch (_) {}
   }
   saveRuntimeSettings();
@@ -3751,15 +3961,27 @@ setInterval(() => {
 
 function log(msg, lvl='info') {
   const panel = document.getElementById('logPanel');
+  if (!panel) return;
   const ts = new Date().toTimeString().slice(0,8);
   const clsMap = {ok:'lvl-ok',warn:'lvl-warn',info:'lvl-info',err:'lvl-err'};
   const lblMap = {ok:'OK ',warn:'WRN',info:'INF',err:'ERR'};
   const entry = document.createElement('div');
   entry.className = 'log-entry';
-  entry.innerHTML = `<span class="log-ts">${ts}</span><span class="log-lvl ${clsMap[lvl]}">${lblMap[lvl]}</span><span class="log-msg">${msg}</span>`;
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'log-ts';
+  tsSpan.textContent = ts;
+  const lvlSpan = document.createElement('span');
+  lvlSpan.className = 'log-lvl ' + (clsMap[lvl] || 'lvl-info');
+  lvlSpan.textContent = lblMap[lvl] || 'INF';
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'log-msg';
+  msgSpan.textContent = String(msg);
+  entry.append(tsSpan, lvlSpan, msgSpan);
   panel.prepend(entry);
-  while (panel.children.length > 60) panel.removeChild(panel.lastChild);
-  auditEmit('ui_log', 'panel', lvl, { message: String(msg) });
+  while (panel.children.length > 80) panel.removeChild(panel.lastChild);
+  if (lvl === 'err' || lvl === 'warn') {
+    auditEmit('ui_log', 'panel', lvl, { message: String(msg) });
+  }
 }
 
 // ─── Mode navigateur (hors Tauri) : pas de métriques réelles, pas de simulation ──
@@ -3877,6 +4099,7 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'set_system_hud_data') return Promise.resolve(null);
   if (cmd === 'set_system_hud_interactive') return Promise.resolve(null);
   if (cmd === 'set_system_hud_preset') return Promise.resolve(null);
+  if (cmd === 'set_system_hud_presentation') return Promise.resolve(null);
   if (cmd === 'set_system_hud_display') return Promise.resolve(null);
   return Promise.reject('unknown command');
 }
@@ -3890,9 +4113,12 @@ function fallbackInvoke(cmd, args) {
   }
   loadRuntimeSettings();
   setViewMode(state.viewMode);
+  syncHudPanelFromState();
+  wireHudLayoutControls();
   applyHudPresentation();
   setHudInteractive(!!state.hudInteractive);
   setHudVisible(!!state.hudVisible);
+  if (hasTauri) { try { await refreshHudDisplays(); } catch (_) {} }
   try { await invoke('set_policy_mode', { mode: state.policyMode }); } catch (_) {}
   loadDomeHistory();
   log('SoulKernel demarre - ' + (hasTauri ? 'Tauri runtime (metriques reelles)' : 'Hors Tauri - lancez cargo tauri dev pour les metriques'), hasTauri ? 'ok' : 'warn');
