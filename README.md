@@ -32,7 +32,7 @@ SoulKernel/
 ├── scripts/
 │   ├── rocky-tauri-dev.sh       ← Rocky 9 : shell dans l’image Fedora Tauri (voir § Dev)
 │   ├── Containerfile.fedora-tauri
-│   ├── trusted-sign.ps1         ← Azure Trusted Signing (bundles Windows signés en CI)
+│   ├── trusted-sign.ps1         ← modèle optionnel (Trusted Signing / CI signé, si tu configures)
 │   └── cargo-msvc.example.cmd  ← Modèle MSVC Windows (copier en `cargo-msvc.cmd` local, voir .gitignore)
 ├── gen/schemas/         ← Schémas Tauri (référence outils / IDE)
 ├── icons/               ← icon.ico, icon.png
@@ -52,7 +52,7 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
   git push origin v1.0.0
   ```
   Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
-- **Signature Windows (Azure Trusted Signing)** : cible ~**10 $/mois** (petit compte [Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/overview)). Le pipeline installe `trusted-signing-cli` et appelle `scripts/trusted-sign.ps1` (voir `bundle.windows.signCommand` dans `tauri.conf.json`). Définir des **secrets** GitHub Actions : `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` (application Azure), `AZURE_CODE_SIGNING_ENDPOINT` (ex. `https://<région>.codesigning.azure.net`), `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`, `AZURE_CERTIFICATE_PROFILE_NAME`. Guide rapide : [Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/quickstart), [trusted-signing-cli](https://github.com/Levminer/trusted-signing-cli). **Build local sans compte Azure** : `cargo tauri build --no-sign`.
+- **Windows — signature** : les [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont construites avec **`--no-sign`** tant qu’aucun certificat n’est dans le dépôt (pas d’avertissement côté CI). **Build local** : `cargo tauri build --no-sign` si tu n’as pas encore de certificat. Quand tu auras un **certificat OV** ou un compte **Trusted Signing** éligible, tu pourras retirer `--no-sign` dans `.github/workflows/release.yml`, réactiver `bundle.windows.signCommand` / thumbprint dans `tauri.conf.json` et utiliser le modèle `scripts/trusted-sign.ps1` si besoin.
 - **MCP Cursor** (autonomie agent, docs, GitHub optionnel) : `.cursor/mcp.json` et `.cursor/README-MCP.md` — indexation légère : `.cursorignore` + `@codebase` dans le chat.
 
 ## Téléchargements — confiance et sécurité par OS

@@ -24,7 +24,8 @@ jobs:
           - platform: ubuntu-latest
             args: ''
           - platform: windows-latest
-            args: ''
+            # Pas de certificat dans les secrets GitHub : build non signé (voir README).
+            args: '--no-sign'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -48,21 +49,10 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version '^2.0' --locked
 
-      # Azure Trusted Signing (~10 $/mois) : https://learn.microsoft.com/azure/trusted-signing/
-      - name: Install trusted-signing-cli (Windows)
-        if: matrix.platform == 'windows-latest'
-        run: cargo install trusted-signing-cli --version '^0.9' --locked
-
       # Pas de tag « v1 » sur le dépôt ; dernière ligne stable v0.x (mars 2026).
       - uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CODE_SIGNING_ENDPOINT: ${{ secrets.AZURE_CODE_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
         with:
           tagName: v__VERSION__
           releaseName: 'SoulKernel v__VERSION__'

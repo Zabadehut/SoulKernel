@@ -24,19 +24,6 @@
                             ]
             },
     "bundle":  {
-                   "windows":  {
-                                   "signCommand":  {
-                                                       "args":  [
-                                                                    "-NoProfile",
-                                                                    "-ExecutionPolicy",
-                                                                    "Bypass",
-                                                                    "-File",
-                                                                    "scripts/trusted-sign.ps1",
-                                                                    "%1"
-                                                                ],
-                                                       "cmd":  "powershell.exe"
-                                                   }
-                               },
                    "active":  true,
                    "icon":  [
                                 "icons/png/icon_16x16.png",
