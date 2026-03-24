@@ -2,11 +2,18 @@
     "$schema":  "https://schema.tauri.app/config/2",
     "identifier":  "dev.soulkernel.app",
     "productName":  "SoulKernel",
-    "version":  "1.0.2",
+    "version":  "1.1.0",
     "build":  {
-                  "beforeBuildCommand":  "",
-                  "beforeDevCommand":  "",
-                  "frontendDist":  "ui"
+                  "beforeBuildCommand":  {
+                                            "script":  "npm run build",
+                                            "cwd":  "ui"
+                                        },
+                  "beforeDevCommand":  {
+                                           "script":  "npm run dev",
+                                           "cwd":  "ui"
+                                       },
+                  "devUrl":  "http://localhost:5173",
+                  "frontendDist":  "ui/dist"
               },
     "app":  {
                 "withGlobalTauri":  true,

@@ -21,6 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: UI — npm ci + vite build
+        run: |
+          npm ci --prefix ui
+          npm run build --prefix ui
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

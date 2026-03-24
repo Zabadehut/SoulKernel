@@ -27,7 +27,10 @@ SoulKernel/
 │       ├── windows.rs   ← Job Objects, affinity, powercfg
 │       └── macos.rs     ← QoS, pmset, IOKit
 ├── ui/
-│   ├── index.html       ← UI embarquée (Tauri `frontendDist`, sans bundler npm)
+│   ├── package.json     ← Vite 6 + Svelte 5 (`npm run dev` / `npm run build` → `ui/dist`)
+│   ├── index.html       ← entrée Vite (fenêtre principale)
+│   ├── hud.html         ← entrée Vite (overlay HUD)
+│   ├── src/             ← `App.svelte`, styles, logique UI (bootstrap legacy en TS)
 │   ├── hud.html         ← HUD overlay window
 │   ├── styles/
 │   │   └── design-tokens.css  ← tokens + styles Lucide (.lucide)
@@ -51,10 +54,10 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
 ## Développement
 
 - **CI multi-OS** : `.github/workflows/ci.yml` exécute `cargo clippy` et `cargo test` sur Ubuntu (dépendances WebKit Tauri), Windows et macOS. Ce workflow **ne crée pas** de page [Releases](https://github.com/Zabadehut/SoulKernel/releases) ni n’y dépose de fichiers — il ne fait que valider le code à chaque push/PR.
-- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.0.2` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
+- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.1.0` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
   ```bash
-  git tag v1.0.2   # adapter à la version du manifeste
-  git push origin v1.0.2
+  git tag v1.1.0   # adapter à la version du manifeste
+  git push origin v1.1.0
   ```
   Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
 - **Windows — signature** : les [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont construites avec **`--no-sign`** tant qu’aucun certificat n’est dans le dépôt (pas d’avertissement côté CI). **Build local** : `cargo tauri build --no-sign` si tu n’as pas encore de certificat. Quand tu auras un **certificat OV** ou un compte **Trusted Signing** éligible, tu pourras retirer `--no-sign` dans `.github/workflows/release.yml`, réactiver `bundle.windows.signCommand` / thumbprint dans `tauri.conf.json` et utiliser le modèle `scripts/trusted-sign.ps1` si besoin.
@@ -157,6 +160,14 @@ sudo dnf install -y pkgconf-pkg-config gcc gcc-c++ make cmake patchelf openssl-d
 # plus récente ou s’appuyer sur le conteneur Fedora pour builder/lancer localement.
 ```
 
+### Prérequis Node.js (obligatoire pour `cargo tauri dev`)
+
+L’UI est servie par **Vite** (`beforeDevCommand` = `npm --prefix ui run dev`). Sans `npm` dans le `PATH`, Tauri échoue immédiatement.
+
+- **Rocky / RHEL / Alma 9 (hôte)** : `sudo dnf install -y nodejs npm`, puis une fois dans le dépôt : `npm ci --prefix ui` (ou `npm install --prefix ui`).
+- **Image Fedora Tauri** (`scripts/Containerfile.fedora-tauri`) : **Node + npm** sont installés dans l’image ; après un pull qui modifie le `Containerfile`, refaire un `podman build …` puis **`npm ci --prefix ui`** dans `/work` au premier lancement.
+- **Windows / macOS** : installer Node depuis [nodejs.org](https://nodejs.org/) ou votre gestionnaire habituel, puis `npm ci --prefix ui`.
+
 ### Dev
 ```bash
 cargo tauri dev
@@ -165,17 +176,27 @@ cargo tauri dev
 cargo run
 ```
 
-**UI 100 % offline** : icônes via `ui/vendor/lucide.min.js` (aucun CDN au runtime). Mise à jour du bundle : `./scripts/sync-lucide-ui.sh` (réseau uniquement pour régénérer le fichier). Typo : pile monospace système, sans Google Fonts.
+**UI 100 % offline** : Lucide via `ui/public/vendor/lucide.min.js` (aucun CDN au runtime). Mise à jour du bundle : `./scripts/sync-lucide-ui.sh` (copier le fichier généré vers `ui/public/vendor/`). Typo : pile monospace système, sans Google Fonts.
 
 **Rocky 9 / EL9 — GUI Tauri + itération sur `ui/`** : sur l’hôte, **`cargo tauri dev` ne peut pas linker** WebKit (glib système &lt; 2.70). Ce n’est pas une limite de ton code : il faut exécuter le **même dépôt** dans une couche où glib/WebKit sont récents. Le flux le plus direct :
 
 1. Une fois : `podman build -f scripts/Containerfile.fedora-tauri -t soulkernel-tauri-dev .`
 2. À chaque session : `./scripts/rocky-tauri-dev.sh` (monte le repo, réseau = hôte, X11 pour afficher la fenêtre sur ton bureau Rocky).
-3. Dans le conteneur : **`cargo tauri dev`** (Rust et `tauri-cli` sont installés dans l’image ; refaire un `podman build …` si tu as une ancienne image sans toolchain). Tu édites `ui/` **sur Rocky** : le watcher recharge la webview quand les fichiers changent. Ne relance pas `./scripts/rocky-tauri-dev.sh` depuis l’intérieur du conteneur — ce script est réservé à l’hôte.
+3. Dans le conteneur : **`npm ci --prefix ui`** (première fois ou après changement des deps), puis **`cargo tauri dev`**. Tu édites `ui/` **sur Rocky** : le watcher recharge la webview quand les fichiers changent. Ne relance pas `./scripts/rocky-tauri-dev.sh` depuis l’intérieur du conteneur — ce script est réservé à l’hôte.
 
-Si plus tard tu ajoutes un bundler (Vite, etc.) avec `devUrl` dans `tauri.conf.json`, tu pourras faire tourner le serveur de dev sur l’hôte et pointer la webview du conteneur vers `http://127.0.0.1:…` grâce à `--network host`.
+Si tu lances **`cargo tauri dev` sur l’hôte Rocky** (hors conteneur) avec une stack WebKit assez récente, installe quand même **Node + npm** comme ci-dessus pour satisfaire `beforeDevCommand`.
 
 **GTK / « Failed to initialize GTK » dans le conteneur** : en général l’hôte n’autorise pas le **root** du conteneur sans cookie X11. Le script monte `~/.Xauthority` et force `GDK_BACKEND=x11`. Lance `./scripts/rocky-tauri-dev.sh` **sans** `sudo` depuis ta session graphique si possible. Si **SELinux** bloque encore le socket : `TAURI_PODMAN_LABEL_DISABLE=1 ./scripts/rocky-tauri-dev.sh` (uniquement en dev).
+
+**Panique `Failed to initialize gtk backend!` / `Failed to initialize GTK`** (souvent juste après `Running target/debug/soulkernel`) : la WebView **ne démarre pas** car aucun affichage n’est utilisable.
+
+| Situation | Piste |
+|-----------|--------|
+| Tu es **root** dans le conteneur Fedora sans avoir passé par `rocky-tauri-dev.sh` | Utiliser le script depuis l’hôte (il configure `DISPLAY`, `XAUTHORITY`, `GDK_BACKEND=x11`). |
+| **Pas de variable `DISPLAY`** (SSH sans `-X`, session tty, serveur sans GUI) | Te connecter en session graphique locale, ou `export DISPLAY=:0` (ou l’écran correct) + droits X11 (`xhost +SI:localuser:root` en dernier recours, **dev seulement**). |
+| Tu lances `cargo tauri dev` **sur l’hôte Rocky** sans Wayland/X11 fonctionnel | Préférer le flux **conteneur Fedora + rocky-tauri-dev** (WebKit récent + X11 vers ton bureau). |
+
+Vite (`npm run dev`) peut être **OK** alors que le binaire Rust plante : le serveur front n’a pas besoin de GTK ; seul le processus Tauri en a besoin.
 
 **Windows (MSVC)** : si `cargo` ne trouve pas les outils de lien, ouvrir une *Developer Command Prompt* ou s’inspirer de `scripts/cargo-msvc.example.cmd` (copie locale `cargo-msvc.cmd`, ignorée par git).
 

@@ -1,0 +1,267 @@
+/* hud-stretch : % ecran / manuel — #hudRoot remplit la WebView (plus de trou noir). hud-compact : mode contenu + auto-taille fenetre. */
+*{box-sizing:border-box;margin:0;padding:0}
+html.hud-compact,html.hud-compact body{
+  height:auto;
+  min-height:0;
+  width:100%;
+}
+html.hud-compact body{display:block}
+html.hud-stretch,html.hud-stretch body{
+  height:100%;
+  width:100%;
+  min-height:0;
+}
+html.hud-stretch body{
+  display:flex;
+  flex-direction:column;
+}
+html{
+  display:block;
+  width:100%;
+  background:transparent !important;
+}
+body{
+  margin:0;
+  background:transparent !important;
+  color:var(--text);
+  overflow:hidden;
+  font-size:13px;
+  -webkit-font-smoothing:antialiased;
+}
+
+.hud{
+  --hud-pad:0.65rem 0.75rem;
+  --hud-radius:8px;
+  --hud-line:rgba(0,212,255,.14);
+  /* Opacité = fond uniquement (texte + bordure nets ; pas de fade global sur tout le bloc) */
+  --hud-opacity:0.82;
+  position:relative;
+  isolation:isolate;
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  padding:var(--hud-pad);
+  pointer-events:none;
+  border-radius:var(--hud-radius);
+  background:linear-gradient(
+    145deg,
+    rgba(15,22,38,calc(0.97 * var(--hud-opacity))) 0%,
+    rgba(8,12,20,calc(0.94 * var(--hud-opacity))) 100%
+  );
+  border:1px solid var(--border);
+  box-shadow:
+    0 0 0 1px rgba(0,212,255,.1),
+    0 8px 32px rgba(0,0,0,.4),
+    inset 0 1px 0 rgba(255,255,255,.05);
+  backdrop-filter:blur(10px);
+}
+body.edit .hud{
+  pointer-events:auto;
+  border-color:rgba(0,212,255,.45);
+  box-shadow:
+    0 0 0 1px rgba(0,212,255,.35),
+    0 16px 48px rgba(0,0,0,.5),
+    inset 0 1px 0 rgba(0,212,255,.12);
+}
+
+.hud-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:0.5rem;
+  padding-bottom:0.55rem;
+  margin-bottom:0.45rem;
+  border-bottom:1px solid var(--hud-line);
+  flex-shrink:0;
+  width:100%;
+  min-width:0;
+}
+.hud-brand{
+  display:flex;
+  align-items:center;
+  gap:0.45rem;
+  min-width:0;
+}
+.hud-brand-mark{
+  width:8px;
+  height:8px;
+  border-radius:2px;
+  background:linear-gradient(135deg,var(--cpu),var(--mem));
+  box-shadow:0 0 10px rgba(0,212,255,.4);
+  flex-shrink:0;
+}
+.hud-brand-text{min-width:0}
+.hud-brand-name{
+  font-size:0.62rem;
+  font-weight:700;
+  letter-spacing:0.14em;
+  color:var(--hi);
+  text-transform:uppercase;
+  line-height:1.2;
+}
+.hud-brand-sub{
+  font-size:0.52rem;
+  letter-spacing:0.06em;
+  color:var(--muted);
+  margin-top:0.12rem;
+}
+.hud-pill{
+  font-size:0.5rem;
+  font-weight:700;
+  letter-spacing:0.12em;
+  padding:0.2rem 0.45rem;
+  border-radius:999px;
+  border:1px solid var(--dim);
+  color:var(--muted);
+  background:rgba(0,0,0,.25);
+  flex-shrink:0;
+}
+body.edit .hud-pill{
+  border-color:var(--cpu);
+  color:var(--cpu);
+  background:rgba(0,212,255,.08);
+}
+
+.hud-drag{
+  cursor:default;
+  user-select:none;
+  flex:1;
+  min-width:0;
+}
+body.edit .hud-drag{cursor:move}
+
+html.hud-compact .hud{flex:0 0 auto}
+html.hud-stretch .hud{flex:1;min-height:0}
+
+/* Défilement : en stretch la zone scroll prend le reste sous le header (grille en haut). */
+.hud-scroll{
+  width:100%;
+  min-width:0;
+  min-height:0;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
+html.hud-compact .hud-scroll{flex:0 0 auto;max-height:32rem}
+html.hud-stretch .hud-scroll{flex:1;max-height:none}
+.hud-scroll::-webkit-scrollbar{width:6px}
+.hud-scroll::-webkit-scrollbar-track{background:rgba(0,0,0,.2);border-radius:3px}
+.hud-scroll::-webkit-scrollbar-thumb{background:rgba(0,212,255,.28);border-radius:3px}
+.hud-scroll{scrollbar-width:thin;scrollbar-color:rgba(0,212,255,.35) rgba(0,0,0,.2)}
+
+.hud-metrics{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:0.38rem 0.65rem;
+  align-content:start;
+  width:100%;
+  min-width:0;
+}
+
+.hud-tile{
+  display:flex;
+  flex-direction:column;
+  gap:0.2rem;
+  padding:0.42rem 0.5rem;
+  border-radius:8px;
+  background:rgba(0,0,0,.22);
+  border:1px solid rgba(26,51,85,.6);
+  min-width:0;
+  transition:border-color .15s, box-shadow .15s;
+}
+body.edit .hud-tile:hover{
+  border-color:rgba(0,212,255,.25);
+}
+
+.hud-tile-head{
+  display:flex;
+  align-items:center;
+  gap:0.35rem;
+}
+.hud-ico{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:16px;
+  height:16px;
+  flex-shrink:0;
+  border-radius:4px;
+  color:inherit;
+  opacity:0.95;
+}
+.hud-ico svg.lucide{
+  width:14px;
+  height:14px;
+  stroke-width:1.75;
+}
+.hud-lbl{
+  font-size:0.52rem;
+  font-weight:600;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
+  color:var(--muted);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.hud-val{
+  font-size:0.72rem;
+  font-weight:600;
+  font-variant-numeric:tabular-nums;
+  color:var(--text);
+  line-height:1.25;
+  word-break:break-word;
+}
+
+/* Couleurs sémantiques (icône + valeur) */
+.hud-tile--dome{--tile-accent:var(--io)}
+.hud-tile--sigma{--tile-accent:var(--stress)}
+.hud-tile--pi{--tile-accent:var(--cpu)}
+.hud-tile--cpu{--tile-accent:var(--cpu)}
+.hud-tile--ram{--tile-accent:var(--mem)}
+.hud-tile--tgt{--tile-accent:var(--muted)}
+.hud-tile--pwr{--tile-accent:var(--gpu)}
+.hud-tile--eco{--tile-accent:var(--io)}
+
+.hud-tile--dome .hud-ico,
+.hud-tile--sigma .hud-ico,
+.hud-tile--pi .hud-ico,
+.hud-tile--cpu .hud-ico,
+.hud-tile--ram .hud-ico,
+.hud-tile--tgt .hud-ico,
+.hud-tile--pwr .hud-ico,
+.hud-tile--eco .hud-ico{
+  color:var(--tile-accent);
+  background:rgba(255,255,255,.03);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.hud-tile--dome .hud-val{color:var(--io)}
+.hud-tile--sigma .hud-val{color:var(--stress)}
+.hud-tile--pi .hud-val{color:var(--cpu)}
+.hud-tile--cpu .hud-val{color:var(--cpu)}
+.hud-tile--ram .hud-val{color:var(--mem)}
+.hud-tile--tgt .hud-val{color:var(--text)}
+.hud-tile--pwr .hud-val{color:var(--gpu)}
+.hud-tile--eco .hud-val{color:var(--io)}
+
+/* Presets — hauteurs variables : le défilement .hud-metrics évite le contenu coupé */
+.hud.mini{--hud-pad:0.4rem 0.45rem}
+.hud.mini .hud-brand-name{font-size:0.56rem}
+.hud.mini .hud-brand-sub{font-size:0.48rem;display:none}
+.hud.mini .hud-val{font-size:clamp(0.58rem,2.8vmin,0.66rem)}
+.hud.mini .hud-lbl{font-size:0.46rem}
+.hud.mini .hud-metrics{gap:0.24rem 0.4rem}
+.hud.mini .hud-tile{padding:0.32rem 0.4rem}
+.hud.mini .hud-ico svg.lucide{width:12px;height:12px}
+.hud.mini .hud-ico{width:14px;height:14px}
+.hud.mini .hud-header{padding-bottom:0.4rem;margin-bottom:0.35rem}
+
+.hud.compact .hud-val{font-size:clamp(0.64rem,3.2vmin,0.74rem)}
+
+.hud.detailed .hud-metrics{grid-template-columns:1fr}
+.hud.detailed .hud-tile{flex-direction:row;align-items:center;justify-content:space-between}
+.hud.detailed .hud-tile-head{flex:1;min-width:0}
+.hud.detailed .hud-val{text-align:right;max-width:58%;font-size:clamp(0.72rem,3vmin,0.82rem)}

@@ -214,7 +214,7 @@ async fn set_soulram(
     if enabled {
         let p = percent.unwrap_or(20).clamp(5, 60);
         let actions = platform::enable_soulram(p).await;
-        let activated = actions.iter().any(|(_, ok)| *ok);
+        let activated = platform::soulram_enablement_effective(&actions);
         {
             let mut s = shared.lock().unwrap();
             s.soulram_active = activated;

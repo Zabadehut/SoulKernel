@@ -150,6 +150,23 @@ pub async fn disable_soulram() -> Vec<(String, bool)> {
     vec![("SoulRAM not supported on this platform".into(), false)]
 }
 
+/// Indique si au moins une action SoulRAM a eu un effet réel (hors libellés purement informatifs).
+/// Sur Windows, la ligne « SoulRAM target ratio » et les notes MemoryPolicy (cooldown) ne comptent pas.
+pub fn soulram_enablement_effective(actions: &[(String, bool)]) -> bool {
+    actions.iter().any(|(msg, ok)| {
+        if !*ok {
+            return false;
+        }
+        if msg.contains("SoulRAM target ratio") {
+            return false;
+        }
+        if msg.contains("MemoryPolicy:") {
+            return false;
+        }
+        true
+    })
+}
+
 /// Returns a normalized memory-optimizer capability factor in [0,1].
 /// Higher means the OS/runtime can reclaim memory more effectively right now.
 pub fn memory_optimizer_factor() -> f64 {

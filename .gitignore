@@ -10,6 +10,8 @@
 /src-tauri/target/
 /dist/
 /build/
+/ui/node_modules/
+/ui/dist/
 
 # --- Logs / runtime data ---
 *.log

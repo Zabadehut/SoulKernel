@@ -4,7 +4,7 @@
 - [Leave blank — user populates]
 
 ## Overview
-SoulKernel est un orchestrateur **Performance Dome** cross‑plateforme (Tauri + Rust). Il pilote les paramètres noyau/OS (CPU, RAM, I/O, GPU) selon un profil de charge (workload) et une formule de rendement π(t). Interface : une seule page HTML (zero deps) dans `ui/`.
+SoulKernel est un orchestrateur **Performance Dome** cross‑plateforme (Tauri + Rust). Il pilote les paramètres noyau/OS (CPU, RAM, I/O, GPU) selon un profil de charge (workload) et une formule de rendement π(t). Interface : **Vite 6 + Svelte 5** dans `ui/` (`npm run dev` / build → `ui/dist`) ; le markup historique est injecté via `App.svelte` + `bootstrap.ts` le temps de migrer panneau par panneau vers des composants Svelte.
 
 ## Architecture
 
