@@ -123,6 +123,12 @@ function logBenchGainsHuman(summary) {
   if (summary.gain_gpu_median_pct != null && Number.isFinite(Number(summary.gain_gpu_median_pct))) {
     parts.push('GPU Δ ' + Number(summary.gain_gpu_median_pct).toFixed(1) + '%');
   }
+  if (summary.gain_power_median_pct != null && Number.isFinite(Number(summary.gain_power_median_pct))) {
+    parts.push('puissance Δ ' + Number(summary.gain_power_median_pct).toFixed(1) + '%');
+  }
+  if (summary.gain_sigma_median_pct != null && Number.isFinite(Number(summary.gain_sigma_median_pct))) {
+    parts.push('stress Δ ' + Number(summary.gain_sigma_median_pct).toFixed(1) + '%');
+  }
   log('GAIN A/B (sonde KPI) — ' + parts.join(' · '), 'ok');
   auditEmit('benchmark', 'gains_summary', 'ok', {
     gain_median_pct: summary.gain_median_pct != null ? Number(summary.gain_median_pct) : null,
@@ -130,6 +136,9 @@ function logBenchGainsHuman(summary) {
     gain_mem_median_pct: summary.gain_mem_median_pct != null ? Number(summary.gain_mem_median_pct) : null,
     gain_cpu_median_pct: summary.gain_cpu_median_pct != null ? Number(summary.gain_cpu_median_pct) : null,
     gain_gpu_median_pct: summary.gain_gpu_median_pct != null ? Number(summary.gain_gpu_median_pct) : null,
+    gain_power_median_pct: summary.gain_power_median_pct != null ? Number(summary.gain_power_median_pct) : null,
+    gain_sigma_median_pct: summary.gain_sigma_median_pct != null ? Number(summary.gain_sigma_median_pct) : null,
+    efficiency_score: summary.efficiency_score != null ? Number(summary.efficiency_score) : null,
   });
 }
 
@@ -341,12 +350,17 @@ function scheduleMetricRender(m) {
     const renderKey = JSON.stringify([
       Number(mm.raw?.cpu_pct || 0).toFixed(1),
       Number(mm.raw?.cpu_clock_mhz || 0).toFixed(0),
+      Number(mm.raw?.cpu_max_clock_mhz || 0).toFixed(0),
+      Number(mm.raw?.cpu_temp_c || 0).toFixed(1),
       Number(mm.raw?.mem_used_mb || 0),
       Number(mm.raw?.ram_clock_mhz || 0).toFixed(0),
       Number(mm.sigma || 0).toFixed(3),
+      Number(mm.raw?.load_avg_1m_norm || 0).toFixed(2),
       Number(mm.raw?.gpu_pct || 0).toFixed(1),
       Number(mm.raw?.gpu_core_clock_mhz || 0).toFixed(0),
       Number(mm.raw?.gpu_mem_clock_mhz || 0).toFixed(0),
+      Number(mm.raw?.gpu_temp_c || 0).toFixed(1),
+      Number(mm.raw?.gpu_power_watts || 0).toFixed(1),
       Number(mm.raw?.io_read_mb_s || 0).toFixed(2),
       Number(mm.raw?.io_write_mb_s || 0).toFixed(2),
       state.domeActive,
@@ -513,10 +527,14 @@ function renderTuningAdvice(m) {
     kappa: Number(learned.recommended_kappa),
     sigmaMax: Number(learned.recommended_sigma_max),
     eta: Number(learned.recommended_eta),
+    policyMode: String(learned.recommended_policy_mode || state.policyMode || 'privileged'),
+    soulRamPercent: clamp(Number(learned.recommended_soulram_percent || state.soulRamPercent || 20), 10, 60),
   } : {
     kappa: state.kappa,
     sigmaMax: state.sigmaMax,
     eta: state.eta,
+    policyMode: state.policyMode,
+    soulRamPercent: state.soulRamPercent,
   };
   const next = { ...base };
   let reason = learned
@@ -529,6 +547,14 @@ function renderTuningAdvice(m) {
     reason = learned
       ? 'Stress eleve: durcir temporairement le profil benchmark'
       : 'Stress eleve: renforcer la stabilite';
+  } else if (learned && Number(learned.expected_efficiency_score || 0) >= 4.0 && m.sigma <= 0.55) {
+    next.eta = clamp(Math.max(state.eta, base.eta) + 0.02, 0.01, 0.5);
+    next.sigmaMax = clamp(Math.max(state.sigmaMax, base.sigmaMax) + 0.02, 0.3, 0.95);
+    reason = 'Benchmark efficient: elargir legerement la fenetre autour du meilleur profil';
+  } else if (learned && Number(learned.expected_efficiency_score || 0) <= -1.5) {
+    next.kappa = clamp(Math.max(state.kappa, base.kappa) + 0.2, 0.5, 5.0);
+    next.eta = clamp(Math.min(state.eta, base.eta) - 0.02, 0.01, 0.5);
+    reason = 'Benchmark prudent: reduire la poussée automatique';
   } else if (dominantKey === 'cpu' && dominantVal >= 0.65) {
     next.eta = clamp(Math.max(state.eta, base.eta) + 0.03, 0.01, 0.5);
     reason = learned
@@ -563,6 +589,12 @@ function renderTuningAdvice(m) {
         learned.expected_gain_median_pct == null ? '' : ` | gain median ${Number(learned.expected_gain_median_pct).toFixed(1)}%`
       }${
         learned.expected_gain_p95_pct == null ? '' : ` | p95 ${Number(learned.expected_gain_p95_pct).toFixed(1)}%`
+      }${
+        learned.expected_efficiency_score == null ? '' : ` | eff ${Number(learned.expected_efficiency_score).toFixed(2)}`
+      }${
+        learned.recommended_policy_mode ? ` | policy ${String(learned.recommended_policy_mode).toUpperCase()}` : ''
+      }${
+        learned.recommended_soulram_percent != null ? ` | SoulRAM ${Number(learned.recommended_soulram_percent)}%` : ''
       }.`
     : '';
 
@@ -681,6 +713,27 @@ function computeAbSummary(samples) {
   const gpuOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.gpu_after_pct)).map(s => Number(s.gpu_after_pct));
   const cpuOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.cpu_after_pct)).map(s => Number(s.cpu_after_pct));
   const cpuOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.cpu_after_pct)).map(s => Number(s.cpu_after_pct));
+  const powerOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.power_after_watts)).map(s => Number(s.power_after_watts));
+  const powerOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.power_after_watts)).map(s => Number(s.power_after_watts));
+  const sigmaOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.sigma_effective_after)).map(s => Number(s.sigma_effective_after));
+  const sigmaOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.sigma_effective_after)).map(s => Number(s.sigma_effective_after));
+  const cpuTempOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.cpu_temp_after_c)).map(s => Number(s.cpu_temp_after_c));
+  const cpuTempOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.cpu_temp_after_c)).map(s => Number(s.cpu_temp_after_c));
+  const gpuTempOff = samples.filter(s => s.phase === 'off' && s.success && numOk(s.gpu_temp_after_c)).map(s => Number(s.gpu_temp_after_c));
+  const gpuTempOn = samples.filter(s => s.phase === 'on' && s.success && numOk(s.gpu_temp_after_c)).map(s => Number(s.gpu_temp_after_c));
+
+  const gainPower = gainLowerIsBetterMedians(powerOff, powerOn, 1);
+  const gainSigma = gainLowerIsBetterMedians(sigmaOff, sigmaOn, 0.05);
+  const gainCpuTemp = gainLowerIsBetterMedians(cpuTempOff, cpuTempOn, 1);
+  const gainGpuTemp = gainLowerIsBetterMedians(gpuTempOff, gpuTempOn, 1);
+  const efficiencyScore =
+    (Number(gainMedianPct || 0) * 0.45) +
+    (Number(gainP95Pct || 0) * 0.20) +
+    (Number(gainLowerIsBetterMedians(memOff, memOn, 0.05) || 0) * 0.08) +
+    (Number(gainLowerIsBetterMedians(gpuOff, gpuOn, 1) || 0) * 0.07) +
+    (Number(gainLowerIsBetterMedians(cpuOff, cpuOn, 2) || 0) * 0.07) +
+    (Number(gainPower || 0) * 0.08) +
+    (Number(gainSigma || 0) * 0.05);
 
   return {
     samples_off_ok: off.length,
@@ -694,6 +747,11 @@ function computeAbSummary(samples) {
     gain_mem_median_pct: gainLowerIsBetterMedians(memOff, memOn, 0.05),
     gain_gpu_median_pct: gainLowerIsBetterMedians(gpuOff, gpuOn, 1),
     gain_cpu_median_pct: gainLowerIsBetterMedians(cpuOff, cpuOn, 2),
+    gain_power_median_pct: gainPower,
+    gain_sigma_median_pct: gainSigma,
+    gain_cpu_temp_median_pct: gainCpuTemp,
+    gain_gpu_temp_median_pct: gainGpuTemp,
+    efficiency_score: efficiencyScore,
   };
 }
 
@@ -712,6 +770,8 @@ function renderAbSummary(summary) {
     fg('gain_mem_median_pct') != null ? `RAM ${f(fg('gain_mem_median_pct'))}%` : null,
     fg('gain_gpu_median_pct') != null ? `GPU ${f(fg('gain_gpu_median_pct'))}%` : null,
     fg('gain_cpu_median_pct') != null ? `CPU ${f(fg('gain_cpu_median_pct'))}%` : null,
+    fg('gain_power_median_pct') != null ? `W ${f(fg('gain_power_median_pct'))}%` : null,
+    fg('gain_sigma_median_pct') != null ? `Sigma ${f(fg('gain_sigma_median_pct'))}%` : null,
   ].filter(Boolean);
   const resSuffix = resBits.length ? ` | apres sonde (med.): ${resBits.join(' · ')}` : '';
   el.textContent =
@@ -722,8 +782,9 @@ function renderAbSummary(summary) {
   const verdictEl = document.getElementById('benchmarkVerdict');
   if (verdictEl) {
     const gain = Number(summary.gain_median_pct ?? 0);
+    const eff = fg('efficiency_score');
     const verdict = gain > 3 ? 'Gain net' : (gain < -3 ? 'Regression' : 'Neutre');
-    verdictEl.textContent = `${verdict} | median=${f(summary.gain_median_pct)}% | p95=${f(summary.gain_p95_pct)}%`;
+    verdictEl.textContent = `${verdict} | median=${f(summary.gain_median_pct)}% | p95=${f(summary.gain_p95_pct)}% | score=${eff == null ? 'N/A' : eff.toFixed(2)}`;
   }
 }
 
@@ -736,12 +797,15 @@ function renderBenchmarkLearning(advice) {
   }
   const gain = advice.expected_gain_median_pct == null ? 'N/A' : Number(advice.expected_gain_median_pct).toFixed(1) + '%';
   const gainP95 = advice.expected_gain_p95_pct == null ? 'N/A' : Number(advice.expected_gain_p95_pct).toFixed(1) + '%';
+  const eff = advice.expected_efficiency_score == null ? 'N/A' : Number(advice.expected_efficiency_score).toFixed(2);
+  const policy = String(advice.recommended_policy_mode || 'privileged').toUpperCase();
+  const soulram = advice.recommended_soulram_percent == null ? 'N/A' : `${Number(advice.recommended_soulram_percent)}%`;
   const conf = Math.round(Number(advice.confidence || 0) * 100);
   el.textContent =
     `Apprentissage benchmark: κ=${Number(advice.recommended_kappa).toFixed(1)} ` +
     `Σmax=${Number(advice.recommended_sigma_max).toFixed(2)} ` +
     `η=${Number(advice.recommended_eta).toFixed(2)} | ` +
-    `gain median=${gain} | p95=${gainP95} | score=${Number(advice.composite_score || 0).toFixed(2)} | confiance=${conf}% | echantillons=${advice.sample_size}`;
+    `policy=${policy} | SoulRAM=${soulram} | gain median=${gain} | p95=${gainP95} | efficiency=${eff} | score=${Number(advice.composite_score || 0).toFixed(2)} | confiance=${conf}% | echantillons=${advice.sample_size}`;
 }
 
 function renderBenchmarkTop(topSessions) {
@@ -770,13 +834,25 @@ function applyBenchmarkLearning(advice, sourceLabel = 'benchmark-history') {
   state.kappa = Number(advice.recommended_kappa);
   state.sigmaMax = Number(advice.recommended_sigma_max);
   state.eta = Number(advice.recommended_eta);
+  state.policyMode = (advice.recommended_policy_mode === 'safe' || advice.recommended_policy_mode === 'privileged')
+    ? advice.recommended_policy_mode
+    : state.policyMode;
+  state.soulRamPercent = clamp(Number(advice.recommended_soulram_percent || state.soulRamPercent || 20), 10, 60);
   setSlidersFromState();
+  const policySel = document.getElementById('policyMode');
+  if (policySel) policySel.value = state.policyMode;
+  const soulRamSlider = document.getElementById('soulRamPct');
+  if (soulRamSlider) soulRamSlider.value = String(state.soulRamPercent);
+  const soulRamPctLabel = document.getElementById('soulRamPctLabel');
+  if (soulRamPctLabel) soulRamPctLabel.textContent = `${state.soulRamPercent}%`;
   if (state.lastMetrics) renderFormula(state.lastMetrics);
   renderBenchmarkLearning(advice);
   log(
     'Benchmark learning applique: κ=' + state.kappa.toFixed(1) +
     ' sigmaMax=' + state.sigmaMax.toFixed(2) +
     ' eta=' + state.eta.toFixed(2) +
+    ' policy=' + state.policyMode +
+    ' soulram=' + state.soulRamPercent + '%' +
     ' (' + sourceLabel + ')',
     'info'
   );
@@ -1013,6 +1089,8 @@ function deriveAdaptiveTarget(m, currentWl) {
   const gpu = Number(m.gpu || 0);
   const io = Number(m.io_bandwidth || 0);
   const memPressure = clamp(1.0 - Number(m.mem || 0), 0, 1);
+  const learned = state.kpiBench?.tuningAdvice || null;
+  const effLearned = Number(learned?.expected_efficiency_score ?? 0);
 
   let wl = currentWl || 'es';
   if (gpu >= 0.52) wl = 'gamer';
@@ -1021,13 +1099,41 @@ function deriveAdaptiveTarget(m, currentWl) {
   else if (memPressure >= 0.82) wl = 'oracle';
   else if (gpu <= 0.30 && io <= 0.35 && cpu <= 0.62 && memPressure <= 0.65) wl = 'es';
 
-  const kappa = clamp(1.0 + sigma * 3.2 + memPressure * 0.8, 0.8, 4.8);
-  const sigmaMax = clamp(0.86 - sigma * 0.22, 0.55, 0.9);
-  const eta = clamp(0.34 - sigma * 0.24 + (cpu >= 0.7 ? 0.05 : 0), 0.08, 0.4);
-  const policyMode = (sigma > 0.82 || memPressure > 0.88) ? 'safe' : 'privileged';
-  const soulRamPercent = clamp(Math.round(15 + memPressure * 35), 10, 55);
+  const baseKappa = learned ? Number(learned.recommended_kappa) : 2.0;
+  const baseSigmaMax = learned ? Number(learned.recommended_sigma_max) : 0.75;
+  const baseEta = learned ? Number(learned.recommended_eta) : 0.15;
+  const efficiencyBias = clamp((effLearned - 1.5) / 12.0, -0.12, 0.12);
 
-  return { wl, kappa, sigmaMax, eta, policyMode, soulRamPercent, memPressure, sigma };
+  const kappa = clamp(baseKappa + sigma * 1.6 + memPressure * 0.45 - efficiencyBias * 0.8, 0.8, 4.8);
+  const sigmaMax = clamp(baseSigmaMax + 0.03 - sigma * 0.12 - memPressure * 0.06 + efficiencyBias * 0.15, 0.55, 0.9);
+  const eta = clamp(baseEta + 0.08 - sigma * 0.10 + (cpu >= 0.7 ? 0.04 : 0) + (io >= 0.55 ? 0.02 : 0) + efficiencyBias * 0.35, 0.08, 0.4);
+  const basePolicyMode = learned && (learned.recommended_policy_mode === 'safe' || learned.recommended_policy_mode === 'privileged')
+    ? learned.recommended_policy_mode
+    : 'privileged';
+  const baseSoulRamPercent = learned
+    ? clamp(Number(learned.recommended_soulram_percent || 20), 10, 60)
+    : 20;
+
+  const policyMode = (sigma > 0.82 || memPressure > 0.88 || effLearned < -1.0)
+    ? 'safe'
+    : (basePolicyMode === 'safe' && sigma > 0.68 ? 'safe' : 'privileged');
+  const soulRamPercent = clamp(
+    Math.round(baseSoulRamPercent + memPressure * 18 + (effLearned >= 3 ? 4 : 0) - (sigma > 0.8 ? 6 : 0)),
+    10,
+    55
+  );
+
+  return {
+    wl,
+    kappa,
+    sigmaMax,
+    eta,
+    policyMode,
+    soulRamPercent,
+    memPressure,
+    sigma,
+    learnedEfficiency: effLearned,
+  };
 }
 
 async function runAdaptiveController(m) {
@@ -1156,6 +1262,7 @@ async function runAbBenchmark() {
         eta: state.eta,
         target_pid: state.targetPid,
         policy_mode: state.policyMode,
+        soulram_percent: state.soulRamPercent,
         settle_ms: 1200,
       },
     });
@@ -1683,11 +1790,21 @@ function renderMetrics(m) {
   set('rawPsiMem',   opt(m.raw.psi_mem, v => (v*100).toFixed(1)+'%'));
   set('rawCpuPct',   m.raw.cpu_pct.toFixed(1)+'%');
   set('rawCpuClock', opt(m.raw.cpu_clock_mhz, v => v.toFixed(0)+' MHz'));
+  set('rawCpuMaxClock', opt(m.raw.cpu_max_clock_mhz, v => v.toFixed(0)+' MHz'));
+  set('rawCpuFreqRatio', opt(m.raw.cpu_freq_ratio, v => (v*100).toFixed(1)+'%'));
+  set('rawCpuTemp',  opt(m.raw.cpu_temp_c, v => v.toFixed(1)+' C'));
   set('rawRamClock', opt(m.raw.ram_clock_mhz, v => v.toFixed(0)+' MHz'));
+  set('rawLoadAvg',  opt(m.raw.load_avg_1m_norm, v => v.toFixed(2)+' x/core'));
+  set('rawRunnable', opt(m.raw.runnable_tasks, v => String(v)));
   set('rawIoRw',     (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null) ? `${m.raw.io_read_mb_s.toFixed(3)}/${m.raw.io_write_mb_s.toFixed(3)} MB/s` : na);
   set('rawGpuPct',   opt(m.raw.gpu_pct, v => v.toFixed(2)+'%'));
   set('rawGpuCoreClock', opt(m.raw.gpu_core_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawGpuMemClock', opt(m.raw.gpu_mem_clock_mhz, v => v.toFixed(0)+' MHz'));
+  set('rawGpuTemp',  opt(m.raw.gpu_temp_c, v => v.toFixed(1)+' C'));
+  set('rawGpuPower', opt(m.raw.gpu_power_watts, v => v.toFixed(1)+' W'));
+  set('rawGpuVram',  (m.raw.gpu_mem_used_mb != null && m.raw.gpu_mem_total_mb != null)
+    ? `${Number(m.raw.gpu_mem_used_mb)} / ${Number(m.raw.gpu_mem_total_mb)} MiB`
+    : na);
   set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W'));
   set('rawWebviewCpu', (m.raw.webview_host_cpu_sum != null && m.raw.webview_host_cpu_sum !== undefined)
     ? (Number(m.raw.webview_host_cpu_sum).toFixed(1) + ' Σ%')
@@ -1759,9 +1876,43 @@ function renderFormula(m) {
   const r     = [m.cpu, m.mem, m.compression ?? 0, m.io_bandwidth ?? 0, m.gpu ?? 0];
   const eps   = m.epsilon;
 
-  const brut    = alpha.reduce((s,a,i) => s + a*r[i], 0);
-  const fric    = alpha.reduce((p,a,i) => p * Math.pow(Math.max(0,1-eps[i]), a), 1);
-  const brake   = Math.exp(-state.kappa * m.sigma);
+  const cpuFreqRatio = Number(m.raw?.cpu_freq_ratio ?? NaN);
+  const cpuHeadroom = Number.isFinite(cpuFreqRatio) ? Math.max(0, 1 - cpuFreqRatio) : Math.max(0, 1 - Number(m.cpu || 0));
+  const memHeadroom = Math.max(0, Math.min(1, Number(m.mem || 0)));
+  const ioHeadroom = Math.max(0, 1 - Number(m.io_bandwidth ?? 0));
+  const gpuHeadroom = Math.max(0, 1 - Number(m.gpu ?? 0));
+  const uiPenalty = Math.min(0.25, Math.max(0, Number(m.raw?.webview_host_cpu_sum ?? 0) / 100));
+  const opportunity = Math.max(0.70, Math.min(1.35,
+    0.85 + 0.40 * (
+      alpha[0] * cpuHeadroom +
+      alpha[1] * memHeadroom +
+      alpha[3] * ioHeadroom +
+      alpha[4] * gpuHeadroom
+    ) - 0.20 * uiPenalty
+  ));
+
+  const cpuHot = Number.isFinite(Number(m.raw?.cpu_temp_c)) ? Math.max(0, Math.min(1, (Number(m.raw.cpu_temp_c) - 80) / 18)) : 0;
+  const gpuHot = Number.isFinite(Number(m.raw?.gpu_temp_c)) ? Math.max(0, Math.min(1, (Number(m.raw.gpu_temp_c) - 76) / 16)) : 0;
+  const vramPressure = (m.raw?.gpu_mem_used_mb != null && Number(m.raw?.gpu_mem_total_mb || 0) > 0)
+    ? Math.max(0, Math.min(1, Number(m.raw.gpu_mem_used_mb) / Number(m.raw.gpu_mem_total_mb)))
+    : 0;
+  const loadPressure = Number.isFinite(Number(m.raw?.load_avg_1m_norm))
+    ? Math.max(0, Math.min(1, (Number(m.raw.load_avg_1m_norm) - 0.9) / 1.3))
+    : 0;
+  const advancedGuard = Math.max(0.45, Math.min(1,
+    1 - 0.30 * cpuHot - 0.25 * gpuHot - 0.18 * Math.max(alpha[4] * vramPressure, alpha[0] * loadPressure)
+  ));
+
+  const sigmaEffective = Math.max(0, Math.min(1,
+    Number(m.sigma || 0) +
+    0.16 * (Number.isFinite(Number(m.raw?.load_avg_1m_norm)) ? Math.max(0, Math.min(1, (Number(m.raw.load_avg_1m_norm) - 1.0) / 1.5)) : 0) +
+    0.12 * ((Number(m.raw?.gpu_power_watts ?? 0) / 220) * alpha[4]) +
+    0.10 * ((Math.max(0, Number(m.raw?.runnable_tasks ?? 0) - 2) / 10) * alpha[0])
+  ));
+
+  const brut    = Math.min(1.2, alpha.reduce((s,a,i) => s + a*r[i], 0) * opportunity);
+  const fric    = Math.min(1, alpha.reduce((p,a,i) => p * Math.pow(Math.max(0,1-eps[i]), a), 1) * advancedGuard);
+  const brake   = Math.exp(-state.kappa * sigmaEffective);
   const pi      = brut * fric * brake;
 
   state.lastPi = pi;
@@ -2142,7 +2293,8 @@ function buildSessionReportText() {
     lines.push('Metriques');
     lines.push('CPU: ' + r.cpu_pct.toFixed(1) + '% | RAM: ' + (r.mem_used_mb / 1024).toFixed(2) + '/' + (r.mem_total_mb / 1024).toFixed(2) + ' GB');
     lines.push('Swap: ' + r.swap_used_mb + '/' + r.swap_total_mb + ' MB | Sigma: ' + state.lastMetrics.sigma.toFixed(3));
-    lines.push('Clocks: CPU=' + (r.cpu_clock_mhz != null ? Number(r.cpu_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | RAM=' + (r.ram_clock_mhz != null ? Number(r.ram_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | GPU core=' + (r.gpu_core_clock_mhz != null ? Number(r.gpu_core_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | GPU mem=' + (r.gpu_mem_clock_mhz != null ? Number(r.gpu_mem_clock_mhz).toFixed(0) + ' MHz' : 'N/A'));
+    lines.push('Clocks: CPU=' + (r.cpu_clock_mhz != null ? Number(r.cpu_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' / max=' + (r.cpu_max_clock_mhz != null ? Number(r.cpu_max_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | RAM=' + (r.ram_clock_mhz != null ? Number(r.ram_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | GPU core=' + (r.gpu_core_clock_mhz != null ? Number(r.gpu_core_clock_mhz).toFixed(0) + ' MHz' : 'N/A') + ' | GPU mem=' + (r.gpu_mem_clock_mhz != null ? Number(r.gpu_mem_clock_mhz).toFixed(0) + ' MHz' : 'N/A'));
+    lines.push('Advanced: CPU temp=' + (r.cpu_temp_c != null ? Number(r.cpu_temp_c).toFixed(1) + ' C' : 'N/A') + ' | load1/core=' + (r.load_avg_1m_norm != null ? Number(r.load_avg_1m_norm).toFixed(2) : 'N/A') + ' | runnable=' + na(r.runnable_tasks) + ' | GPU temp=' + (r.gpu_temp_c != null ? Number(r.gpu_temp_c).toFixed(1) + ' C' : 'N/A') + ' | GPU power=' + (r.gpu_power_watts != null ? Number(r.gpu_power_watts).toFixed(1) + ' W' : 'N/A'));
     lines.push('Plateforme: ' + r.platform);
 
     lines.push('');
@@ -2303,7 +2455,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '1.1.1',
+      version: '1.1.2',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -3127,9 +3279,11 @@ function fallbackInvoke(cmd, args) {
       sigma: 0, epsilon: [0,0,0,0,0],
       raw: {
         cpu_pct: 0, cpu_clock_mhz: null, mem_used_mb: 0, mem_total_mb: 0, ram_clock_mhz: null,
+        cpu_max_clock_mhz: null, cpu_freq_ratio: null, cpu_temp_c: null,
         swap_used_mb: 0, swap_total_mb: 0,
         zram_used_mb: null, io_read_mb_s: null, io_write_mb_s: null,
-        gpu_pct: null, gpu_core_clock_mhz: null, gpu_mem_clock_mhz: null, power_watts: null, psi_cpu: null, psi_mem: null,
+        gpu_pct: null, gpu_core_clock_mhz: null, gpu_mem_clock_mhz: null, gpu_temp_c: null, gpu_power_watts: null, gpu_mem_used_mb: null, gpu_mem_total_mb: null,
+        power_watts: null, psi_cpu: null, psi_mem: null, load_avg_1m_norm: null, runnable_tasks: null,
         platform: 'Hors Tauri — lancez cargo tauri dev',
       }
       });
@@ -3178,6 +3332,18 @@ function fallbackInvoke(cmd, args) {
         cpu_after_pct: off ? 44 : 37,
         mem_before_gb: off ? 8.5 : 8.8,
         mem_after_gb: off ? 8.6 : 8.9,
+        gpu_before_pct: off ? 31 : 27,
+        gpu_after_pct: off ? 32 : 26,
+        io_before_mb_s: off ? 420 : 360,
+        io_after_mb_s: off ? 430 : 340,
+        power_before_watts: off ? 118 : 105,
+        power_after_watts: off ? 121 : 101,
+        cpu_temp_before_c: off ? 68 : 64,
+        cpu_temp_after_c: off ? 70 : 63,
+        gpu_temp_before_c: off ? 66 : 61,
+        gpu_temp_after_c: off ? 67 : 60,
+        sigma_effective_before: off ? 0.33 : 0.27,
+        sigma_effective_after: off ? 0.35 : 0.26,
         stdout_tail: 'fallback',
         stderr_tail: '',
       });
@@ -3196,6 +3362,7 @@ function fallbackInvoke(cmd, args) {
       eta: Number(request.eta || 0.2),
       target_pid: request.target_pid || null,
       policy_mode: request.policy_mode || 'privileged',
+      soulram_percent: request.soulram_percent || state.soulRamPercent || 20,
       samples,
       summary: computeAbSummary(samples),
     });
