@@ -189,6 +189,7 @@ mod tests {
                 gpu_core_clock_mhz: None,
                 gpu_mem_clock_mhz: None,
                 power_watts: None,
+                power_watts_source: None,
                 psi_cpu: None,
                 psi_mem: None,
                 on_battery: None,

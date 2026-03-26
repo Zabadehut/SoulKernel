@@ -54,6 +54,9 @@ pub struct RawMetrics {
     pub gpu_mem_clock_mhz: Option<f64>,
     /// System power draw from host power meter (Watts). None = unavailable.
     pub power_watts: Option<f64>,
+    /// Origine de `power_watts` quand connue : ex. `meross_wall`, `rapl`, `windows_meter`.
+    #[serde(default)]
+    pub power_watts_source: Option<String>,
     /// Linux PSI only. None = unavailable.
     pub psi_cpu: Option<f64>,
     pub psi_mem: Option<f64>,
@@ -196,7 +199,7 @@ pub fn collect() -> Result<ResourceState> {
 
     // Real-time samplers (Windows)
     #[cfg(target_os = "windows")]
-    let (io_read_mb_s, io_write_mb_s, gpu_pct, win_compression, power_watts, page_faults_per_sec) =
+    let (io_read_mb_s, io_write_mb_s, gpu_pct, win_compression, mut power_watts, page_faults_per_sec) =
         crate::platform::windows::sample_realtime_metrics();
 
     #[cfg(target_os = "windows")]
@@ -210,11 +213,30 @@ pub fn collect() -> Result<ResourceState> {
     ) = (None, None, None);
 
     #[cfg(target_os = "linux")]
-    let power_watts: Option<f64> = crate::platform::linux::sample_power_watts();
+    let mut power_watts: Option<f64> = crate::platform::linux::sample_power_watts();
     #[cfg(target_os = "macos")]
-    let power_watts: Option<f64> = crate::platform::macos::sample_power_watts();
+    let mut power_watts: Option<f64> = crate::platform::macos::sample_power_watts();
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    let power_watts: Option<f64> = None;
+    let mut power_watts: Option<f64> = None;
+
+    let mut power_watts_source: Option<String> = None;
+    if let Some((w, tag)) = crate::external_power::merge_wall_power() {
+        power_watts = Some(w);
+        power_watts_source = Some(tag);
+    } else {
+        #[cfg(target_os = "linux")]
+        if power_watts.is_some() {
+            power_watts_source = Some("rapl".to_string());
+        }
+        #[cfg(target_os = "windows")]
+        if power_watts.is_some() {
+            power_watts_source = Some("windows_meter".to_string());
+        }
+        #[cfg(target_os = "macos")]
+        if power_watts.is_some() {
+            power_watts_source = Some("rapl".to_string());
+        }
+    }
 
     #[cfg(target_os = "windows")]
     let (on_battery, battery_percent) = crate::platform::windows::battery_status()
@@ -323,6 +345,7 @@ pub fn collect() -> Result<ResourceState> {
             gpu_core_clock_mhz,
             gpu_mem_clock_mhz,
             power_watts,
+            power_watts_source,
             psi_cpu,
             psi_mem,
             on_battery,

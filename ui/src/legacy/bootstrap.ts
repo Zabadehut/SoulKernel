@@ -823,6 +823,7 @@ async function ingestTelemetry(m) {
         machine_activity: state.machineActivity || 'active',
         mem_used_mb: (m.raw.mem_used_mb != null ? Number(m.raw.mem_used_mb) : null),
         mem_total_mb: (m.raw.mem_total_mb != null ? Number(m.raw.mem_total_mb) : null),
+        power_source_tag: (m.raw.power_watts_source != null ? String(m.raw.power_watts_source) : null),
       }
     });
   } catch (_) {}
@@ -888,7 +889,13 @@ function renderGreenItPanel(s) {
   const f3 = v => (v == null ? '0' : Number(v).toFixed(3));
 
   // Source badge
-  const srcMap = { rapl: 'RAPL', battery: 'BATTERIE', cpu_differential: 'CPU DELTA' };
+  const srcMap = {
+    rapl: 'RAPL',
+    battery: 'BATTERIE',
+    cpu_differential: 'CPU DELTA',
+    meross_wall: 'PRISE (mur)',
+    windows_meter: 'WINDOWS',
+  };
   set('greenItSource', srcMap[s.power_source] || s.power_source || '--');
 
   // Main stats
@@ -2296,7 +2303,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '1.1.0',
+      version: '1.1.1',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,

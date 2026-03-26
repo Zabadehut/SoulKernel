@@ -5,6 +5,7 @@
 
 mod audit;
 mod benchmark;
+mod external_power;
 mod formula;
 mod hud;
 mod memory_policy;

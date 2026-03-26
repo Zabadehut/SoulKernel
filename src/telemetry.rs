@@ -54,6 +54,9 @@ pub struct TelemetryIngestRequest {
     /// RAM physique totale (Mo).
     #[serde(default)]
     pub mem_total_mb: Option<f64>,
+    /// `meross_wall`, `rapl`, etc. — pour libellé source énergie.
+    #[serde(default)]
+    pub power_source_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +81,9 @@ pub struct TelemetrySample {
     pub mem_used_ratio: Option<f64>,
     #[serde(default)]
     pub mem_total_mb: Option<f64>,
+    /// Rempli à l’ingest (ex. `meross_wall`, `rapl`).
+    #[serde(default)]
+    pub power_source_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -286,6 +292,11 @@ impl TelemetryState {
             machine_activity: req.machine_activity,
             mem_used_ratio,
             mem_total_mb: mem_total_mb_stored,
+            power_source_tag: req
+                .power_source_tag
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         };
 
         // ── Update lifetime gains ─────────────────────────────────────────
@@ -304,17 +315,21 @@ impl TelemetryState {
 
     pub fn summary(&self, now_ms: u64) -> TelemetrySummary {
         let data_real_power = self.ring.iter().any(|s| s.power_watts.is_some());
-        let power_source = if data_real_power {
-            // Distinguish RAPL vs battery by checking if we ever had power
-            // without a battery path — on Linux RAPL is the primary source.
-            if self.lifetime.has_real_power {
-                "rapl".to_string()
-            } else {
-                "battery".to_string()
-            }
-        } else {
-            "cpu_differential".to_string()
-        };
+        let power_source = self
+            .ring
+            .back()
+            .and_then(|s| s.power_source_tag.clone())
+            .unwrap_or_else(|| {
+                if data_real_power {
+                    if self.lifetime.has_real_power {
+                        "rapl".to_string()
+                    } else {
+                        "battery".to_string()
+                    }
+                } else {
+                    "cpu_differential".to_string()
+                }
+            });
         TelemetrySummary {
             pricing: self.pricing.clone(),
             total: self.window_summary(now_ms, None),

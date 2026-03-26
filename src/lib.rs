@@ -1,6 +1,7 @@
 //! SoulKernel library — Performance Dome orchestrator.
 //! Re-exports for use as a dependency or tests.
 
+pub mod external_power;
 pub mod formula;
 pub mod memory_policy;
 pub mod metrics;

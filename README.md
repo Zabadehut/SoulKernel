@@ -2,6 +2,8 @@
 
 **Orchestrateur Performance Dome** — Tauri + Rust, cross‑plateforme. Donne un maximum d’amplitude au processus cible et **prouve les gains** (export + avant/après).
 
+**Vision** : SoulKernel orchestre l’activité des OS (charge, mémoire, priorités, politiques) pour réduire ou stabiliser la consommation électrique du PC ; la mesure **au secteur** (prise connectée) sert de validation — voir [`docs/VISION.md`](docs/VISION.md) et [`docs/MEROSS.md`](docs/MEROSS.md) (ex. prise **MSS315ZF** Meross via `scripts/meross_mss315_bridge.py`).
+
 ## Preuve que ça fonctionne
 
 - **Avant / Après** : quand le dôme est actif, l’UI affiche les métriques système (CPU, RAM, σ) avant activation → maintenant.
@@ -38,6 +40,7 @@ SoulKernel/
 │       └── lucide.min.js      ← Lucide UMD (offline, même version que `index.html`)
 ├── scripts/
 │   ├── sync-lucide-ui.sh        ← régénère ui/vendor/lucide.min.js (mise à jour Lucide)
+│   ├── meross_mss315_bridge.py  ← prise Meross (optionnel) → JSON watts pour validation secteur
 │   ├── rocky-tauri-dev.sh       ← Rocky 9 : shell dans l’image Fedora Tauri (voir § Dev)
 │   ├── Containerfile.fedora-tauri
 │   ├── trusted-sign.ps1         ← modèle optionnel (Trusted Signing / CI signé, si tu configures)
@@ -54,10 +57,10 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
 ## Développement
 
 - **CI multi-OS** : `.github/workflows/ci.yml` exécute `cargo clippy` et `cargo test` sur Ubuntu (dépendances WebKit Tauri), Windows et macOS. Ce workflow **ne crée pas** de page [Releases](https://github.com/Zabadehut/SoulKernel/releases) ni n’y dépose de fichiers — il ne fait que valider le code à chaque push/PR.
-- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.1.0` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
+- **Releases GitHub** : `.github/workflows/release.yml` lance `cargo tauri build` et publie les bundles **uniquement** lorsque tu pousses un **tag Git** du type `v1.1.1` (même numéro que `version` dans `Cargo.toml` / `tauri.conf.json`). Exemple :
   ```bash
-  git tag v1.1.0   # adapter à la version du manifeste
-  git push origin v1.1.0
+  git tag v1.1.1   # adapter à la version du manifeste
+  git push origin v1.1.1
   ```
   Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
 - **Windows — signature** : les [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont construites avec **`--no-sign`** tant qu’aucun certificat n’est dans le dépôt (pas d’avertissement côté CI). **Build local** : `cargo tauri build --no-sign` si tu n’as pas encore de certificat. Quand tu auras un **certificat OV** ou un compte **Trusted Signing** éligible, tu pourras retirer `--no-sign` dans `.github/workflows/release.yml`, réactiver `bundle.windows.signCommand` / thumbprint dans `tauri.conf.json` et utiliser le modèle `scripts/trusted-sign.ps1` si besoin.
