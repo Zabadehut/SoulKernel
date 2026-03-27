@@ -171,6 +171,8 @@ pub fn collect() -> Result<ResourceState> {
             Some(vals.iter().sum::<f64>() / vals.len() as f64)
         }
     };
+
+    #[cfg(target_os = "linux")]
     let logical_cores = sys.cpus().len().max(1) as f64;
 
     // Memory (native only)

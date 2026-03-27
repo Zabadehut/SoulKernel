@@ -327,8 +327,13 @@ fn set_gpu_power_hint(bias: crate::platform::GpuBias) -> (String, bool) {
     (format!("GPU switch hint → {}", mode), ok)
 }
 
+#[cfg(unix)]
 fn is_root() -> bool {
     unsafe { libc::getuid() == 0 }
+}
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    false
 }
 
 pub fn memory_optimizer_factor() -> f64 {
