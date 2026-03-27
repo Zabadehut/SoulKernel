@@ -43,6 +43,48 @@ pub struct PolicyStatus {
     pub memory_compression_enabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuBias {
+    Eco,
+    Balanced,
+    Boost,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IoBias {
+    Eco,
+    Balanced,
+    Boost,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuBias {
+    Eco,
+    Balanced,
+    Boost,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryBias {
+    Eco,
+    Balanced,
+    Boost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptiveActionProfile {
+    pub cpu_bias: CpuBias,
+    pub io_bias: IoBias,
+    pub gpu_bias: GpuBias,
+    pub memory_bias: MemoryBias,
+    pub sigma_guard: bool,
+    pub thermal_guard: bool,
+}
+
 // Platform info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformInfo {
@@ -74,6 +116,59 @@ pub fn info() -> PlatformInfo {
         has_zram: false,
         has_gpu_sysfs: false,
         is_root: false,
+    }
+}
+
+pub fn derive_adaptive_action_profile(
+    profile: &WorkloadProfile,
+    eta: f64,
+    baseline: &ResourceState,
+    policy: PolicyMode,
+) -> AdaptiveActionProfile {
+    let cpu_hot = baseline.raw.cpu_temp_c.map(|t| t >= 82.0).unwrap_or(false);
+    let gpu_hot = baseline.raw.gpu_temp_c.map(|t| t >= 78.0).unwrap_or(false);
+    let sigma_guard = baseline.sigma >= 0.68 || matches!(policy, PolicyMode::Safe);
+    let thermal_guard = cpu_hot || gpu_hot;
+
+    let cpu_bias = if sigma_guard || cpu_hot {
+        CpuBias::Eco
+    } else if profile.alpha[0] > 0.42 || eta >= 0.22 {
+        CpuBias::Boost
+    } else {
+        CpuBias::Balanced
+    };
+
+    let io_bias = if sigma_guard {
+        IoBias::Eco
+    } else if profile.alpha[3] > 0.35 {
+        IoBias::Boost
+    } else {
+        IoBias::Balanced
+    };
+
+    let gpu_bias = if gpu_hot || baseline.gpu.unwrap_or(0.0) > 0.82 {
+        GpuBias::Eco
+    } else if profile.alpha[4] > 0.35 && baseline.sigma < 0.65 {
+        GpuBias::Boost
+    } else {
+        GpuBias::Balanced
+    };
+
+    let memory_bias = if thermal_guard || sigma_guard {
+        MemoryBias::Eco
+    } else if profile.alpha[1] + profile.alpha[2] > 0.36 {
+        MemoryBias::Boost
+    } else {
+        MemoryBias::Balanced
+    };
+
+    AdaptiveActionProfile {
+        cpu_bias,
+        io_bias,
+        gpu_bias,
+        memory_bias,
+        sigma_guard,
+        thermal_guard,
     }
 }
 

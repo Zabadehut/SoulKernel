@@ -104,11 +104,14 @@ pub async fn apply_dome(
 ) -> Vec<(String, bool)> {
     let mut actions = Vec::new();
     let is_target_process = target_pid.is_some();
+    let adaptive = crate::platform::derive_adaptive_action_profile(profile, eta, baseline, policy);
 
     // Safe mode: avoid privileged per-process mutations; keep only low-risk system hints.
-    if profile.alpha[0] > 0.3 {
-        actions.push(set_power_plan("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"));
-    }
+    actions.push(set_power_plan(match adaptive.cpu_bias {
+        crate::platform::CpuBias::Boost => "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+        crate::platform::CpuBias::Eco => "381b4222-f694-41f0-9685-ff5bb260df2e",
+        crate::platform::CpuBias::Balanced => "381b4222-f694-41f0-9685-ff5bb260df2e",
+    }));
 
     if matches!(policy, crate::platform::PolicyMode::Safe) {
         actions.push((
@@ -124,12 +127,17 @@ pub async fn apply_dome(
     }
 
     // Privileged mode path
-    if profile.alpha[0] > 0.4 {
+    if matches!(adaptive.cpu_bias, crate::platform::CpuBias::Boost) {
         let mask = if is_target_process { 0xFFFF } else { 0x0F0F };
+        actions.push(set_process_affinity(mask, target_pid));
+    } else if matches!(adaptive.cpu_bias, crate::platform::CpuBias::Eco) {
+        let mask = if is_target_process { 0x00FF } else { 0x000F };
         actions.push(set_process_affinity(mask, target_pid));
     }
 
-    if profile.alpha[1] > 0.2 && mem_plan.apply_working_set {
+    if matches!(adaptive.memory_bias, crate::platform::MemoryBias::Boost)
+        && mem_plan.apply_working_set
+    {
         let (min_b, max_b) = if is_target_process {
             let min_b = 512 * 1024 * 1024;
             let max_mb_mb = (2048.0_f64 + eta * 2048.0).min(4096.0);
@@ -145,12 +153,21 @@ pub async fn apply_dome(
         actions.push((msg, ok));
     }
 
-    if profile.alpha[3] > 0.4 && mem_plan.apply_disable_compression {
+    if matches!(adaptive.memory_bias, crate::platform::MemoryBias::Eco) {
+        actions.push((
+            "Adaptive memory eco: compression preserved to avoid OS perturbation".into(),
+            true,
+        ));
+    } else if profile.alpha[3] > 0.4 && mem_plan.apply_disable_compression {
         crate::memory_policy::record_compression_toggle();
         actions.push(disable_memory_compression());
     }
 
-    actions.push(set_io_priority_high(target_pid));
+    actions.push(match adaptive.io_bias {
+        crate::platform::IoBias::Boost => set_io_priority_high(target_pid),
+        crate::platform::IoBias::Eco => set_io_priority_below_normal(target_pid),
+        crate::platform::IoBias::Balanced => restore_io_priority(target_pid),
+    });
     actions
 }
 
@@ -599,7 +616,10 @@ fn disable_memory_compression() -> (String, bool) {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        ("Memory compression disable (stub non-Windows)".into(), false)
+        (
+            "Memory compression disable (stub non-Windows)".into(),
+            false,
+        )
     }
 }
 
@@ -631,7 +651,10 @@ fn restore_memory_compression() -> (String, bool) {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        ("Memory compression restore (stub non-Windows)".into(), false)
+        (
+            "Memory compression restore (stub non-Windows)".into(),
+            false,
+        )
     }
 }
 
@@ -710,6 +733,39 @@ fn restore_io_priority(target_pid: Option<u32>) -> (String, bool) {
     let _ = target_pid;
     #[cfg(not(target_os = "windows"))]
     ("Process priority NORMAL (stub)".into(), false)
+}
+
+fn set_io_priority_below_normal(target_pid: Option<u32>) -> (String, bool) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            GetCurrentProcess, OpenProcess, SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS,
+            PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+        };
+        unsafe {
+            let (handle, own, label) = match target_pid {
+                Some(pid) => match OpenProcess(
+                    PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION,
+                    false,
+                    pid,
+                ) {
+                    Ok(h) => (h, true, format!("PID {}", pid)),
+                    Err(_) => (GetCurrentProcess(), false, "current process".to_string()),
+                },
+                None => (GetCurrentProcess(), false, "current process".to_string()),
+            };
+            let ok = SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS).is_ok();
+            if own {
+                let _ = CloseHandle(handle);
+            }
+            return (format!("Process priority -> BELOW_NORMAL ({})", label), ok);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = target_pid;
+    #[cfg(not(target_os = "windows"))]
+    ("Process priority BELOW_NORMAL (stub)".into(), false)
 }
 
 fn restore_working_set(target_pid: Option<u32>) -> (String, bool) {

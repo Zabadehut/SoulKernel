@@ -3,6 +3,7 @@
 
 pub mod external_power;
 pub mod formula;
+pub mod workload_catalog;
 pub mod memory_policy;
 pub mod metrics;
 pub mod orchestrator;

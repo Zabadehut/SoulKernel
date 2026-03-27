@@ -250,6 +250,7 @@ fn ensure_hud_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, Str
     let url = tauri::WebviewUrl::App("hud.html".into());
     let builder = tauri::WebviewWindowBuilder::new(app, "hud", url)
         .title("SoulKernel HUD")
+        .devtools(cfg!(debug_assertions))
         .initialization_script(
             r#"
             (() => {

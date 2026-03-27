@@ -49,6 +49,10 @@ const LINUX_AGGR_COOLDOWN_SUSTAIN: Duration = Duration::from_secs(300);
 
 /// Au-delà de ce seuil (PDH Windows), on augmente la prudence π / garde-fous.
 const PAGE_FAULTS_HEAVY: f64 = 8000.0;
+const CPU_TEMP_WARM_C: f64 = 82.0;
+const GPU_TEMP_WARM_C: f64 = 78.0;
+const LOAD_AVG_WARM: f64 = 1.05;
+const GPU_BUSY_SENSITIVE: f64 = 0.72;
 
 // ─── Internal state ───────────────────────────────────────────────────────────
 
@@ -78,9 +82,10 @@ fn global_state() -> &'static Mutex<MemoryPolicyState> {
 }
 
 pub fn dome_mode_for_profile(profile: &WorkloadProfile) -> MemoryDomeMode {
-    match profile.name.as_str() {
-        "gamer" | "es" => MemoryDomeMode::Burst,
-        _ => MemoryDomeMode::Sustain,
+    if crate::workload_catalog::is_burst(profile.name.as_str()) {
+        MemoryDomeMode::Burst
+    } else {
+        MemoryDomeMode::Sustain
     }
 }
 
@@ -139,8 +144,15 @@ pub fn tick_from_baseline(baseline: &ResourceState) -> f64 {
 
     let sigma_stress = baseline.sigma.clamp(0.0, 1.0);
     let mem_low = (1.0 - baseline.mem).clamp(0.0, 1.0);
+    let thermal_stress = thermal_guard_stress(baseline);
+    let scheduler_stress = scheduler_guard_stress(baseline);
 
-    (0.45 * pf_stress + 0.35 * sigma_stress + 0.2 * mem_low).clamp(0.0, 1.0)
+    (0.32 * pf_stress
+        + 0.23 * sigma_stress
+        + 0.16 * mem_low
+        + 0.17 * thermal_stress
+        + 0.12 * scheduler_stress)
+        .clamp(0.0, 1.0)
 }
 
 fn memory_pressure(s: &ResourceState) -> f64 {
@@ -149,8 +161,7 @@ fn memory_pressure(s: &ResourceState) -> f64 {
 
 fn sustained_pressure() -> Option<Duration> {
     let g = global_state().lock().ok()?;
-    g.high_pressure_since
-        .map(|t| t.elapsed())
+    g.high_pressure_since.map(|t| t.elapsed())
 }
 
 fn cooldown_blocks(last: Option<Instant>, cooldown: Duration) -> bool {
@@ -158,19 +169,26 @@ fn cooldown_blocks(last: Option<Instant>, cooldown: Duration) -> bool {
 }
 
 /// Plan d’actions mémoire pour une activation dôme (après `tick_from_baseline` sur le même état).
-pub fn plan_for_dome_activation(baseline: &ResourceState, profile: &WorkloadProfile) -> MemoryActivationPlan {
+pub fn plan_for_dome_activation(
+    baseline: &ResourceState,
+    profile: &WorkloadProfile,
+) -> MemoryActivationPlan {
     let mode = dome_mode_for_profile(profile);
     let sustained = sustained_pressure();
     let need = pressure_required(mode);
     let pressure_ok = sustained.map(|d| d >= need).unwrap_or(false);
     let mem_tight = baseline.mem < 0.22;
     let sigma_high = baseline.sigma > 0.52;
+    let thermal_hot = thermal_guard_stress(baseline) >= 0.55;
+    let scheduler_hot = scheduler_guard_stress(baseline) >= 0.55;
+    let gpu_sensitive = baseline.gpu.unwrap_or(0.0) >= GPU_BUSY_SENSITIVE;
 
     let mut plan = MemoryActivationPlan::default();
     let g = match global_state().lock() {
         Ok(x) => x,
         Err(_) => {
-            plan.notes.push("MemoryPolicy: état interne indisponible".into());
+            plan.notes
+                .push("MemoryPolicy: état interne indisponible".into());
             return plan;
         }
     };
@@ -179,8 +197,7 @@ pub fn plan_for_dome_activation(baseline: &ResourceState, profile: &WorkloadProf
     if profile.alpha[1] > 0.2 {
         if cooldown_blocks(g.last_ws_adjust, ws_cooldown(mode)) {
             plan.apply_working_set = false;
-            plan
-                .notes
+            plan.notes
                 .push("MemoryPolicy: working set différé (cooldown anti-thrashing)".into());
         } else {
             plan.apply_working_set = true;
@@ -194,22 +211,20 @@ pub fn plan_for_dome_activation(baseline: &ResourceState, profile: &WorkloadProf
         let comp = baseline.compression.unwrap_or(0.0);
         let compression_helpful = comp > 0.28 && baseline.mem > 0.14;
         let allow_by_pressure = pressure_ok && (mem_tight || sigma_high);
-        let toggle_cooldown = cooldown_blocks(g.last_compression_toggle, COMPRESSION_TOGGLE_COOLDOWN);
+        let toggle_cooldown =
+            cooldown_blocks(g.last_compression_toggle, COMPRESSION_TOGGLE_COOLDOWN);
 
         if compression_helpful && !mem_tight {
             plan.apply_disable_compression = false;
-            plan.notes.push(
-                "MemoryPolicy: compression conservée (ratio élevé, RAM non critique)".into(),
-            );
+            plan.notes
+                .push("MemoryPolicy: compression conservée (ratio élevé, RAM non critique)".into());
         } else if !allow_by_pressure {
             plan.apply_disable_compression = false;
-            plan
-                .notes
+            plan.notes
                 .push("MemoryPolicy: disable compression différé (pression non soutenue)".into());
         } else if toggle_cooldown {
             plan.apply_disable_compression = false;
-            plan
-                .notes
+            plan.notes
                 .push("MemoryPolicy: compression toggle en cooldown".into());
         } else {
             plan.apply_disable_compression = true;
@@ -218,10 +233,14 @@ pub fn plan_for_dome_activation(baseline: &ResourceState, profile: &WorkloadProf
 
     // Linux zRAM resize
     if profile.alpha[2] > 0.1 {
-        if cooldown_blocks(g.last_linux_aggressive, linux_aggr_cooldown(mode)) {
+        if thermal_hot || scheduler_hot || gpu_sensitive {
             plan.apply_zram_resize = false;
-            plan
-                .notes
+            plan.notes.push(
+                "MemoryPolicy: zRAM resize différé (machine chaude/chargée ou GPU sensible)".into(),
+            );
+        } else if cooldown_blocks(g.last_linux_aggressive, linux_aggr_cooldown(mode)) {
+            plan.apply_zram_resize = false;
+            plan.notes
                 .push("MemoryPolicy: zRAM resize différé (cooldown)".into());
         } else {
             plan.apply_zram_resize = true;
@@ -230,15 +249,18 @@ pub fn plan_for_dome_activation(baseline: &ResourceState, profile: &WorkloadProf
 
     // Linux drop_caches — plus strict : pression mémoire réelle
     if profile.alpha[3] > 0.5 {
-        if !pressure_ok || baseline.mem > 0.35 {
+        if thermal_hot || scheduler_hot || gpu_sensitive {
             plan.apply_drop_caches = false;
-            plan
-                .notes
+            plan.notes.push(
+                "MemoryPolicy: drop_caches bloqué (risque de perturbation OS trop élevé)".into(),
+            );
+        } else if !pressure_ok || baseline.mem > 0.35 {
+            plan.apply_drop_caches = false;
+            plan.notes
                 .push("MemoryPolicy: drop_caches ignoré (pression insuffisante ou RAM OK)".into());
         } else if cooldown_blocks(g.last_linux_aggressive, linux_aggr_cooldown(mode)) {
             plan.apply_drop_caches = false;
-            plan
-                .notes
+            plan.notes
                 .push("MemoryPolicy: drop_caches différé (cooldown)".into());
         } else {
             plan.apply_drop_caches = true;
@@ -246,6 +268,34 @@ pub fn plan_for_dome_activation(baseline: &ResourceState, profile: &WorkloadProf
     }
 
     plan
+}
+
+fn thermal_guard_stress(baseline: &ResourceState) -> f64 {
+    let cpu = baseline
+        .raw
+        .cpu_temp_c
+        .map(|t| ((t - CPU_TEMP_WARM_C) / 12.0).clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+    let gpu = baseline
+        .raw
+        .gpu_temp_c
+        .map(|t| ((t - GPU_TEMP_WARM_C) / 10.0).clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+    cpu.max(gpu)
+}
+
+fn scheduler_guard_stress(baseline: &ResourceState) -> f64 {
+    let load = baseline
+        .raw
+        .load_avg_1m_norm
+        .map(|v| ((v - LOAD_AVG_WARM) / 0.75).clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+    let freq = baseline
+        .raw
+        .cpu_freq_ratio
+        .map(|v| ((v - 0.92) / 0.20).clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+    load.max(freq)
 }
 
 pub fn record_working_set_adjustment() {
@@ -281,7 +331,12 @@ pub fn allow_global_trim(profile_hint: Option<&WorkloadProfile>) -> (bool, Vec<S
     let mut notes = Vec::new();
     let g = match global_state().lock() {
         Ok(x) => x,
-        Err(_) => return (false, vec!["MemoryPolicy: état interne indisponible".into()]),
+        Err(_) => {
+            return (
+                false,
+                vec!["MemoryPolicy: état interne indisponible".into()],
+            )
+        }
     };
     let cd = global_trim_cooldown(mode);
     if cooldown_blocks(g.last_global_trim, cd) {
@@ -312,6 +367,9 @@ mod tests {
             raw: RawMetrics {
                 cpu_pct: 30.0,
                 cpu_clock_mhz: None,
+                cpu_max_clock_mhz: None,
+                cpu_freq_ratio: None,
+                cpu_temp_c: None,
                 mem_used_mb: 8000,
                 mem_total_mb: 16000,
                 ram_clock_mhz: None,
@@ -323,10 +381,16 @@ mod tests {
                 gpu_pct: None,
                 gpu_core_clock_mhz: None,
                 gpu_mem_clock_mhz: None,
+                gpu_temp_c: None,
+                gpu_power_watts: None,
+                gpu_mem_used_mb: None,
+                gpu_mem_total_mb: None,
                 power_watts: None,
                 power_watts_source: None,
                 psi_cpu: None,
                 psi_mem: None,
+                load_avg_1m_norm: None,
+                runnable_tasks: None,
                 on_battery: None,
                 battery_percent: None,
                 page_faults_per_sec: None,

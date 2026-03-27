@@ -18,6 +18,9 @@ let lastCfgSig = '';
 let lastReadyPing = 0;
 let _hudFitLast = { w: 0, h: 0 };
 let _hudFitTimer = null;
+let _hudPollInterval = null;
+/** @type {null | (() => void)} */
+let _unlistenHudCfg = null;
 /** @type {'screen'|'content'|'manual'} */
 let sizeMode = 'screen';
 
@@ -169,7 +172,7 @@ if (drag && t?.window?.getCurrentWindow) {
 (async () => {
   if (t?.event?.listen) {
     try {
-      await t.event.listen('soulkernel://hud-config', (ev) => {
+      _unlistenHudCfg = await t.event.listen('soulkernel://hud-config', (ev) => {
         const cfg = ev.payload || {};
         if (cfg.size_mode === 'screen' || cfg.size_mode === 'content' || cfg.size_mode === 'manual') {
           sizeMode = cfg.size_mode;
@@ -189,13 +192,24 @@ syncHudLayoutChrome();
 setPreset('compact');
 setInteractive(false);
 setHudOpacity(0.82);
-setInterval(refreshHud, 250);
+_hudPollInterval = setInterval(refreshHud, 250);
 refreshHud();
 if (root && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(() => {
     if (sizeMode === 'content') scheduleHudWindowFit();
   }).observe(root);
 }
+
+function hudPageCleanup() {
+  if (_hudPollInterval != null) {
+    clearInterval(_hudPollInterval);
+    _hudPollInterval = null;
+  }
+  try {
+    if (typeof _unlistenHudCfg === 'function') _unlistenHudCfg();
+  } catch (_) {}
+}
+window.addEventListener('beforeunload', hudPageCleanup);
 if (document.readyState === 'complete') {
   runHudFitBurst();
 } else {

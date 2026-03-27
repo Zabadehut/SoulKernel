@@ -3,17 +3,36 @@
     <div class="benchmark-column">
       <div class="advisor-panel" id="benchPanel">
         <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem">
-          <span class="pt-ico"><i data-lucide="terminal"></i></span><span>KPI externe A/B</span>
+          <span class="pt-ico"><i data-lucide="terminal"></i></span><span>A/B dôme — sonde OS ou commande</span>
         </div>
-        <input id="kpiCommand" class="target-select" type="text" value="cargo" placeholder="Commande KPI" />
+        <label class="kappa-name" for="kpiCommand" style="display:block;margin-top:.2rem">Sonde</label>
+        <input
+          id="kpiCommand"
+          class="target-select"
+          type="text"
+          value="system"
+          placeholder="system | chemin exécutable"
+          title="system = observation OS intégrée (sans processus externe)"
+        />
+        <label class="kappa-name" for="kpiArgs" style="display:block;margin-top:.35rem">Args</label>
         <input
           id="kpiArgs"
           class="target-select"
           type="text"
-          value="check"
-          placeholder="Arguments KPI"
-          style="margin-top:.25rem"
+          value="4000"
+          placeholder="Durée ms (system) ou args commande"
+          title="Avec system : durée d’observation en ms (500–120000)"
+          style="margin-top:.15rem"
         />
+        <div class="target-hint" style="margin-top:.35rem;font-size:.65rem;line-height:1.45;color:var(--muted)">
+          <strong>system</strong> : SoulKernel échantillonne CPU, RAM, I/O disque (agrégat), σ, etc. pendant la durée
+          indiquée — c’est le mode aligné sur « tester l’OS » sans lancer Rust/cargo. Une <strong>commande externe</strong>
+          sert seulement si tu veux une charge reproductible (compilation, script) en plus du réglage dôme.
+        </div>
+        <div class="target-hint" style="margin-top:.25rem;font-size:.65rem;line-height:1.45;color:var(--warning)">
+          Si tu lances <strong>cargo check / build</strong> sur <em>ce</em> dépôt pendant
+          <code>cargo tauri dev</code>, le watcher peut redémarrer l’app.
+        </div>
         <div class="kappa-row" style="margin-top:.35rem;gap:.5rem">
           <span class="kappa-name">Runs / etat</span>
           <input
@@ -25,6 +44,17 @@
             value="5"
             style="width:74px;padding:.2rem .35rem"
           />
+        </div>
+        <div id="kpiBenchProgressWrap" class="kpi-bench-progress" hidden aria-live="polite">
+          <div class="kpi-bench-progress-head">
+            <span class="kpi-bench-pulse" aria-hidden="true"></span>
+            <span id="kpiBenchProgressTitle" class="kpi-bench-title">Benchmark en attente</span>
+          </div>
+          <div class="kpi-bench-bar-wrap">
+            <div id="kpiBenchProgressBar" class="kpi-bench-bar-fill"></div>
+          </div>
+          <div id="kpiBenchProgressSub" class="kpi-bench-sub"></div>
+          <pre id="kpiBenchProgressLog" class="kpi-bench-log"></pre>
         </div>
         <div class="gains-actions" style="margin-top:.35rem">
           <button type="button" class="ctrl-btn btn-secondary" id="btnRunAB" style="font-size:.62rem;padding:.25rem .45rem"
@@ -41,12 +71,14 @@
         <div class="advisor-text" id="kpiBenchLearned" style="margin-top:.35rem">
           Apprentissage benchmark: aucun historique pertinent
         </div>
-        <div class="advisor-text" style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted)">
-          Sous Windows, une sonde KPI lançait autrefois un processus console <strong>visible</strong> (pas de
-          <code>CREATE_NO_WINDOW</code>) : chaque run pouvait faire clignoter une fenêtre. C’est corrigé côté moteur. Le
-          résumé A/B ajoute des <strong>écarts médians après sonde</strong> sur RAM, GPU % et CPU % (positif = ressource
-          moins chargée en phase ON) — ce sont des indicateurs complémentaires au temps wall-clock, avec du bruit
-          possible.
+        <div class="advisor-text compactable-copy" style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted)">
+          <strong>Protocole</strong> : alternance dôme OFF / ON (× runs), stabilisation, puis <em>sonde</em> —
+          observation OS (<code>system</code>) ou exécution d’une commande. Les métriques affichées sont lues
+          <em>après</em> chaque fenêtre de sonde.<br />
+          <strong>Verdict</strong> : durée de la fenêtre (médiane / p95), puis médianes OFF vs ON de RAM, % CPU, % GPU, W,
+          σ, températures si capteurs. « Cache » et réseau ne sont pas des séries agrégées dans le résumé actuel ; l’I/O
+          disque apparaît dans la sonde <code>system</code> (texte) et partiellement via les métriques après sonde.
+          Le score d’efficacité combine surtout temps + ressources (sans températures dans la formule).
         </div>
       </div>
       <div class="advisor-panel">
@@ -54,9 +86,8 @@
           <span class="pt-ico"><i data-lucide="database"></i></span><span>Base appliquee a l'application</span>
         </div>
         <div class="advisor-text">
-          Le meilleur benchmark connu devient la base par defaut des reglages de l'application pour ce workload et cette
-          commande KPI. La recommandation live ne part plus de zero: elle ajuste autour de cette base selon la charge
-          reelle.
+          Le meilleur benchmark connu devient la base par défaut des réglages. La recommandation live ajuste ensuite
+          autour de cette base selon la charge réelle.
         </div>
       </div>
     </div>
@@ -94,8 +125,7 @@
         >
         <div class="advisor-text" id="energyPricingStatus" style="margin-top:.3rem">Tarif actif: chargement...</div>
         <div class="target-hint" style="margin-top:.2rem">
-          Sauvegarde locale automatique (pricing.json). L'economie reelle s'affiche seulement si la puissance (W) est
-          disponible.
+          Sauvegarde locale automatique. L’économie réelle s’affiche seulement si la puissance (W) est disponible.
         </div>
       </div>
       <div class="advisor-panel">

@@ -17,13 +17,21 @@
 <MetricsStrip />
 <CompactHud />
 
-<main>
-  <PanelLeftHardware />
-  <PanelCenterFormula />
-  <PanelWorkloads />
-  <PanelInsights />
-  <PanelRightColumn />
-  <PanelBottomBar />
+<main class="shell-grid">
+  <section class="shell-column shell-column-left" aria-label="Audit matériel">
+    <PanelLeftHardware />
+  </section>
+  <section class="shell-column shell-column-main" aria-label="Décision et preuves">
+    <PanelCenterFormula />
+    <PanelWorkloads />
+    <PanelInsights />
+  </section>
+  <section class="shell-column shell-column-right" aria-label="Pilotage et actions">
+    <PanelRightColumn />
+  </section>
+  <section class="shell-footer">
+    <PanelBottomBar />
+  </section>
 </main>
 
 <BenchmarkSection />

@@ -91,36 +91,48 @@ pub fn platform_info() -> PlatformInfo {
 
 pub async fn apply_dome(
     profile: &WorkloadProfile,
-    _eta: f64,
-    _baseline: &ResourceState,
-    _policy: crate::platform::PolicyMode,
+    eta: f64,
+    baseline: &ResourceState,
+    policy: crate::platform::PolicyMode,
     _target_pid: Option<u32>,
 ) -> Vec<(String, bool)> {
     let mut actions = Vec::new();
+    let adaptive = crate::platform::derive_adaptive_action_profile(profile, eta, baseline, policy);
 
     // ── QoS class → USER_INTERACTIVE for CPU-heavy workloads ─────────────────
-    if profile.alpha[0] > 0.3 {
-        actions.push(set_qos_class_user_interactive());
-    } else {
-        actions.push(set_qos_class_utility());
-    }
+    actions.push(match adaptive.cpu_bias {
+        crate::platform::CpuBias::Boost => set_qos_class_user_interactive(),
+        crate::platform::CpuBias::Eco => set_qos_class_background(),
+        crate::platform::CpuBias::Balanced => set_qos_class_utility(),
+    });
 
     // ── pmset → disable autopoweroff/sleep during dome ────────────────────────
-    actions.push(pmset("autopoweroff", 0));
-    actions.push(pmset("sleep", 0));
+    actions.push(pmset(
+        "autopoweroff",
+        if adaptive.sigma_guard { 1 } else { 0 },
+    ));
+    actions.push(pmset("sleep", if adaptive.sigma_guard { 5 } else { 0 }));
 
     // ── Disable App Nap for this process ─────────────────────────────────────
-    actions.push(disable_app_nap());
+    if !matches!(adaptive.cpu_bias, crate::platform::CpuBias::Eco) {
+        actions.push(disable_app_nap());
+    }
 
     // ── Boost via launchctl (sets resource limits) ────────────────────────────
-    if profile.alpha[0] > 0.4 {
+    if matches!(adaptive.cpu_bias, crate::platform::CpuBias::Boost) {
         actions.push(launchctl_limit("cpu", "unlimited"));
+    } else if matches!(adaptive.cpu_bias, crate::platform::CpuBias::Eco) {
+        actions.push(launchctl_limit("cpu", "50"));
     }
 
     // ── I/O priority via setiopolicy_np ──────────────────────────────────────
-    if profile.alpha[3] > 0.3 {
-        actions.push(set_io_policy_important());
-    }
+    actions.push(match adaptive.io_bias {
+        crate::platform::IoBias::Boost => set_io_policy_important(),
+        crate::platform::IoBias::Eco => set_io_policy_throttle(),
+        crate::platform::IoBias::Balanced => restore_io_policy(),
+    });
+
+    actions.push(set_gpu_power_hint(adaptive.gpu_bias));
 
     actions
 }
@@ -134,6 +146,7 @@ pub async fn rollback(
         pmset("autopoweroff", 1),
         pmset("sleep", 10),
         restore_io_policy(),
+        set_gpu_power_hint(crate::platform::GpuBias::Balanced),
     ]
 }
 
@@ -240,6 +253,11 @@ fn set_qos_class_default() -> (String, bool) {
     ("QoS → DEFAULT".into(), ok)
 }
 
+fn set_qos_class_background() -> (String, bool) {
+    let ok = unsafe_set_qos(0x09);
+    ("QoS → BACKGROUND".into(), ok)
+}
+
 fn unsafe_set_qos(_class: u32) -> bool {
     // In production: call pthread_set_qos_class_self_np via libc FFI
     // #[cfg(target_os = "macos")]
@@ -287,25 +305,30 @@ fn set_io_policy_important() -> (String, bool) {
     ("I/O policy → IMPORTANT".into(), true)
 }
 
+fn set_io_policy_throttle() -> (String, bool) {
+    ("I/O policy → THROTTLE".into(), true)
+}
+
 fn restore_io_policy() -> (String, bool) {
     ("I/O policy → DEFAULT".into(), true)
 }
 
-fn is_root() -> bool {
-    libc_getuid() == 0
+fn set_gpu_power_hint(bias: crate::platform::GpuBias) -> (String, bool) {
+    let mode = match bias {
+        crate::platform::GpuBias::Boost => "highpower",
+        crate::platform::GpuBias::Eco => "lowpower",
+        crate::platform::GpuBias::Balanced => "automatic",
+    };
+    let ok = std::process::Command::new("pmset")
+        .args(["-a", "gpuswitch", mode])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    (format!("GPU switch hint → {}", mode), ok)
 }
 
-#[cfg(unix)]
-extern "C" {
-    fn getuid() -> u32;
-}
-#[cfg(unix)]
-fn libc_getuid() -> u32 {
-    unsafe { getuid() }
-}
-#[cfg(not(unix))]
-fn libc_getuid() -> u32 {
-    0
+fn is_root() -> bool {
+    unsafe { libc::getuid() == 0 }
 }
 
 pub fn memory_optimizer_factor() -> f64 {

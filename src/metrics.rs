@@ -35,6 +35,12 @@ pub struct RawMetrics {
     pub cpu_pct: f64,
     /// Average CPU clock in MHz when available.
     pub cpu_clock_mhz: Option<f64>,
+    /// Maximum CPU clock in MHz when available.
+    pub cpu_max_clock_mhz: Option<f64>,
+    /// Average CPU frequency ratio versus max clock [0,1].
+    pub cpu_freq_ratio: Option<f64>,
+    /// CPU package temperature in Celsius when available.
+    pub cpu_temp_c: Option<f64>,
     pub mem_used_mb: u64,
     pub mem_total_mb: u64,
     /// Effective RAM speed in MHz when available.
@@ -52,6 +58,14 @@ pub struct RawMetrics {
     pub gpu_core_clock_mhz: Option<f64>,
     /// GPU memory clock in MHz when available.
     pub gpu_mem_clock_mhz: Option<f64>,
+    /// GPU temperature in Celsius when available.
+    pub gpu_temp_c: Option<f64>,
+    /// GPU board/package power in Watts when available.
+    pub gpu_power_watts: Option<f64>,
+    /// VRAM used in MiB when available.
+    pub gpu_mem_used_mb: Option<u64>,
+    /// VRAM total in MiB when available.
+    pub gpu_mem_total_mb: Option<u64>,
     /// System power draw from host power meter (Watts). None = unavailable.
     pub power_watts: Option<f64>,
     /// Origine de `power_watts` quand connue : ex. `meross_wall`, `rapl`, `windows_meter`.
@@ -60,6 +74,10 @@ pub struct RawMetrics {
     /// Linux PSI only. None = unavailable.
     pub psi_cpu: Option<f64>,
     pub psi_mem: Option<f64>,
+    /// Normalized load average over 1 minute: load1 / logical_cpu_count.
+    pub load_avg_1m_norm: Option<f64>,
+    /// Runnable tasks in `/proc/loadavg` when available.
+    pub runnable_tasks: Option<u64>,
     /// Battery mode hint when available (primarily Windows).
     pub on_battery: Option<bool>,
     /// Battery charge percentage when available.
@@ -126,10 +144,7 @@ fn webview_host_aggregate(sys: &System) -> (Option<f64>, Option<u64>) {
     if webview_nodes == 0 {
         (None, None)
     } else {
-        (
-            Some(cpu_sum),
-            Some(mem_sum / 1024 / 1024),
-        )
+        (Some(cpu_sum), Some(mem_sum / 1024 / 1024))
     }
 }
 
@@ -156,6 +171,7 @@ pub fn collect() -> Result<ResourceState> {
             Some(vals.iter().sum::<f64>() / vals.len() as f64)
         }
     };
+    let logical_cores = sys.cpus().len().max(1) as f64;
 
     // Memory (native only)
     #[cfg(target_os = "windows")]
@@ -199,8 +215,14 @@ pub fn collect() -> Result<ResourceState> {
 
     // Real-time samplers (Windows)
     #[cfg(target_os = "windows")]
-    let (io_read_mb_s, io_write_mb_s, gpu_pct, win_compression, mut power_watts, page_faults_per_sec) =
-        crate::platform::windows::sample_realtime_metrics();
+    let (
+        io_read_mb_s,
+        io_write_mb_s,
+        gpu_pct,
+        win_compression,
+        mut power_watts,
+        page_faults_per_sec,
+    ) = crate::platform::windows::sample_realtime_metrics();
 
     #[cfg(target_os = "windows")]
     let compression = win_compression.or(compression);
@@ -268,6 +290,60 @@ pub fn collect() -> Result<ResourceState> {
         Option<f64>,
     ) = (None, None, None);
 
+    #[cfg(target_os = "linux")]
+    let advanced = crate::platform::linux::sample_advanced_metrics(logical_cores);
+    #[cfg(not(target_os = "linux"))]
+    let advanced = (
+        None::<f64>,
+        None::<f64>,
+        None::<f64>,
+        None::<u64>,
+        None::<f64>,
+        None::<f64>,
+        None::<u64>,
+        None::<u64>,
+    );
+
+    #[cfg(target_os = "linux")]
+    let (
+        cpu_max_clock_mhz,
+        cpu_temp_c,
+        load_avg_1m_norm,
+        runnable_tasks,
+        gpu_temp_c,
+        gpu_power_watts,
+        gpu_mem_used_mb,
+        gpu_mem_total_mb,
+    ) = (
+        advanced.cpu_max_clock_mhz,
+        advanced.cpu_temp_c,
+        advanced.load_avg_1m_norm,
+        advanced.runnable_tasks,
+        advanced.gpu_temp_c,
+        advanced.gpu_power_watts,
+        advanced.gpu_mem_used_mb,
+        advanced.gpu_mem_total_mb,
+    );
+    #[cfg(not(target_os = "linux"))]
+    let (
+        cpu_max_clock_mhz,
+        cpu_temp_c,
+        load_avg_1m_norm,
+        runnable_tasks,
+        gpu_temp_c,
+        gpu_power_watts,
+        gpu_mem_used_mb,
+        gpu_mem_total_mb,
+    ) = advanced;
+
+    let cpu_freq_ratio = cpu_clock_mhz.zip(cpu_max_clock_mhz).and_then(|(cur, max)| {
+        if max > 0.0 && cur.is_finite() && max.is_finite() {
+            Some((cur / max).clamp(0.0, 1.5))
+        } else {
+            None
+        }
+    });
+
     // Normalisation for B_io(t): 1500 MB/s reference cap.
     let io_bandwidth = io_read_mb_s
         .zip(io_write_mb_s)
@@ -333,6 +409,9 @@ pub fn collect() -> Result<ResourceState> {
         raw: RawMetrics {
             cpu_pct,
             cpu_clock_mhz,
+            cpu_max_clock_mhz,
+            cpu_freq_ratio,
+            cpu_temp_c,
             mem_used_mb: mem_used / 1024 / 1024,
             mem_total_mb: mem_total / 1024 / 1024,
             ram_clock_mhz,
@@ -344,10 +423,16 @@ pub fn collect() -> Result<ResourceState> {
             gpu_pct,
             gpu_core_clock_mhz,
             gpu_mem_clock_mhz,
+            gpu_temp_c,
+            gpu_power_watts,
+            gpu_mem_used_mb,
+            gpu_mem_total_mb,
             power_watts,
             power_watts_source,
             psi_cpu,
             psi_mem,
+            load_avg_1m_norm,
+            runnable_tasks,
             on_battery,
             battery_percent,
             page_faults_per_sec,

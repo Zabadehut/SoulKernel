@@ -3,39 +3,42 @@
   <div class="panel-title">
     <span class="pt-ico"><i data-lucide="function-square"></i></span><span>FORMULE UNIFIÉE π(t)</span>
   </div>
-  <div class="target-hint" style="margin:-.35rem 0 .65rem;max-width:36rem">
-    π et 𝒟 s’appuient sur <strong>r(t) mesuré</strong> (OS) et des coefficients explicites ; les
-    <strong>CPU·h / RAM·GB·h</strong> sont des <strong>différentiels</strong> dôme ON vs baseline OFF. Pour
-    convaincre un tiers : <strong>Benchmark A/B</strong> + export « preuves » ci-dessous.
+  <div class="target-hint panel-lead compactable-copy" style="margin:-.35rem 0 .65rem;max-width:36rem">
+    Lecture opérateur: <strong>π</strong> mesure le rendement instantané, <strong>𝒟</strong> la valeur cumulée.
+    Les gains affichés restent fondés sur <strong>r(t) réel</strong> et se défendent via <strong>Benchmark A/B</strong>.
   </div>
 
-  <div class="formula-zone" id="fZone">
-    <div class="formula-main">
-      <span class="f-sym" style="font-size:1.1em">π</span><span class="f-op">(t) = (</span>
-      <span class="f-sym">𝒲</span><span class="f-op">·</span><span class="f-sym">r</span><span class="f-op"
-        >(t)) ·</span
-      >
-      <span class="f-op">∏</span><sub style="font-size:.6em">k</sub>
-      <span class="f-op">(1−</span><span class="f-sym f-green">ε</span><sub style="font-size:.6em">k</sub
-        ><span class="f-op">)</span
-      ><sup style="font-size:.6em;color:var(--io)">α<sub>k</sub></sup>
-      <span class="f-op"> · </span>
-      <span class="f-red">e</span><sup style="font-size:.6em;color:var(--stress)">−κΣ(t)</sup>
+  <div class="formula-hero">
+    <div class="formula-zone formula-zone--hero" id="fZone">
+      <div class="formula-kicker">Rendement instantané</div>
+      <div class="formula-main">
+        <span class="f-sym" style="font-size:1.1em">π</span><span class="f-op">(t) = (</span>
+        <span class="f-sym">𝒲</span><span class="f-op">·</span><span class="f-sym">r</span><span class="f-op"
+          >(t)) ·</span
+        >
+        <span class="f-op">∏</span><sub style="font-size:.6em">k</sub>
+        <span class="f-op">(1−</span><span class="f-sym f-green">ε</span><sub style="font-size:.6em">k</sub
+          ><span class="f-op">)</span
+        ><sup style="font-size:.6em;color:var(--io)">α<sub>k</sub></sup>
+        <span class="f-op"> · </span>
+        <span class="f-red">e</span><sup style="font-size:.6em;color:var(--stress)">−κΣ(t)</sup>
+      </div>
+      <div class="eq-result" id="piVal">π = —</div>
+      <div class="formula-label">RENDEMENT INSTANTANÉ · HARDWARE LIVE</div>
     </div>
-    <div class="eq-result" id="piVal">π = —</div>
-    <div class="formula-label">RENDEMENT INSTANTANÉ · HARDWARE LIVE</div>
-  </div>
 
-  <div class="formula-zone" id="dZone" style="margin-bottom:.6rem">
-    <div class="formula-main">
-      <span class="f-sym" style="font-size:1em">𝒟</span>
-      <span class="f-op">[τ₀,τ₁] = ∫π(t)dt −</span>
-      <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">setup</sub>
-      <span class="f-op">−</span>
-      <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">rb</sub>
+    <div class="formula-zone formula-zone--side" id="dZone" style="margin-bottom:.6rem">
+      <div class="formula-kicker">Résultat de session</div>
+      <div class="formula-main">
+        <span class="f-sym" style="font-size:1em">𝒟</span>
+        <span class="f-op">[τ₀,τ₁] = ∫π(t)dt −</span>
+        <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">setup</sub>
+        <span class="f-op">−</span>
+        <span class="f-purple">𝒞</span><sub style="font-size:.6em;color:var(--mem)">rb</sub>
+      </div>
+      <div class="eq-result" id="domeVal" style="font-size:1.1rem">𝒟 = —</div>
+      <div class="formula-label">∫π·dt (session) — coûts d’affichage UI retirés du nombre montré</div>
     </div>
-    <div class="eq-result" id="domeVal" style="font-size:1.1rem">𝒟 = —</div>
-    <div class="formula-label">∫π·dt (session) — coûts d’affichage UI retirés du nombre montré</div>
   </div>
 
   <details class="advanced-fold">
@@ -120,7 +123,7 @@
     </div>
     <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
     <div
-      class="green-it-hint"
+      class="green-it-hint compactable-copy"
       style="margin-top:.5rem;font-size:.74rem;line-height:1.35;color:var(--muted);max-width:42rem"
     >
       Compteurs <strong>ACTIF</strong> seulement (idle/média exclus). <strong>kWh / CO₂ / €</strong> = intégrale
@@ -133,17 +136,13 @@
         complète & limites (pour audit / revue)</summary
       >
       <div
-        class="green-it-hint"
+        class="green-it-hint compactable-copy"
         style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted);border:none;padding:0;max-width:42rem"
       >
-        Les <strong>CPU·h</strong> et <strong>RAM·GB·h</strong> comparent une <strong>baseline</strong> (dôme OFF,
-        fenêtre glissante) aux échantillons <strong>dôme ON</strong> : ce sont des
-        <strong>modèles différentiels</strong> à partir de pourcentages CPU et ratios RAM
-        <strong>réellement lus</strong>, pas des wattmètres sur chaque ressource.
+        <strong>CPU·h</strong> et <strong>RAM·GB·h</strong> comparent baseline OFF et mesures ON sur fenêtre glissante.
         <br /><br />
-        L’intégrale <strong>∫𝒟</strong> côté télémétrie utilise <strong>π(t)</strong> issu de la formule
-        (paramètres κ, Σ, α visibles dans l’UI). <strong>SoulRAM</strong> (Windows) vise la pression mémoire
-        (logique voisine d’outils type WinMemoryCleaner), sans équivalence produit.
+        <strong>∫𝒟</strong> dépend de <strong>π(t)</strong>, de la friction et des paramètres visibles. SoulRAM traite
+        la pression mémoire, pas un gain marketing figé.
       </div>
     </details>
   </div>

@@ -7,6 +7,7 @@ mod audit;
 mod benchmark;
 mod external_power;
 mod formula;
+mod workload_catalog;
 mod hud;
 mod memory_policy;
 mod metrics;
@@ -17,15 +18,14 @@ mod telemetry;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::{Emitter, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
 use tokio::sync::mpsc;
 
 use audit::{audit_write, default_audit_path, now_ms_local, AuditState, SharedAudit};
 use hud::{
     apply_hud_window_mode, cleanup_hud_before_exit, reset_hud_health_for_show, HudHealthState,
-    HudOverlayData,
-    HudRuntimeState, SharedHud, SharedHudData, SharedHudHealth, SharedHudTx,
+    HudOverlayData, HudRuntimeState, SharedHud, SharedHudData, SharedHudHealth, SharedHudTx,
 };
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -202,6 +202,11 @@ fn platform_info() -> platform::PlatformInfo {
 }
 
 #[tauri::command]
+fn list_workload_scenes() -> Vec<workload_catalog::WorkloadSceneDto> {
+    workload_catalog::list_scenes_for_ui()
+}
+
+#[tauri::command]
 fn get_snapshot_before_dome(shared: State<'_, SharedState>) -> Option<metrics::ResourceState> {
     shared.lock().unwrap().snapshot_before_dome.clone()
 }
@@ -305,12 +310,24 @@ async fn run_kpi_probe(
     args: Vec<String>,
     cwd: Option<String>,
 ) -> Result<benchmark::KpiProbeResult, String> {
+    if command.trim().eq_ignore_ascii_case("system") {
+        let dur = args
+            .get(0)
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(4000);
+        return benchmark::execute_system_probe(dur).await;
+    }
     benchmark::execute_probe(command, args, cwd).await
+}
+
+fn emit_benchmark_progress(app: &AppHandle, payload: serde_json::Value) {
+    let _ = app.emit("soulkernel://benchmark-progress", payload);
 }
 
 #[tauri::command]
 async fn run_ab_benchmark(
     request: benchmark::BenchmarkRequest,
+    app: AppHandle,
     shared: State<'_, SharedState>,
     benchmark_state: State<'_, SharedBenchmark>,
 ) -> Result<benchmark::BenchmarkSession, String> {
@@ -323,19 +340,59 @@ async fn run_ab_benchmark(
             s.current_workload.clone(),
             s.target_pid,
             s.policy_mode.as_name().to_string(),
+            s.soulram_percent,
         )
     };
 
     let mut samples = Vec::with_capacity(runs_per_state * 2);
     let started_at = chrono::Utc::now().to_rfc3339();
+    let bench_profile = formula::WorkloadProfile::from_name(&request.workload)
+        .ok_or_else(|| format!("Unknown workload for benchmark: {}", request.workload))?;
+
+    let total_steps = runs_per_state * 2;
+    emit_benchmark_progress(
+        &app,
+        serde_json::json!({
+            "current": 0,
+            "total": total_steps,
+            "phase": null,
+            "step": "start",
+            "progress_percent": 0.0,
+            "message": format!("Démarrage A/B — {} échantillons ({}× OFF + {}× ON)", total_steps, runs_per_state, runs_per_state),
+        }),
+    );
 
     let bench_result = async {
-        for idx in 0..(runs_per_state * 2) {
+        for idx in 0..total_steps {
             let phase = if idx % 2 == 0 {
                 benchmark::BenchmarkPhase::Off
             } else {
                 benchmark::BenchmarkPhase::On
             };
+
+            let phase_str = if matches!(phase, benchmark::BenchmarkPhase::Off) {
+                "off"
+            } else {
+                "on"
+            };
+            let phase_label = if matches!(phase, benchmark::BenchmarkPhase::Off) {
+                "Dôme OFF"
+            } else {
+                "Dôme ON"
+            };
+            let pct_dome = ((idx as f64 + 0.22) / total_steps as f64 * 100.0).min(100.0);
+
+            emit_benchmark_progress(
+                &app,
+                serde_json::json!({
+                    "current": idx + 1,
+                    "total": total_steps,
+                    "phase": phase_str,
+                    "step": "dome",
+                    "progress_percent": pct_dome,
+                    "message": format!("{} — échantillon {}/{} — réglage noyau ({})", phase_label, idx + 1, total_steps, if matches!(phase, benchmark::BenchmarkPhase::Off) { "rollback" } else { "activation dôme" }),
+                }),
+            );
 
             match phase {
                 benchmark::BenchmarkPhase::Off => {
@@ -358,15 +415,54 @@ async fn run_ab_benchmark(
                 }
             }
 
+            let pct_settle = ((idx as f64 + 0.48) / total_steps as f64 * 100.0).min(100.0);
+            emit_benchmark_progress(
+                &app,
+                serde_json::json!({
+                    "current": idx + 1,
+                    "total": total_steps,
+                    "phase": phase_str,
+                    "step": "settle",
+                    "progress_percent": pct_settle,
+                    "message": format!("Stabilisation {} ms avant mesure…", settle_ms),
+                }),
+            );
+
             tokio::time::sleep(Duration::from_millis(settle_ms)).await;
 
+            let pct_probe = ((idx as f64 + 0.72) / total_steps as f64 * 100.0).min(100.0);
+            emit_benchmark_progress(
+                &app,
+                serde_json::json!({
+                    "current": idx + 1,
+                    "total": total_steps,
+                    "phase": phase_str,
+                    "step": "probe",
+                    "progress_percent": pct_probe,
+                    "message": format!(
+                        "Sonde KPI : `{}` {}",
+                        request.command,
+                        request.args.join(" ")
+                    ),
+                }),
+            );
+
             let before = metrics::collect().ok();
-            let probe = benchmark::execute_probe(
-                request.command.clone(),
-                request.args.clone(),
-                request.cwd.clone(),
-            )
-            .await?;
+            let probe = if request.command.trim().eq_ignore_ascii_case("system") {
+                let dur = request
+                    .args
+                    .get(0)
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(4000);
+                benchmark::execute_system_probe(dur).await?
+            } else {
+                benchmark::execute_probe(
+                    request.command.clone(),
+                    request.args.clone(),
+                    request.cwd.clone(),
+                )
+                .await?
+            };
             let after = metrics::collect().ok();
             let dome_active = shared.lock().map_err(|e| e.to_string())?.dome_active;
 
@@ -390,10 +486,74 @@ async fn run_ab_benchmark(
                 mem_after_gb: after.as_ref().map(|m| m.raw.mem_used_mb as f64 / 1024.0),
                 gpu_before_pct: before.as_ref().and_then(|m| m.raw.gpu_pct),
                 gpu_after_pct: after.as_ref().and_then(|m| m.raw.gpu_pct),
-                stdout_tail: probe.stdout_tail,
-                stderr_tail: probe.stderr_tail,
+                io_before_mb_s: before.as_ref().and_then(|m| {
+                    m.raw
+                        .io_read_mb_s
+                        .zip(m.raw.io_write_mb_s)
+                        .map(|(r, w)| r + w)
+                }),
+                io_after_mb_s: after.as_ref().and_then(|m| {
+                    m.raw
+                        .io_read_mb_s
+                        .zip(m.raw.io_write_mb_s)
+                        .map(|(r, w)| r + w)
+                }),
+                power_before_watts: before.as_ref().and_then(|m| m.raw.power_watts),
+                power_after_watts: after.as_ref().and_then(|m| m.raw.power_watts),
+                cpu_temp_before_c: before.as_ref().and_then(|m| m.raw.cpu_temp_c),
+                cpu_temp_after_c: after.as_ref().and_then(|m| m.raw.cpu_temp_c),
+                gpu_temp_before_c: before.as_ref().and_then(|m| m.raw.gpu_temp_c),
+                gpu_temp_after_c: after.as_ref().and_then(|m| m.raw.gpu_temp_c),
+                sigma_effective_before: before
+                    .as_ref()
+                    .map(|m| formula::compute(m, &bench_profile, request.kappa).sigma_effective),
+                sigma_effective_after: after
+                    .as_ref()
+                    .map(|m| formula::compute(m, &bench_profile, request.kappa).sigma_effective),
+                stdout_tail: probe.stdout_tail.clone(),
+                stderr_tail: probe.stderr_tail.clone(),
             });
+
+            let pct_done = ((idx + 1) as f64 / total_steps as f64 * 100.0).min(100.0);
+            let stdout_short: String = probe.stdout_tail.chars().take(320).collect();
+            let stderr_short: String = probe.stderr_tail.chars().take(320).collect();
+            emit_benchmark_progress(
+                &app,
+                serde_json::json!({
+                    "current": idx + 1,
+                    "total": total_steps,
+                    "phase": phase_str,
+                    "step": "done",
+                    "progress_percent": pct_done,
+                    "message": format!(
+                        "Échantillon {}/{} terminé — {} ms — succès={} exit={:?}",
+                        idx + 1,
+                        total_steps,
+                        probe.duration_ms,
+                        probe.success,
+                        probe.exit_code
+                    ),
+                    "probe_duration_ms": probe.duration_ms,
+                    "probe_ok": probe.success,
+                    "stdout_tail": stdout_short,
+                    "stderr_tail": stderr_short,
+                }),
+            );
         }
+
+        emit_benchmark_progress(
+            &app,
+            serde_json::json!({
+                "current": total_steps,
+                "total": total_steps,
+                "phase": null,
+                "step": "aggregate",
+                "progress_percent": 100.0,
+                "message": "Agrégation des métriques et verdict…",
+                "finished": true,
+                "ok": true,
+            }),
+        );
 
         Ok::<_, String>(benchmark::BenchmarkSession {
             started_at,
@@ -409,11 +569,28 @@ async fn run_ab_benchmark(
             eta: request.eta,
             target_pid: request.target_pid,
             policy_mode: request.policy_mode.clone(),
+            soulram_percent: request.soulram_percent.or(Some(initial.4)),
             summary: benchmark::compute_summary(&samples),
             samples,
         })
     }
     .await;
+
+    if let Err(ref e) = bench_result {
+        emit_benchmark_progress(
+            &app,
+            serde_json::json!({
+                "current": null,
+                "total": null,
+                "phase": null,
+                "step": "error",
+                "progress_percent": 0.0,
+                "message": format!("Échec benchmark: {}", e),
+                "finished": true,
+                "ok": false,
+            }),
+        );
+    }
 
     match initial.0 {
         true => {
@@ -624,9 +801,15 @@ fn get_evidence_data_paths(audit: State<'_, SharedAudit>) -> Result<EvidenceData
     };
     Ok(EvidenceDataPaths {
         telemetry_samples_jsonl: default_telemetry_path().to_string_lossy().into_owned(),
-        lifetime_gains_json: default_telemetry_lifetime_path().to_string_lossy().into_owned(),
-        energy_pricing_json: default_telemetry_pricing_path().to_string_lossy().into_owned(),
-        benchmark_sessions_jsonl: default_benchmark_history_path().to_string_lossy().into_owned(),
+        lifetime_gains_json: default_telemetry_lifetime_path()
+            .to_string_lossy()
+            .into_owned(),
+        energy_pricing_json: default_telemetry_pricing_path()
+            .to_string_lossy()
+            .into_owned(),
+        benchmark_sessions_jsonl: default_benchmark_history_path()
+            .to_string_lossy()
+            .into_owned(),
         audit_log_jsonl,
     })
 }
@@ -681,8 +864,8 @@ fn soulkernel_hud_watchdog_tick(app: &tauri::AppHandle) {
     let now = now_ms_local();
     let stale = now.saturating_sub(health.last_ready_ms) > HUD_STALE_MS;
     let exp = health.reload_count.min(3);
-    let cooldown_ms = (HUD_RELOAD_BASE_COOLDOWN_MS.saturating_mul(1u64 << exp))
-        .min(HUD_RELOAD_MAX_COOLDOWN_MS);
+    let cooldown_ms =
+        (HUD_RELOAD_BASE_COOLDOWN_MS.saturating_mul(1u64 << exp)).min(HUD_RELOAD_MAX_COOLDOWN_MS);
     let since_reload = now.saturating_sub(health.last_reload_ms);
     let cooldown_ok = since_reload > cooldown_ms;
     if stale && cooldown_ok && health.reload_count < HUD_RELOAD_MAX {
@@ -806,7 +989,8 @@ fn main() {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    let toggle_hud = shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyH);
+                    let toggle_hud =
+                        shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyH);
                     let toggle_interactive =
                         shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyJ);
                     if !toggle_hud && !toggle_interactive {
@@ -918,6 +1102,7 @@ fn main() {
             activate_dome,
             rollback_dome,
             platform_info,
+            list_workload_scenes,
             get_snapshot_before_dome,
             export_gains_to_file,
             export_benchmark_to_file,

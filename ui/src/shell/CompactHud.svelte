@@ -5,7 +5,7 @@
   <div
     style="font-size:.5rem;color:var(--muted);margin:-.2rem 0 .35rem;line-height:1.3"
   >
-    Lecture seule — activer le dôme et les preuves depuis la fenêtre principale.
+    Lecture seule. La fenêtre principale garde le contrôle et les preuves.
   </div>
   <div class="compact-hud-grid">
     <div class="compact-hud-item"><span>Dome:</span> <strong id="hudDome">-</strong></div>

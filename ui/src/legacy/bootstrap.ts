@@ -115,7 +115,7 @@ function logBenchGainsHuman(summary) {
     'p95 ' + pct(summary.gain_p95_pct),
   ];
   if (summary.gain_mem_median_pct != null && Number.isFinite(Number(summary.gain_mem_median_pct))) {
-    parts.push('pression RAM Δ ' + Number(summary.gain_mem_median_pct).toFixed(1) + '%');
+    parts.push('RAM utilisée Δ ' + Number(summary.gain_mem_median_pct).toFixed(1) + '%');
   }
   if (summary.gain_cpu_median_pct != null && Number.isFinite(Number(summary.gain_cpu_median_pct))) {
     parts.push('charge CPU Δ ' + Number(summary.gain_cpu_median_pct).toFixed(1) + '%');
@@ -128,6 +128,12 @@ function logBenchGainsHuman(summary) {
   }
   if (summary.gain_sigma_median_pct != null && Number.isFinite(Number(summary.gain_sigma_median_pct))) {
     parts.push('stress Δ ' + Number(summary.gain_sigma_median_pct).toFixed(1) + '%');
+  }
+  if (summary.gain_cpu_temp_median_pct != null && Number.isFinite(Number(summary.gain_cpu_temp_median_pct))) {
+    parts.push('temp. CPU Δ ' + Number(summary.gain_cpu_temp_median_pct).toFixed(1) + '%');
+  }
+  if (summary.gain_gpu_temp_median_pct != null && Number.isFinite(Number(summary.gain_gpu_temp_median_pct))) {
+    parts.push('temp. GPU Δ ' + Number(summary.gain_gpu_temp_median_pct).toFixed(1) + '%');
   }
   log('GAIN A/B (sonde KPI) — ' + parts.join(' · '), 'ok');
   auditEmit('benchmark', 'gains_summary', 'ok', {
@@ -213,7 +219,7 @@ function registerTauriBridge() {
   if (window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke) {
     initTauri();
   } else {
-    window.addEventListener('tauriReady', initTauri);
+    window.addEventListener('tauriReady', initTauri, { once: true });
     setTimeout(() => {
       if (!hasTauri && (window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke)) {
         initTauri();
@@ -226,8 +232,8 @@ function registerTauriBridge() {
   }
 }
 
-// ─── Workload alpha table (mirrors Rust side) ─────────────────────────────────
-const WORKLOADS = {
+// ─── Workload alpha table (mirrors Rust side + catalogue 50 scénarios) ──────────
+const WORKLOADS_FALLBACK = {
   es:      [0.20, 0.35, 0.20, 0.25, 0.00],
   compile: [0.55, 0.25, 0.10, 0.10, 0.00],
   gamer:   [0.45, 0.20, 0.05, 0.05, 0.25],
@@ -236,6 +242,104 @@ const WORKLOADS = {
   sqlite:  [0.20, 0.10, 0.05, 0.65, 0.00],
   oracle:  [0.25, 0.30, 0.10, 0.35, 0.00],
 };
+let WORKLOADS = { ...WORKLOADS_FALLBACK };
+/** Métadonnées scène (hints SoulRAM multi-OS), remplies par loadWorkloadCatalog. */
+let WORKLOAD_SCENES = [];
+
+function updateWlSceneMeta(wlId) {
+  const box = document.getElementById('wlSceneMeta');
+  if (!box) return;
+  box.replaceChildren();
+  const sc = (WORKLOAD_SCENES || []).find(s => s.id === wlId);
+  if (!sc) {
+    const p = document.createElement('p');
+    p.className = 'wl-meta-empty';
+    p.textContent = 'Sélectionnez un scénario pour afficher les actions SoulRAM par OS.';
+    box.appendChild(p);
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'wl-meta-title';
+  head.textContent = `${sc.label} · ${sc.hardware_focus || ''} · T≈${Number(sc.duration_estimate_s || 0).toFixed(0)}s · α=${(sc.alpha || []).map(x => Number(x).toFixed(2)).join('/')}`;
+  box.appendChild(head);
+  const grid = document.createElement('div');
+  grid.className = 'wl-meta-os-grid';
+  [
+    ['Linux (zRAM / swap / PSI)', sc.soulram_linux],
+    ['Windows (compression + trim)', sc.soulram_windows],
+    ['macOS (ratio + caches)', sc.soulram_macos],
+  ].forEach(([t, txt]) => {
+    const row = document.createElement('div');
+    row.className = 'wl-meta-os';
+    const th = document.createElement('div');
+    th.className = 'wl-meta-os-label';
+    th.textContent = t;
+    row.appendChild(th);
+    const p = document.createElement('p');
+    p.className = 'wl-meta-os-txt';
+    p.textContent = txt;
+    row.appendChild(p);
+    grid.appendChild(row);
+  });
+  box.appendChild(grid);
+}
+
+function fillWlSelect() {
+  const sel = document.getElementById('wlSelect');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const list = (WORKLOAD_SCENES && WORKLOAD_SCENES.length)
+    ? WORKLOAD_SCENES
+    : Object.keys(WORKLOADS_FALLBACK).map(id => ({ id, label: id, category: 'base' }));
+  list.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.label ? `${s.label} · ${s.category || ''}` : s.id;
+    sel.appendChild(opt);
+  });
+  if (WORKLOADS[state.wl]) sel.value = state.wl;
+  else sel.value = 'es';
+}
+
+function syncWorkloadUiHighlight() {
+  const wl = state.wl;
+  document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector(`.wl-btn[data-wl="${wl}"]`);
+  if (btn) btn.classList.add('active');
+  const sel = document.getElementById('wlSelect');
+  if (sel && WORKLOADS[wl]) sel.value = wl;
+  updateWlSceneMeta(wl);
+}
+
+async function loadWorkloadCatalog() {
+  let scenes = [];
+  if (hasTauri) {
+    try {
+      scenes = await invoke('list_workload_scenes');
+    } catch (e) {
+      log('list_workload_scenes: ' + e, 'warn');
+    }
+  }
+  if (!scenes.length) {
+    try {
+      const r = await fetch('/workload_scenes.json');
+      if (r.ok) scenes = await r.json();
+    } catch (_) {}
+  }
+  if (!scenes.length) {
+    WORKLOAD_SCENES = [];
+    WORKLOADS = { ...WORKLOADS_FALLBACK };
+    fillWlSelect();
+    syncWorkloadUiHighlight();
+    return;
+  }
+  WORKLOAD_SCENES = scenes;
+  WORKLOADS = {};
+  scenes.forEach(s => { WORKLOADS[s.id] = s.alpha; });
+  fillWlSelect();
+  if (!WORKLOADS[state.wl]) state.wl = 'es';
+  syncWorkloadUiHighlight();
+}
 
 let state = {
   wl: 'es',
@@ -307,6 +411,12 @@ let state = {
 };
 const HUD_METRIC_DEFAULTS = ['dome', 'sigma', 'pi', 'cpu', 'ram', 'target', 'power', 'energy'];
 const MAX_DOME_HISTORY = 30;
+/** Limite options `<select>` processus (évite milliers de nœuds DOM + gros tableaux JS). */
+const MAX_PROCESS_SELECT_OPTIONS = 200;
+const MAX_KPI_SESSIONS_IN_MEMORY = 20;
+const MAX_BENCH_TOP_UI = 24;
+/** Sessions A/B chargées depuis le disque : garde les derniers échantillons si export massif. */
+const MAX_SAMPLES_PER_SESSION_UI = 500;
 const PROCESS_REFRESH_MS = 7000;
 const ADAPTIVE_WORKLOAD_CONFIRM_CYCLES = 3;
 const ADAPTIVE_WORKLOAD_COOLDOWN_MS = 30000;
@@ -319,6 +429,8 @@ const POLL_HIDDEN_MS = 2000;
 const METRICS_AUDIT_MS = 10000;
 let pollInFlight = false;
 let pollTimer = null;
+let clockIntervalId = null;
+let processRefreshIntervalId = null;
 let pendingUiMetric = null;
 let uiFrameScheduled = false;
 let lastMetricsAuditTs = 0;
@@ -506,9 +618,7 @@ function setWorkload(nextWl, sourceLabel = "auto") {
   state.workloadLastSwitchTs = Date.now();
   state.adaptiveWorkloadCandidate = null;
   state.adaptiveWorkloadCandidateCount = 0;
-  document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
-  const btn = document.querySelector(`.wl-btn[data-wl="${wl}"]`);
-  if (btn) btn.classList.add('active');
+  syncWorkloadUiHighlight();
   logStateDiagWorkload(prevWl, wl, sourceLabel);
   if (state.lastMetrics) renderFormula(state.lastMetrics);
   loadBenchmarkHistory(true).catch(() => {});
@@ -772,6 +882,8 @@ function renderAbSummary(summary) {
     fg('gain_cpu_median_pct') != null ? `CPU ${f(fg('gain_cpu_median_pct'))}%` : null,
     fg('gain_power_median_pct') != null ? `W ${f(fg('gain_power_median_pct'))}%` : null,
     fg('gain_sigma_median_pct') != null ? `Sigma ${f(fg('gain_sigma_median_pct'))}%` : null,
+    fg('gain_cpu_temp_median_pct') != null ? `Tcpu ${f(fg('gain_cpu_temp_median_pct'))}%` : null,
+    fg('gain_gpu_temp_median_pct') != null ? `Tgpu ${f(fg('gain_gpu_temp_median_pct'))}%` : null,
   ].filter(Boolean);
   const resSuffix = resBits.length ? ` | apres sonde (med.): ${resBits.join(' · ')}` : '';
   el.textContent =
@@ -811,7 +923,7 @@ function renderBenchmarkLearning(advice) {
 function renderBenchmarkTop(topSessions) {
   const el = document.getElementById('benchmarkTopList');
   if (!el) return;
-  const top = Array.isArray(topSessions) ? topSessions : [];
+  const top = (Array.isArray(topSessions) ? topSessions : []).slice(0, MAX_BENCH_TOP_UI);
   if (!top.length) {
     el.innerHTML = '<div class="advisor-text">Aucun classement disponible.</div>';
     refreshSoulKernelLucide();
@@ -1093,11 +1205,11 @@ function deriveAdaptiveTarget(m, currentWl) {
   const effLearned = Number(learned?.expected_efficiency_score ?? 0);
 
   let wl = currentWl || 'es';
-  if (gpu >= 0.52) wl = 'gamer';
-  else if (io >= 0.58) wl = 'backup';
-  else if (cpu >= 0.76) wl = 'compile';
-  else if (memPressure >= 0.82) wl = 'oracle';
-  else if (gpu <= 0.30 && io <= 0.35 && cpu <= 0.62 && memPressure <= 0.65) wl = 'es';
+  if (gpu >= 0.52) wl = memPressure >= 0.45 ? 'llm_serving' : 'gamer';
+  else if (io >= 0.58) wl = 'cloud_sync';
+  else if (cpu >= 0.76) wl = 'ide_dev';
+  else if (memPressure >= 0.82) wl = 'postgres_db';
+  else if (gpu <= 0.30 && io <= 0.35 && cpu <= 0.62 && memPressure <= 0.65) wl = 'web_browsing';
 
   const baseKappa = learned ? Number(learned.recommended_kappa) : 2.0;
   const baseSigmaMax = learned ? Number(learned.recommended_sigma_max) : 0.75;
@@ -1216,17 +1328,131 @@ async function runAdaptiveController(m) {
   }
 }
 
+const BENCH_LOG_MAX = 16;
+let benchLogLines = [];
+
+function resetBenchmarkProgressUi() {
+  const wrap = document.getElementById('kpiBenchProgressWrap');
+  if (wrap) {
+    wrap.classList.remove('visible');
+    wrap.hidden = true;
+  }
+  const bar = document.getElementById('kpiBenchProgressBar');
+  if (bar) bar.style.width = '0%';
+  benchLogLines = [];
+  const logEl = document.getElementById('kpiBenchProgressLog');
+  if (logEl) logEl.textContent = '';
+  const title = document.getElementById('kpiBenchProgressTitle');
+  if (title) title.textContent = 'Benchmark en attente';
+  const sub = document.getElementById('kpiBenchProgressSub');
+  if (sub) sub.textContent = '';
+}
+
+function showBenchmarkProgressUi() {
+  const wrap = document.getElementById('kpiBenchProgressWrap');
+  if (wrap) {
+    wrap.hidden = false;
+    wrap.classList.add('visible');
+    try {
+      wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (_) {}
+  }
+  benchLogLines = [];
+  const logEl = document.getElementById('kpiBenchProgressLog');
+  if (logEl) logEl.textContent = '';
+  const bar = document.getElementById('kpiBenchProgressBar');
+  if (bar) bar.style.width = '0%';
+  const title = document.getElementById('kpiBenchProgressTitle');
+  if (title) title.textContent = 'Benchmark A/B en cours…';
+  const sub = document.getElementById('kpiBenchProgressSub');
+  if (sub) sub.textContent = '';
+}
+
+function updateBenchmarkProgressUi(payload) {
+  if (!payload) return;
+  const p = payload;
+  const wrap = document.getElementById('kpiBenchProgressWrap');
+  if (wrap) {
+    wrap.hidden = false;
+    wrap.classList.add('visible');
+  }
+  const bar = document.getElementById('kpiBenchProgressBar');
+  if (bar && typeof p.progress_percent === 'number' && Number.isFinite(p.progress_percent)) {
+    bar.style.width = Math.min(100, Math.max(0, p.progress_percent)) + '%';
+  }
+  const sub = document.getElementById('kpiBenchProgressSub');
+  if (sub) {
+    const cur = p.current != null ? String(p.current) : '—';
+    const tot = p.total != null ? String(p.total) : '—';
+    const ph = p.phase != null ? String(p.phase) : '—';
+    const st = p.step != null ? String(p.step) : '—';
+    sub.textContent = `Échantillon ${cur}/${tot} · ${ph} · ${st}`;
+  }
+  const title = document.getElementById('kpiBenchProgressTitle');
+  if (title && p.message != null) title.textContent = String(p.message);
+  if (p.step === 'done' && (p.stdout_tail || p.stderr_tail)) {
+    const extra = [];
+    if (p.stdout_tail) extra.push('stdout: ' + String(p.stdout_tail).trim());
+    if (p.stderr_tail) extra.push('stderr: ' + String(p.stderr_tail).trim());
+    const line = extra.join('\n');
+    if (line) {
+      benchLogLines.push(line);
+      if (benchLogLines.length > BENCH_LOG_MAX) benchLogLines.shift();
+      const logEl = document.getElementById('kpiBenchProgressLog');
+      if (logEl) logEl.textContent = benchLogLines.join('\n---\n');
+    }
+  }
+  if (p.finished) {
+    const t = document.getElementById('kpiBenchProgressTitle');
+    if (t && p.ok === false) {
+      t.textContent = t.textContent || 'Benchmark interrompu';
+    } else if (t && p.ok === true) {
+      t.textContent = String(p.message || 'Benchmark terminé');
+    }
+  }
+}
+
+let benchProgressHideTimer = null;
+function scheduleBenchmarkProgressHide() {
+  if (benchProgressHideTimer) clearTimeout(benchProgressHideTimer);
+  benchProgressHideTimer = setTimeout(() => {
+    benchProgressHideTimer = null;
+    resetBenchmarkProgressUi();
+  }, 2800);
+}
+
+function warnRiskyBenchmarkCommand(command, args) {
+  const cmd = String(command || '').trim().toLowerCase();
+  if (cmd === 'system') return false;
+  const a0 = args && args.length ? String(args[0]).trim().toLowerCase() : '';
+  if (cmd === 'cargo' && /^(check|build|run|test|clippy|fix|miri|expand)$/.test(a0)) {
+    log(
+      'Benchmark: cargo ' + a0 + ' sur ce dépôt peut faire recompiler le projet et, avec « cargo tauri dev », ' +
+        'redémarrer l’app (watcher sur target/). Utilisez plutôt la sonde « system » ou une commande hors repo.',
+      'warn'
+    );
+    return true;
+  }
+  if (cmd === 'cargo' && args.length === 0) {
+    log('Benchmark: « cargo » sans sous-commande peut être lent ou interactif — préférez une commande explicite.', 'warn');
+    return true;
+  }
+  return false;
+}
+
 async function runAbBenchmark() {
   if (state.kpiBench.running) return;
   const runsInput = parseInt(document.getElementById('kpiRuns')?.value || '5', 10);
   const runs = Math.max(5, Math.min(20, isNaN(runsInput) ? 5 : runsInput));
-  const command = (document.getElementById('kpiCommand')?.value || '').trim();
+  let command = (document.getElementById('kpiCommand')?.value || '').trim();
+  if (!command) {
+    command = 'system';
+    const kEl = document.getElementById('kpiCommand');
+    if (kEl) kEl.value = 'system';
+  }
   const args = tokenizeArgs(document.getElementById('kpiArgs')?.value || '');
   const benchWorkload = inferWorkloadFromBenchmarkCommand(command, args) || state.wl;
-  if (!command) {
-    log('KPI command vide', 'err');
-    return;
-  }
+  warnRiskyBenchmarkCommand(command, args);
   if (benchWorkload !== state.wl) {
     setWorkload(benchWorkload, 'benchmark');
     log('Benchmark workload auto: ' + benchWorkload, 'info');
@@ -1240,6 +1466,7 @@ async function runAbBenchmark() {
 
   const wasAdaptive = state.adaptiveEnabled;
   state.kpiBench.running = true;
+  showBenchmarkProgressUi();
   const runBtn = document.getElementById('btnRunAB');
   if (runBtn) runBtn.disabled = true;
   if (wasAdaptive) {
@@ -1292,6 +1519,9 @@ async function runAbBenchmark() {
     await loadBenchmarkHistory(true);
   } catch (e) {
     log('A/B error: ' + e, 'err');
+    const t = document.getElementById('kpiBenchProgressTitle');
+    if (t) t.textContent = 'Erreur: ' + e;
+    scheduleBenchmarkProgressHide();
   } finally {
     state.kpiBench.running = false;
     if (runBtn) runBtn.disabled = false;
@@ -1311,6 +1541,7 @@ async function runAbBenchmark() {
     }
     saveRuntimeSettings();
     saveStartupIntent();
+    scheduleBenchmarkProgressHide();
   }
 }
 
@@ -1326,10 +1557,18 @@ async function loadBenchmarkHistory(applyAdvice = true) {
         workload: state.wl,
       },
     });
-    state.kpiBench.sessions = Array.isArray(history?.sessions) ? history.sessions : [];
+    let sessions = Array.isArray(history?.sessions) ? history.sessions : [];
+    if (sessions.length > MAX_KPI_SESSIONS_IN_MEMORY) {
+      sessions = sessions.slice(0, MAX_KPI_SESSIONS_IN_MEMORY);
+    }
+    state.kpiBench.sessions = sessions.map(trimSessionSamplesForUi);
     state.kpiBench.lastSummary = history?.last_summary || (state.kpiBench.sessions[0]?.summary ?? null);
     state.kpiBench.tuningAdvice = history?.advice || null;
-    state.kpiBench.topSessions = Array.isArray(history?.top_sessions) ? history.top_sessions : [];
+    let topSessions = Array.isArray(history?.top_sessions) ? history.top_sessions : [];
+    if (topSessions.length > MAX_BENCH_TOP_UI) {
+      topSessions = topSessions.slice(0, MAX_BENCH_TOP_UI);
+    }
+    state.kpiBench.topSessions = topSessions;
     renderAbSummary(state.kpiBench.lastSummary);
     renderBenchmarkLearning(state.kpiBench.tuningAdvice);
     renderBenchmarkTop(state.kpiBench.topSessions);
@@ -1360,16 +1599,48 @@ function pickAutoProcess(list, selectedValue) {
   return chosen ? String(chosen.pid) : '';
 }
 
+function capProcessListForSelect(list, preserveValue) {
+  if (!Array.isArray(list) || list.length <= MAX_PROCESS_SELECT_OPTIONS) return list;
+  const sorted = [...list].sort(
+    (a, b) => (Number(b.cpu_usage) || 0) - (Number(a.cpu_usage) || 0)
+  );
+  const out = sorted.slice(0, MAX_PROCESS_SELECT_OPTIONS);
+  const pv = preserveValue != null && preserveValue !== '' ? String(preserveValue) : '';
+  if (pv && !out.some(p => String(p.pid) === pv)) {
+    const keep = list.find(p => String(p.pid) === pv);
+    if (keep) {
+      out.pop();
+      out.push(keep);
+    }
+  }
+  return out;
+}
+
+function trimSessionSamplesForUi(s) {
+  if (!s || !Array.isArray(s.samples) || s.samples.length <= MAX_SAMPLES_PER_SESSION_UI) return s;
+  return Object.assign({}, s, { samples: s.samples.slice(-MAX_SAMPLES_PER_SESSION_UI) });
+}
+
 function inferWorkloadFromBenchmarkCommand(command, args) {
+  if (String(command || '').trim().toLowerCase() === 'system') return 'idle_desktop';
   const joined = [command, ...(args || [])].join(' ').toLowerCase();
   if (/(^|\s)(cargo|rustc|cl|clang|gcc|msbuild|ninja|cmake|link\.exe|javac|gradle|mvn|go|dotnet|tsc|webpack)(\s|$)/.test(joined)) {
     return 'compile';
   }
   if (/(elastic|kibana|logstash)/.test(joined)) return 'es';
   if (/(sqlite|dbbrowser|litecli)/.test(joined)) return 'sqlite';
-  if (/(oracle|sqlplus|sqlservr|postgres|mysql|mariadb)/.test(joined)) return 'oracle';
+  if (/(postgres|psql)/.test(joined)) return 'postgres_db';
+  if (/(mysql|mariadb)/.test(joined)) return 'mysql_db';
+  if (/(mongo|mongod)/.test(joined)) return 'mongodb_db';
+  if (/(redis|redis-server)/.test(joined)) return 'redis_cache';
+  if (/(kafka)/.test(joined)) return 'kafka_stream';
+  if (/(spark)/.test(joined)) return 'spark_etl';
+  if (/(docker|podman|nerdctl)/.test(joined)) return 'docker_dev';
+  if (/(kubectl|k3s|kind)/.test(joined)) return 'kubernetes_edge';
+  if (/(oracle|sqlplus|sqlservr)/.test(joined)) return 'oracle';
   if (/(backup|veeam|acronis|robocopy|rsync|sync)/.test(joined)) return 'backup';
-  if (/(python|ollama|llama|pytorch|tensorflow|cuda)/.test(joined)) return 'ai';
+  if (/(ollama|llama|llm|vllm)/.test(joined)) return 'llm_serving';
+  if (/(python|pytorch|tensorflow|cuda)/.test(joined)) return 'ai';
   return null;
 }
 
@@ -1398,6 +1669,10 @@ function inferWorkloadFromProcess(proc, metrics) {
   if (/(elastic|kibana|logstash)/.test(name)) {
     return 'es';
   }
+  if (/(docker|podman|com\.docker)/.test(name)) return 'docker_dev';
+  if (/(postgres|postmaster)/.test(name)) return 'postgres_db';
+  if (/(redis-server|redis\.exe)/.test(name)) return 'redis_cache';
+  if (/(obs|obs64)/.test(name)) return 'twitch_stream';
 
   const cpu = Number(metrics?.raw?.cpu_pct || 0);
   const gpuNorm = Number(metrics?.gpu ?? 0);
@@ -1418,9 +1693,10 @@ function setProcessRefreshInfo() {
 async function refreshProcesses(options = {}) {
   const userInitiated = options.userInitiated === true;
   try {
-    const list = await invoke('list_processes');
+    const rawList = await invoke('list_processes');
     const sel = document.getElementById('targetProcess');
     const current = sel.value;
+    const list = capProcessListForSelect(rawList, current);
     sel.innerHTML = '<option value="">Ce processus (SoulKernel)</option>';
     list.forEach(p => {
       const opt = document.createElement('option');
@@ -1459,9 +1735,9 @@ async function refreshProcesses(options = {}) {
     setProcessRefreshInfo();
 
     if (userInitiated || list.length !== state.lastProcessCount) {
-      log(`Liste processus : ${list.length} entrées`, 'ok');
+      log(`Liste processus : ${list.length} affichées (${rawList.length} au total)`, 'ok');
     }
-    state.lastProcessCount = list.length;
+    state.lastProcessCount = rawList.length;
   } catch (e) {
     if (userInitiated) log(`list_processes: ${e}`, 'err');
   }
@@ -1500,8 +1776,8 @@ function saveRuntimeSettings() {
       autoReapplyIntent: state.autoReapplyIntent,
       adaptiveEnabled: state.adaptiveEnabled,
       adaptiveAutoDome: state.adaptiveAutoDome,
-      kpiCommand: (document.getElementById('kpiCommand')?.value || 'cargo'),
-      kpiArgs: (document.getElementById('kpiArgs')?.value || 'check'),
+      kpiCommand: (document.getElementById('kpiCommand')?.value || 'system'),
+      kpiArgs: (document.getElementById('kpiArgs')?.value || '4000'),
       kpiRuns: parseInt(document.getElementById('kpiRuns')?.value || '5', 10) || 5,
       viewMode: state.viewMode,
       hudVisible: !!state.hudVisible,
@@ -1648,11 +1924,7 @@ async function applyStartupIntentIfAny() {
   if (typeof intent.eta === 'number') state.eta = intent.eta;
   if (typeof intent.wl === 'string' && WORKLOADS[intent.wl]) {
     state.wl = intent.wl;
-    const btn = document.querySelector(`.wl-btn[data-wl="${state.wl}"]`);
-    if (btn) {
-      document.querySelectorAll('.wl-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    }
+    syncWorkloadUiHighlight();
   }
   setSlidersFromState();
   if (intent.soulRamActive) {
@@ -2789,11 +3061,21 @@ if (hudDisplayEl) {
   });
 }
 // ─── Sliders ──────────────────────────────────────────────────────────────────
-document.getElementById('wlGrid').addEventListener('click', e => {
-  const btn = e.target.closest('.wl-btn');
-  if (!btn) return;
-  setWorkload(btn.dataset.wl, 'manuel');
-});
+const wlGridEl = document.getElementById('wlGrid');
+if (wlGridEl) {
+  wlGridEl.addEventListener('click', e => {
+    const btn = e.target.closest('.wl-btn');
+    if (!btn) return;
+    setWorkload(btn.dataset.wl, 'manuel');
+  });
+}
+const wlSelectEl = document.getElementById('wlSelect');
+if (wlSelectEl) {
+  wlSelectEl.addEventListener('change', e => {
+    const v = e.target && e.target.value;
+    if (v) setWorkload(v, 'manuel');
+  });
+}
 
 document.addEventListener('click', e => {
   const el = e.target.closest('button, .wl-btn, input[type="checkbox"]');
@@ -2803,6 +3085,13 @@ document.addEventListener('click', e => {
   auditEmit('interaction', 'click', 'info', { id, text: txt, class: el.className || null });
 });
 
+if (window.__TAURI__?.event?.listen) {
+  window.__TAURI__.event.listen('soulkernel://benchmark-progress', ev => {
+    try {
+      updateBenchmarkProgressUi(ev.payload);
+    } catch (_) {}
+  }).catch(() => {});
+}
 if (!HUD_ONLY && window.__TAURI__?.event?.listen) {
   window.__TAURI__.event.listen('soulkernel://hud-state', ev => {
     state.hudVisible = !!ev.payload;
@@ -3239,9 +3528,30 @@ function updateDomeBadge(on) {
   document.getElementById('domeStatus').className   = 'status-pill ' + (on ? 'pill-run' : 'pill-off');
   document.getElementById('domeBadge').classList.toggle('show', on);
 }
-setInterval(() => {
-  document.getElementById('clk').textContent = new Date().toTimeString().slice(0,8);
+clockIntervalId = setInterval(() => {
+  const clk = document.getElementById('clk');
+  if (clk) clk.textContent = new Date().toTimeString().slice(0, 8);
 }, 1000);
+
+function soulKernelDomCleanup() {
+  try {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (clockIntervalId != null) {
+      clearInterval(clockIntervalId);
+      clockIntervalId = null;
+    }
+    if (processRefreshIntervalId != null) {
+      clearInterval(processRefreshIntervalId);
+      processRefreshIntervalId = null;
+    }
+  } catch (_) {}
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', soulKernelDomCleanup);
+}
 
 function log(msg, lvl='info') {
   const panel = document.getElementById('logPanel');
@@ -3307,7 +3617,22 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'set_policy_mode') return Promise.resolve('privileged');
   if (cmd === 'get_policy_status') return Promise.resolve({ mode: state.policyMode || 'privileged', is_admin: false, reboot_pending: false, memory_compression_enabled: null });
   if (cmd === 'set_taskbar_gauge') return Promise.resolve(null);
-  if (cmd === 'run_kpi_probe') return Promise.resolve({ command: args?.command || 'demo', args: args?.args || [], cwd: args?.cwd || null, duration_ms: 1200, success: true, exit_code: 0, stdout_tail: 'fallback', stderr_tail: ' ' });
+  if (cmd === 'run_kpi_probe') {
+    const c = String(args?.command || '').trim().toLowerCase();
+    if (c === 'system') {
+      return Promise.resolve({
+        command: 'system',
+        args: args?.args || ['4000'],
+        cwd: args?.cwd || null,
+        duration_ms: 1200,
+        success: true,
+        exit_code: 0,
+        stdout_tail: 'OS 1200ms | CPU~0% RAM~50% | I/O~0MB/s | n=5',
+        stderr_tail: '',
+      });
+    }
+    return Promise.resolve({ command: args?.command || 'demo', args: args?.args || [], cwd: args?.cwd || null, duration_ms: 1200, success: true, exit_code: 0, stdout_tail: 'fallback', stderr_tail: ' ' });
+  }
   if (cmd === 'run_ab_benchmark') {
     const request = args?.request || {};
     const samples = [];
@@ -3412,6 +3737,7 @@ if (HUD_ONLY) {
   return;
 }
 registerTauriBridge();
+await loadWorkloadCatalog();
 wireLegacyDomListeners();
 wireLegacyDomMore();
 loadRuntimeSettings();
@@ -3442,6 +3768,9 @@ renderAbSummary(state.kpiBench.lastSummary);
 renderBenchmarkLearning(state.kpiBench.tuningAdvice);
 saveRuntimeSettings();
   scheduleNextPoll();
-  setInterval(() => refreshProcesses({ userInitiated: false }), PROCESS_REFRESH_MS);
+  processRefreshIntervalId = setInterval(
+    () => refreshProcesses({ userInitiated: false }),
+    PROCESS_REFRESH_MS
+  );
   refreshSoulKernelLucide();
 }

@@ -94,11 +94,19 @@
         <div class="raw-cell"><div class="raw-label">PSI MEM</div><div class="raw-val" id="rawPsiMem">—</div></div>
         <div class="raw-cell"><div class="raw-label">CPU %</div><div class="raw-val" id="rawCpuPct">—</div></div>
         <div class="raw-cell"><div class="raw-label">CPU clock</div><div class="raw-val" id="rawCpuClock">—</div></div>
+        <div class="raw-cell"><div class="raw-label">CPU max</div><div class="raw-val" id="rawCpuMaxClock">—</div></div>
+        <div class="raw-cell"><div class="raw-label">CPU freq ratio</div><div class="raw-val" id="rawCpuFreqRatio">—</div></div>
+        <div class="raw-cell"><div class="raw-label">CPU temp</div><div class="raw-val" id="rawCpuTemp">—</div></div>
         <div class="raw-cell"><div class="raw-label">RAM speed</div><div class="raw-val" id="rawRamClock">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Load avg 1m</div><div class="raw-val" id="rawLoadAvg">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Runnable</div><div class="raw-val" id="rawRunnable">—</div></div>
         <div class="raw-cell"><div class="raw-label">I/O R/W</div><div class="raw-val" id="rawIoRw">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU %</div><div class="raw-val" id="rawGpuPct">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU core</div><div class="raw-val" id="rawGpuCoreClock">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU mem</div><div class="raw-val" id="rawGpuMemClock">—</div></div>
+        <div class="raw-cell"><div class="raw-label">GPU temp</div><div class="raw-val" id="rawGpuTemp">—</div></div>
+        <div class="raw-cell"><div class="raw-label">GPU power</div><div class="raw-val" id="rawGpuPower">—</div></div>
+        <div class="raw-cell"><div class="raw-label">VRAM used/total</div><div class="raw-val" id="rawGpuVram">—</div></div>
         <div class="raw-cell"><div class="raw-label">Power (W)</div><div class="raw-val" id="rawPowerW">—</div></div>
         <div class="raw-cell"><div class="raw-label">Opt real (A/B)</div><div class="raw-val" id="rawOptReal">—</div></div>
         <div class="raw-cell"><div class="raw-label">RAM·GB·H (tel.)</div><div class="raw-val" id="rawMemGbHTel">—</div></div>

@@ -9,6 +9,18 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+#[derive(Debug, Clone, Default)]
+pub struct LinuxAdvancedMetrics {
+    pub cpu_max_clock_mhz: Option<f64>,
+    pub cpu_temp_c: Option<f64>,
+    pub load_avg_1m_norm: Option<f64>,
+    pub runnable_tasks: Option<u64>,
+    pub gpu_temp_c: Option<f64>,
+    pub gpu_power_watts: Option<f64>,
+    pub gpu_mem_used_mb: Option<u64>,
+    pub gpu_mem_total_mb: Option<u64>,
+}
+
 // ─── Platform info ────────────────────────────────────────────────────────────
 
 pub fn platform_info() -> PlatformInfo {
@@ -128,11 +140,15 @@ fn zram_used_bytes() -> Option<u64> {
 }
 
 pub fn gpu_utilisation() -> Option<f64> {
-    // NVIDIA via /proc/driver/nvidia/gpus/.../information
-    // AMD via /sys/class/drm/card0/device/gpu_busy_percent
-    let amd_path = "/sys/class/drm/card0/device/gpu_busy_percent";
-    if let Ok(s) = std::fs::read_to_string(amd_path) {
-        return s.trim().parse().ok();
+    for card in drm_card_device_paths() {
+        let path = card.join("gpu_busy_percent");
+        if let Ok(s) = std::fs::read_to_string(path) {
+            if let Ok(v) = s.trim().parse::<f64>() {
+                if (0.0..=100.0).contains(&v) {
+                    return Some(v);
+                }
+            }
+        }
     }
     // NVIDIA fallback: parse nvidia-smi output
     // (would require subprocess call — omitted for brevity)
@@ -141,20 +157,33 @@ pub fn gpu_utilisation() -> Option<f64> {
 
 pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {
     let ram_clock_mhz = None;
-    let gpu_core_clock_mhz = read_gpu_clock_mhz(&[
-        "/sys/class/drm/card0/device/pp_dpm_sclk",
-        "/sys/class/drm/card1/device/pp_dpm_sclk",
-        "/sys/class/drm/card0/gt_cur_freq_mhz",
-        "/sys/class/drm/card1/gt_cur_freq_mhz",
-    ]);
-    let gpu_mem_clock_mhz = read_gpu_clock_mhz(&[
-        "/sys/class/drm/card0/device/pp_dpm_mclk",
-        "/sys/class/drm/card1/device/pp_dpm_mclk",
-    ]);
+    let mut core_paths = Vec::new();
+    let mut mem_paths = Vec::new();
+    for card in drm_card_paths() {
+        core_paths.push(card.join("device/pp_dpm_sclk"));
+        core_paths.push(card.join("gt_cur_freq_mhz"));
+        core_paths.push(card.join("gt/gt0/freq0/cur_freq"));
+        mem_paths.push(card.join("device/pp_dpm_mclk"));
+    }
+    let gpu_core_clock_mhz = read_gpu_clock_mhz(&core_paths);
+    let gpu_mem_clock_mhz = read_gpu_clock_mhz(&mem_paths);
     (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz)
 }
 
-fn read_gpu_clock_mhz(paths: &[&str]) -> Option<f64> {
+pub fn sample_advanced_metrics(logical_cores: f64) -> LinuxAdvancedMetrics {
+    LinuxAdvancedMetrics {
+        cpu_max_clock_mhz: read_cpu_max_clock_mhz(),
+        cpu_temp_c: read_cpu_temperature_c(),
+        load_avg_1m_norm: read_load_avg_norm(logical_cores),
+        runnable_tasks: read_runnable_tasks(),
+        gpu_temp_c: read_gpu_temperature_c(),
+        gpu_power_watts: read_gpu_power_watts(),
+        gpu_mem_used_mb: read_gpu_mem_info_mb("mem_info_vram_used"),
+        gpu_mem_total_mb: read_gpu_mem_info_mb("mem_info_vram_total"),
+    }
+}
+
+fn read_gpu_clock_mhz(paths: &[std::path::PathBuf]) -> Option<f64> {
     for path in paths {
         if let Some(v) = read_active_mhz_from_file(path) {
             return Some(v);
@@ -166,7 +195,7 @@ fn read_gpu_clock_mhz(paths: &[&str]) -> Option<f64> {
     None
 }
 
-fn read_active_mhz_from_file(path: &str) -> Option<f64> {
+fn read_active_mhz_from_file(path: &Path) -> Option<f64> {
     let content = std::fs::read_to_string(path).ok()?;
     for line in content.lines() {
         if !line.contains('*') {
@@ -183,10 +212,11 @@ fn read_active_mhz_from_file(path: &str) -> Option<f64> {
     None
 }
 
-fn read_scalar_mhz_from_file(path: &str) -> Option<f64> {
+fn read_scalar_mhz_from_file(path: &Path) -> Option<f64> {
     let raw = std::fs::read_to_string(path).ok()?;
     let val = raw.trim().parse::<f64>().ok()?;
-    if path.ends_with("_freq") || path.contains("cur_freq") {
+    let path_str = path.to_string_lossy();
+    if path_str.ends_with("_freq") || path_str.contains("cur_freq") {
         if val > 10_000.0 {
             Some(val / 1000.0)
         } else {
@@ -207,6 +237,196 @@ fn parse_mhz_token(token: &str) -> Option<f64> {
         .trim_end_matches("MHz")
         .trim_end_matches("mhz");
     cleaned.parse::<f64>().ok()
+}
+
+fn drm_card_paths() -> Vec<std::path::PathBuf> {
+    let mut cards = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/sys/class/drm") else {
+        return cards;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("card") || name.contains('-') || !path.is_dir() {
+            continue;
+        }
+        cards.push(path);
+    }
+    cards.sort();
+    cards
+}
+
+fn drm_card_device_paths() -> Vec<std::path::PathBuf> {
+    drm_card_paths()
+        .into_iter()
+        .map(|card| card.join("device"))
+        .filter(|p| p.exists())
+        .collect()
+}
+
+fn read_cpu_max_clock_mhz() -> Option<f64> {
+    let mut vals = Vec::new();
+    let entries = std::fs::read_dir("/sys/devices/system/cpu").ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path().join("cpufreq/cpuinfo_max_freq");
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(khz) = raw.trim().parse::<f64>() else {
+            continue;
+        };
+        if khz > 0.0 {
+            vals.push(khz / 1000.0);
+        }
+    }
+    if vals.is_empty() {
+        None
+    } else {
+        Some(vals.iter().sum::<f64>() / vals.len() as f64)
+    }
+}
+
+fn read_cpu_temperature_c() -> Option<f64> {
+    read_best_hwmon_temp(
+        "/sys/class/thermal",
+        &[
+            "x86_pkg_temp",
+            "pkg_temp",
+            "k10temp",
+            "zenpower",
+            "coretemp",
+            "acpitz",
+        ],
+    )
+    .or_else(|| read_best_hwmon_temp("/sys/class/hwmon", &["k10temp", "zenpower", "coretemp"]))
+}
+
+fn read_gpu_temperature_c() -> Option<f64> {
+    for device in drm_card_device_paths() {
+        if let Some(v) = read_hwmon_number_scaled(&device.join("hwmon"), "temp1_input", 1000.0) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn read_gpu_power_watts() -> Option<f64> {
+    for device in drm_card_device_paths() {
+        if let Some(v) =
+            read_hwmon_number_scaled(&device.join("hwmon"), "power1_average", 1_000_000.0).or_else(
+                || read_hwmon_number_scaled(&device.join("hwmon"), "power1_input", 1_000_000.0),
+            )
+        {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn read_gpu_mem_info_mb(name: &str) -> Option<u64> {
+    for device in drm_card_device_paths() {
+        let path = device.join(name);
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(bytes) = raw.trim().parse::<u64>() else {
+            continue;
+        };
+        if bytes > 0 {
+            return Some(bytes / 1024 / 1024);
+        }
+    }
+    None
+}
+
+fn read_load_avg_norm(logical_cores: f64) -> Option<f64> {
+    let load1 = std::fs::read_to_string("/proc/loadavg")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse::<f64>()
+        .ok()?;
+    if logical_cores <= 0.0 {
+        None
+    } else {
+        Some((load1 / logical_cores).clamp(0.0, 4.0))
+    }
+}
+
+fn read_runnable_tasks() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/loadavg").ok()?;
+    let token = s.split_whitespace().nth(3)?;
+    let runnable = token.split('/').next()?;
+    runnable.parse::<u64>().ok()
+}
+
+fn read_best_hwmon_temp(root: &str, preferred_types: &[&str]) -> Option<f64> {
+    let entries = std::fs::read_dir(root).ok()?;
+    let mut fallback = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let sensor_name = std::fs::read_to_string(path.join("type"))
+            .or_else(|_| std::fs::read_to_string(path.join("name")))
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase());
+        let temp = read_temp_input_from_dir(&path);
+        let Some(temp) = temp else {
+            continue;
+        };
+        match sensor_name {
+            Some(ref name)
+                if preferred_types
+                    .iter()
+                    .any(|p| name.contains(&p.to_ascii_lowercase())) =>
+            {
+                return Some(temp);
+            }
+            _ if fallback.is_none() => fallback = Some(temp),
+            _ => {}
+        }
+    }
+    fallback
+}
+
+fn read_temp_input_from_dir(dir: &Path) -> Option<f64> {
+    for candidate in ["temp1_input", "temp2_input", "temp3_input"] {
+        let path = dir.join(candidate);
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(v) = raw.trim().parse::<f64>() else {
+            continue;
+        };
+        if v > 1000.0 {
+            return Some(v / 1000.0);
+        }
+        if v > 0.0 {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn read_hwmon_number_scaled(hwmon_root: &Path, file_name: &str, scale: f64) -> Option<f64> {
+    let entries = std::fs::read_dir(hwmon_root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path().join(file_name);
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(v) = raw.trim().parse::<f64>() else {
+            continue;
+        };
+        if v > 0.0 {
+            return Some(v / scale);
+        }
+    }
+    None
 }
 
 // ─── Dome activation ──────────────────────────────────────────────────────────
@@ -368,6 +588,7 @@ pub async fn apply_dome(
     _target_pid: Option<u32>,
 ) -> Vec<(String, bool)> {
     let mut actions = Vec::new();
+    let adaptive = crate::platform::derive_adaptive_action_profile(profile, eta, baseline, _policy);
 
     let mem_plan = crate::memory_policy::plan_for_dome_activation(baseline, profile);
     for note in &mem_plan.notes {
@@ -378,23 +599,48 @@ pub async fn apply_dome(
     // r_new[i] = r[i] + η · α[i] · (1 − Σ)
     let boost =
         |i: usize| -> f64 { (profile.alpha[i] * eta * (1.0 - baseline.sigma)).clamp(0.0, 0.3) };
+    let cpu_hot =
+        adaptive.thermal_guard && baseline.raw.cpu_temp_c.map(|t| t >= 82.0).unwrap_or(false);
+    let gpu_hot =
+        adaptive.thermal_guard && baseline.raw.gpu_temp_c.map(|t| t >= 78.0).unwrap_or(false);
+    let io_busy = baseline.io_bandwidth.unwrap_or(0.0) >= 0.42;
 
     // ── CPU governor ─────────────────────────────────────────────────────────
-    if profile.alpha[0] > 0.3 {
-        actions.push(write_cpu_governor("performance"));
-    } else {
-        actions.push(write_cpu_governor("schedutil"));
-    }
+    let cpu_governor = match adaptive.cpu_bias {
+        crate::platform::CpuBias::Boost => "performance",
+        crate::platform::CpuBias::Eco => "powersave",
+        crate::platform::CpuBias::Balanced => "schedutil",
+    };
+    actions.push(write_cpu_governor(cpu_governor));
+    actions.push(write_cpu_energy_preference(match adaptive.cpu_bias {
+        crate::platform::CpuBias::Boost => "performance",
+        crate::platform::CpuBias::Eco => "balance_power",
+        crate::platform::CpuBias::Balanced => "balance_performance",
+    }));
+    actions.push(write_cpu_boost(matches!(
+        adaptive.cpu_bias,
+        crate::platform::CpuBias::Boost
+    )));
 
     // ── Swappiness ───────────────────────────────────────────────────────────
-    let target_swappiness: u64 = if profile.alpha[2] > 0.2 { 80 } else { 30 };
+    let target_swappiness: u64 =
+        if matches!(adaptive.memory_bias, crate::platform::MemoryBias::Boost) && baseline.mem < 0.4
+        {
+            80
+        } else if adaptive.sigma_guard || cpu_hot || gpu_hot {
+            20
+        } else {
+            30
+        };
     actions.push(write_sysctl(
         "vm.swappiness",
         &target_swappiness.to_string(),
     ));
 
     // ── zRAM resize ──────────────────────────────────────────────────────────
-    if Path::new("/sys/block/zram0").exists() && profile.alpha[2] > 0.1 && mem_plan.apply_zram_resize
+    if Path::new("/sys/block/zram0").exists()
+        && profile.alpha[2] > 0.1
+        && mem_plan.apply_zram_resize
     {
         let boost_factor = 1.0 + boost(2) * 2.0; // up to 60% more zRAM
         let (msg, ok) = resize_zram(boost_factor);
@@ -405,22 +651,38 @@ pub async fn apply_dome(
     }
 
     // ── I/O scheduler ────────────────────────────────────────────────────────
-    let scheduler = if profile.alpha[3] > 0.4 {
+    let scheduler = if matches!(adaptive.io_bias, crate::platform::IoBias::Boost) && !io_busy {
         "mq-deadline"
+    } else if adaptive.sigma_guard {
+        "none"
     } else {
         "bfq"
     };
     actions.push(write_io_scheduler(scheduler));
 
     // ── read_ahead_kb ─────────────────────────────────────────────────────────
-    if profile.alpha[3] > 0.3 {
-        actions.push(write_read_ahead(2048));
+    if !matches!(adaptive.io_bias, crate::platform::IoBias::Eco) || profile.alpha[3] > 0.3 {
+        let read_ahead = if io_busy { 1024 } else { 2048 };
+        actions.push(write_read_ahead(read_ahead));
     }
+
+    actions.push(write_block_nomerges(if io_busy || adaptive.sigma_guard {
+        2
+    } else {
+        0
+    }));
 
     // ── CPU pinning via cgroups v2 ────────────────────────────────────────────
     if Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         actions.push(pin_process_to_cpuset());
     }
+
+    // ── GPU runtime policy (best-effort, reversible) ────────────────────────
+    actions.extend(write_gpu_runtime_policy(match adaptive.gpu_bias {
+        crate::platform::GpuBias::Eco => GpuRuntimePolicy::Auto,
+        crate::platform::GpuBias::Boost => GpuRuntimePolicy::High,
+        crate::platform::GpuBias::Balanced => GpuRuntimePolicy::Balanced,
+    }));
 
     // ── Page cache drop (free stale cache for I/O-heavy workloads) ────────────
     if profile.alpha[3] > 0.5 && mem_plan.apply_drop_caches {
@@ -440,13 +702,18 @@ pub async fn rollback(
     _snapshot: Option<ResourceState>,
     _target_pid: Option<u32>,
 ) -> Vec<(String, bool)> {
-    vec![
+    let mut actions = vec![
         write_cpu_governor("schedutil"),
+        write_cpu_energy_preference("balance_performance"),
+        write_cpu_boost(true),
         write_sysctl("vm.swappiness", "60"),
         write_io_scheduler("bfq"),
         write_read_ahead(128),
+        write_block_nomerges(0),
         ("cgroup cpuset released".into(), remove_soulkernel_cgroup()),
-    ]
+    ];
+    actions.extend(write_gpu_runtime_policy(GpuRuntimePolicy::Auto));
+    actions
 }
 
 // ─── Kernel write primitives ──────────────────────────────────────────────────
@@ -471,6 +738,48 @@ fn write_cpu_governor(governor: &str) -> (String, bool) {
         }
     }
     (format!("CPU governor → {}", governor), any_ok)
+}
+
+fn write_cpu_energy_preference(pref: &str) -> (String, bool) {
+    let mut any_ok = false;
+    let entries = std::fs::read_dir("/sys/devices/system/cpu")
+        .into_iter()
+        .flatten()
+        .flatten();
+    for entry in entries {
+        let path = entry.path().join("cpufreq/energy_performance_preference");
+        if path.exists() && std::fs::write(&path, pref).is_ok() {
+            any_ok = true;
+        }
+    }
+    (format!("CPU energy preference → {}", pref), any_ok)
+}
+
+fn write_cpu_boost(enabled: bool) -> (String, bool) {
+    let value = if enabled { "1" } else { "0" };
+    let candidates = [
+        "/sys/devices/system/cpu/cpufreq/boost",
+        "/sys/devices/system/cpu/intel_pstate/no_turbo",
+    ];
+    let mut any_ok = false;
+    for path in candidates {
+        let write_val = if path.ends_with("no_turbo") {
+            if enabled {
+                "0"
+            } else {
+                "1"
+            }
+        } else {
+            value
+        };
+        if Path::new(path).exists() && std::fs::write(path, write_val).is_ok() {
+            any_ok = true;
+        }
+    }
+    (
+        format!("CPU boost → {}", if enabled { "on" } else { "off" }),
+        any_ok,
+    )
 }
 
 /// Detect the primary block device (first non-virtual disk with a scheduler).
@@ -540,6 +849,21 @@ fn write_read_ahead(kb: u64) -> (String, bool) {
     (format!("read_ahead_kb ({}) → {}", dev, kb), ok)
 }
 
+fn write_block_nomerges(value: u8) -> (String, bool) {
+    let dev = match detect_primary_block_device() {
+        Some(d) => d,
+        None => {
+            return (
+                format!("nomerges → {} (no block device found)", value),
+                false,
+            )
+        }
+    };
+    let path = format!("/sys/block/{}/queue/nomerges", dev);
+    let ok = std::fs::write(&path, value.to_string()).is_ok();
+    (format!("nomerges ({}) → {}", dev, value), ok)
+}
+
 fn resize_zram(factor: f64) -> (String, bool) {
     // Read current disksize, multiply by factor
     let current: u64 = std::fs::read_to_string("/sys/block/zram0/disksize")
@@ -591,6 +915,50 @@ fn drop_caches_level(level: u8) -> (String, bool) {
 
 fn remove_soulkernel_cgroup() -> bool {
     std::fs::remove_dir("/sys/fs/cgroup/soulkernel").is_ok()
+}
+
+#[derive(Clone, Copy)]
+enum GpuRuntimePolicy {
+    Auto,
+    Balanced,
+    High,
+}
+
+fn write_gpu_runtime_policy(policy: GpuRuntimePolicy) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for card in drm_card_paths() {
+        let label = card
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("gpu")
+            .to_string();
+        let device = card.join("device");
+
+        let power_control = match policy {
+            GpuRuntimePolicy::Auto | GpuRuntimePolicy::Balanced => "auto",
+            GpuRuntimePolicy::High => "on",
+        };
+        let pwr_path = device.join("power/control");
+        if pwr_path.exists() {
+            let ok = std::fs::write(&pwr_path, power_control).is_ok();
+            out.push((format!("GPU runtime ({label}) → {}", power_control), ok));
+        }
+
+        let amd_level = match policy {
+            GpuRuntimePolicy::Auto => "auto",
+            GpuRuntimePolicy::Balanced => "low",
+            GpuRuntimePolicy::High => "high",
+        };
+        let amd_path = device.join("power_dpm_force_performance_level");
+        if amd_path.exists() {
+            let ok = std::fs::write(&amd_path, amd_level).is_ok();
+            out.push((format!("GPU DPM ({label}) → {}", amd_level), ok));
+        }
+    }
+    if out.is_empty() {
+        out.push(("GPU runtime policy unavailable".into(), false));
+    }
+    out
 }
 
 // ─── FFI shim (Unix only) ────────────────────────────────────────────────────

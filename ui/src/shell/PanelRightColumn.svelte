@@ -1,19 +1,28 @@
 <!-- Colonne droite : Σ, paramètres, SoulRAM / HUD, actions dôme -->
 <div class="panel panel-right">
   <div class="panel-title">
-    <span class="pt-ico" style="color:var(--stress)"><i data-lucide="gauge"></i></span><span
-      >STRESS GLOBAL Σ(t) · LIVE</span
-    >
+    <span class="pt-ico"><i data-lucide="sliders-horizontal"></i></span><span>PILOTAGE · ACTIONS</span>
   </div>
-  <div class="sigma-gauge">
-    <div class="sigma-fill" id="sigmaFill" style="height:0"></div>
-    <div class="sigma-val" id="sigmaVal">—</div>
-    <div class="sigma-label" id="sigmaSubLabel">PSI + STEAL + MEM PRESSURE</div>
+  <div class="advisor-panel operator-brief">
+    <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem">
+      <span class="pt-ico" style="color:var(--cpu)"><i data-lucide="crosshair"></i></span><span>Mode opérateur</span>
+    </div>
+    <div class="advisor-text">
+      Décider vite: lire <strong>Σ</strong>, appliquer la recommandation, puis lancer ou rollback. Les détails restent
+      disponibles plus bas sans polluer la boucle principale.
+    </div>
+  </div>
+  <div class="pilotage-card pilotage-card--stress">
+    <div class="pilotage-title" style="display:flex;align-items:center;gap:.35rem">
+      <span class="pt-ico" style="color:var(--stress)"><i data-lucide="gauge"></i></span><span>Stress global Σ(t)</span>
+    </div>
+    <div class="sigma-gauge">
+      <div class="sigma-fill" id="sigmaFill" style="height:0"></div>
+      <div class="sigma-val" id="sigmaVal">—</div>
+      <div class="sigma-label" id="sigmaSubLabel">PSI + STEAL + MEM PRESSURE</div>
+    </div>
   </div>
 
-  <div class="panel-title">
-    <span class="pt-ico"><i data-lucide="sliders-horizontal"></i></span><span>PARAMÈTRES</span>
-  </div>
   <div class="pilotage-card">
     <div class="pilotage-title" style="display:flex;align-items:center;gap:.35rem">
       <span class="pt-ico" style="color:var(--io)"><i data-lucide="sparkles"></i></span><span
@@ -104,11 +113,8 @@
             <span class="kappa-num" id="soulRamStatus" style="color:var(--stress)">OFF</span>
           </div>
           <p class="target-hint" style="margin:.25rem 0 .35rem;line-height:1.45">
-            <strong>À quoi ça sert :</strong> alléger la pression mémoire <em>hors dôme</em> — sur Windows, trim du
-            working set des processus + activation de la compression mémoire (backend réel, droits admin) ; sur Linux,
-            cible zRAM selon la politique plateforme. Le curseur fixe un <strong>objectif de ratio</strong> pour cette
-            politique, pas un « % de gain garanti ». Les <strong>effets mesurables</strong> passent par la RAM utilisée
-            / la télémétrie ci-dessous (pas de chiffre inventé).
+            <strong>But :</strong> détendre la mémoire hors dôme. Le curseur fixe un <strong>objectif de politique</strong>,
+            pas un gain garanti, et les effets se lisent dans la télémétrie réelle ci-dessous.
           </p>
           <div class="kappa-row" style="gap:.5rem;align-items:center">
             <input type="range" id="soulRamPct" min="5" max="60" step="1" value="20" style="flex:1" />
@@ -147,9 +153,8 @@
             <span class="pt-ico"><i data-lucide="monitor"></i></span><span>HUD Overlay (2ᵉ fenêtre)</span>
           </div>
           <p class="target-hint" style="margin:.2rem 0;line-height:1.45">
-            Fenêtre toujours au-dessus, alimentée par les mêmes métriques que l’app. Si le HUD ne s’affiche pas ou fait
-            fermer l’app, utilise d’abord le bouton <strong>HUD ON</strong> dans la barre d’outils (il réinitialise le
-            suivi santé WebView) ; évite d’ouvrir/fermer en rafale avec le raccourci seul.
+            Fenêtre always-on-top sur les mêmes métriques. Si elle décroche, repasse par <strong>HUD ON</strong> dans la
+            barre d’outils avant de retenter.
           </p>
           <div class="gains-actions" style="margin-top:.2rem">
             <button type="button" class="ctrl-btn btn-secondary" id="btnHudEdit" style="font-size:.62rem;padding:.25rem .45rem"
@@ -260,7 +265,7 @@
     </details>
   </div>
 
-  <div class="controls controls-primary">
+  <div class="controls controls-primary controls-primary--sticky">
     <button class="ctrl-btn btn-primary" id="btnDome"
       ><span class="btn-ico"><i data-lucide="rocket"></i></span> ACTIVER DOME</button
     >

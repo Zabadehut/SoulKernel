@@ -1,19 +1,25 @@
 <header>
-  <div class="logo">
-    <img
-      class="logo-img"
-      src="/assets/brand/icon_32x32.png"
-      width="28"
-      height="28"
-      alt=""
-      aria-hidden="true"
-    />
-    <div>
-      <div class="logo-text">SoulKernel</div>
-      <div class="logo-sub">PERFORMANCE DOME ORCHESTRATOR</div>
+  <div class="header-brand">
+    <div class="logo">
+      <img
+        class="logo-img"
+        src="/assets/brand/icon_32x32.png"
+        width="28"
+        height="28"
+        alt=""
+        aria-hidden="true"
+      />
+      <div>
+        <div class="logo-text">SoulKernel</div>
+        <div class="logo-sub">PERFORMANCE DOME ORCHESTRATOR</div>
+      </div>
+    </div>
+    <div class="header-intro">
+      <div class="header-kicker">Control room</div>
+      <div class="header-copy">Pilotage du dôme, preuves A/B et garde-fous système dans un même cockpit.</div>
     </div>
   </div>
-  <div class="status-bar">
+  <div class="header-ops">
     <div
       class="view-switch"
       title="Pilotage = essentiel + contrôles · Standard = audit complet · Benchmark = preuve A/B"
@@ -31,10 +37,12 @@
         ><span class="view-ico"><i data-lucide="panel-top"></i></span> HUD OFF</button
       >
     </div>
-    <div class="platform-badge" id="platformBadge">Connecting…</div>
-    <div class="status-pill pill-ok" id="sysStatus">SYSTEM OK</div>
-    <div class="status-pill pill-warn" id="activityBadge" style="display:none">ACTIF</div>
-    <div class="status-pill pill-off" id="domeStatus">DOME IDLE</div>
-    <div class="clock" id="clk">--:--:--</div>
+    <div class="status-bar">
+      <div class="platform-badge" id="platformBadge">Connecting…</div>
+      <div class="status-pill pill-ok" id="sysStatus">SYSTEM OK</div>
+      <div class="status-pill pill-warn" id="activityBadge" style="display:none">ACTIF</div>
+      <div class="status-pill pill-off" id="domeStatus">DOME IDLE</div>
+      <div class="clock" id="clk">--:--:--</div>
+    </div>
   </div>
 </header>

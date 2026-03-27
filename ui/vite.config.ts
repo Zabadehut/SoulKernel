@@ -17,6 +17,8 @@ export default defineConfig({
     host: host || false,
   },
   build: {
+    /** Pas de source maps en prod : moins de fichiers servis, pas de fuites de noms dans le bundle. */
+    sourcemap: false,
     rollupOptions: {
       input: {
         main: path.resolve(root, 'index.html'),
