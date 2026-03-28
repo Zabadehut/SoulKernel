@@ -425,7 +425,7 @@ const ADVICE_COOLDOWN_MS = 12000;
 const POLL_FAST_MS = 700;
 const POLL_MEDIUM_MS = 1000;
 const POLL_SLOW_MS = 1400;
-const POLL_HIDDEN_MS = 2000;
+const POLL_HIDDEN_MS = 15000;
 const METRICS_AUDIT_MS = 10000;
 let pollInFlight = false;
 let pollTimer = null;
@@ -451,6 +451,7 @@ function scheduleNextPoll() {
 }
 
 function scheduleMetricRender(m) {
+  if (document.hidden) return;
   pendingUiMetric = m;
   if (uiFrameScheduled) return;
   uiFrameScheduled = true;
@@ -1094,6 +1095,12 @@ function renderGreenItPanel(s) {
   set('greenDomeN', String(lt.total_dome_activations || 0));
   set('greenDomeH', f2(lt.total_dome_hours));
   set('greenDomeD', f2(lt.total_dome_gain_integral));
+  set('greenDayKwh', s.day?.has_power_data ? f3(s.day?.energy_kwh) : '--');
+  set('greenDayEur', s.day?.has_power_data ? (f2(s.day?.cost) + ' ' + (s.pricing?.currency || 'EUR')) : '--');
+  set('greenWeekKwh', s.week?.has_power_data ? f3(s.week?.energy_kwh) : '--');
+  set('greenWeekEur', s.week?.has_power_data ? (f2(s.week?.cost) + ' ' + (s.pricing?.currency || 'EUR')) : '--');
+  set('greenMonthKwh', s.month?.has_power_data ? f3(s.month?.energy_kwh) : '--');
+  set('greenMonthEur', s.month?.has_power_data ? (f2(s.month?.cost) + ' ' + (s.pricing?.currency || 'EUR')) : '--');
 
   // Lifetime text
   const ltEl = document.getElementById('greenItLifetime');
@@ -1900,6 +1907,36 @@ function setProcessRefreshInfo() {
     return;
   }
   info.textContent = `maj auto: ${state.lastProcessRefreshTs}`;
+}
+
+function startClockLoop() {
+  if (clockIntervalId != null) return;
+  clockIntervalId = setInterval(() => {
+    const clk = document.getElementById('clk');
+    if (clk) clk.textContent = new Date().toTimeString().slice(0, 8);
+  }, 1000);
+}
+
+function stopClockLoop() {
+  if (clockIntervalId != null) {
+    clearInterval(clockIntervalId);
+    clockIntervalId = null;
+  }
+}
+
+function startProcessRefreshLoop() {
+  if (processRefreshIntervalId != null || document.hidden) return;
+  processRefreshIntervalId = setInterval(
+    () => refreshProcesses({ userInitiated: false }),
+    PROCESS_REFRESH_MS
+  );
+}
+
+function stopProcessRefreshLoop() {
+  if (processRefreshIntervalId != null) {
+    clearInterval(processRefreshIntervalId);
+    processRefreshIntervalId = null;
+  }
 }
 
 async function refreshProcesses(options = {}) {
@@ -2728,6 +2765,92 @@ function benchmarkDiagPayload(extra = {}) {
   };
 }
 
+function collectEnergyMeterExport() {
+  const t = state.telemetrySummary || null;
+  const livePowerW = t?.live_power_w != null ? Number(t.live_power_w) : null;
+  const powerSource = t?.power_source || null;
+  const hasRealPower = !!t?.data_real_power;
+  const pricing = t?.pricing ? {
+    currency: t.pricing.currency || 'EUR',
+    price_per_kwh: t.pricing.price_per_kwh ?? null,
+    co2_kg_per_kwh: t.pricing.co2_kg_per_kwh ?? null,
+  } : null;
+  const windows = t ? {
+    total_kwh: t.total?.energy_kwh ?? null,
+    total_cost: t.total?.cost ?? null,
+    total_co2_kg: t.total?.co2_kg ?? null,
+    hour_kwh: t.hour?.energy_kwh ?? null,
+    day_kwh: t.day?.energy_kwh ?? null,
+    week_kwh: t.week?.energy_kwh ?? null,
+    month_kwh: t.month?.energy_kwh ?? null,
+    year_kwh: t.year?.energy_kwh ?? null,
+  } : null;
+  const lifetime = t?.lifetime ? {
+    total_energy_kwh: t.lifetime.total_energy_kwh ?? null,
+    total_cost_saved: t.lifetime.total_cost_saved ?? null,
+    total_co2_avoided_kg: t.lifetime.total_co2_avoided_kg ?? null,
+    has_real_power: !!t.lifetime.has_real_power,
+  } : null;
+  const external = {
+    source_tag: String(document.getElementById('merossSourceTag')?.textContent || '').trim() || null,
+    last_watts_label: String(document.getElementById('merossLastWatts')?.textContent || '').trim() || null,
+    freshness: String(document.getElementById('merossFreshness')?.textContent || '').trim() || null,
+    file_presence: String(document.getElementById('merossFilePresence')?.textContent || '').trim() || null,
+    bridge_state: String(document.getElementById('merossBridgeRunning')?.textContent || '').trim() || null,
+    runtime: String(document.getElementById('merossPythonRuntime')?.textContent || '').trim() || null,
+    config_path: String(document.getElementById('merossConfigPath')?.textContent || '').trim() || null,
+    power_file_path: String(document.getElementById('merossResolvedPowerFile')?.textContent || '').trim() || null,
+    cache_path: String(document.getElementById('merossCredsCachePath')?.textContent || '').trim() || null,
+    last_ts_label: String(document.getElementById('merossLastTs')?.textContent || '').trim() || null,
+    last_error: String(document.getElementById('merossBridgeError')?.textContent || '').trim() || null,
+  };
+  return {
+    has_real_power: hasRealPower,
+    live_power_w: livePowerW,
+    power_source: powerSource,
+    is_external_wall_source: powerSource === 'meross_wall',
+    pricing,
+    windows,
+    lifetime,
+    external_power: external,
+  };
+}
+
+function collectEnergyPeriodReport(periodKey) {
+  const t = state.telemetrySummary || null;
+  const w = t?.[periodKey] || null;
+  return {
+    period: periodKey,
+    exported_at: new Date().toISOString(),
+    currency: t?.pricing?.currency || 'EUR',
+    power_source: t?.power_source || null,
+    live_power_w: t?.live_power_w ?? null,
+    has_power_data: !!w?.has_power_data,
+    energy_kwh: w?.energy_kwh ?? null,
+    cost: w?.cost ?? null,
+    co2_kg: w?.co2_kg ?? null,
+    duration_h: w?.duration_h ?? null,
+    avg_power_w: w?.avg_power_w ?? null,
+    samples: w?.samples ?? null,
+    external_power: collectEnergyMeterExport().external_power,
+  };
+}
+
+async function exportEnergyPeriodReport(periodKey) {
+  const labelMap = { day: 'daily', week: 'weekly', month: 'monthly' };
+  const path = await invoke('export_gains_to_file', {
+    content: JSON.stringify({
+      product: 'SoulKernel',
+      report_type: 'energy_period',
+      period: periodKey,
+      period_label: labelMap[periodKey] || periodKey,
+      report: collectEnergyPeriodReport(periodKey),
+      telemetry_summary: state.telemetrySummary,
+    }, null, 2),
+  });
+  return path;
+}
+
 function buildSessionReportText() {
   const now = new Date().toISOString();
   const diag = benchmarkDiagPayload({
@@ -2741,6 +2864,7 @@ function buildSessionReportText() {
   const avgD = state.domeHistory.length
     ? state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length
     : 0;
+  const meter = collectEnergyMeterExport();
   const lines = [];
 
   lines.push('SoulKernel - Rapport complet de session');
@@ -2850,6 +2974,27 @@ function buildSessionReportText() {
       }
     }
   }
+  lines.push('');
+  lines.push('Mesure murale / export conso');
+  lines.push('Source energie: ' + (meter.power_source || 'N/A') + (meter.is_external_wall_source ? ' (prise externe)' : ''));
+  lines.push('Puissance live: ' + (meter.live_power_w == null ? 'N/A' : Number(meter.live_power_w).toFixed(2) + ' W'));
+  lines.push('Conso totale integree: ' + (meter.windows?.total_kwh == null ? 'N/A' : Number(meter.windows.total_kwh).toFixed(6) + ' kWh'));
+  lines.push('Cout total integre: ' + (meter.windows?.total_cost == null ? 'N/A' : Number(meter.windows.total_cost).toFixed(4) + ' ' + (meter.pricing?.currency || 'EUR')));
+  lines.push('CO2 total integre: ' + (meter.windows?.total_co2_kg == null ? 'N/A' : Number(meter.windows.total_co2_kg).toFixed(6) + ' kg'));
+  lines.push('Fenetres kWh H/J/S/M/A: ' + [
+    meter.windows?.hour_kwh,
+    meter.windows?.day_kwh,
+    meter.windows?.week_kwh,
+    meter.windows?.month_kwh,
+    meter.windows?.year_kwh,
+  ].map(v => v == null ? 'N/A' : Number(v).toFixed(6)).join('/'));
+  if (meter.external_power) {
+    lines.push('Etat prise externe: watts=' + (meter.external_power.last_watts_label || 'N/A') +
+      ' | fraicheur=' + (meter.external_power.freshness || 'N/A') +
+      ' | bridge=' + (meter.external_power.bridge_state || 'N/A') +
+      ' | runtime=' + (meter.external_power.runtime || 'N/A'));
+    lines.push('Fichier puissance: ' + (meter.external_power.power_file_path || 'N/A'));
+  }
   const logs = collectVisibleLogLines();
   lines.push('');
   lines.push('Logs (' + logs.length + ')');
@@ -2864,6 +3009,7 @@ function buildSessionReportText() {
 
 async function buildEvidencePackText() {
   const lines = [];
+  const meter = collectEnergyMeterExport();
   lines.push('SoulKernel — dossier de preuve (méthode courte)');
   lines.push('Généré: ' + new Date().toISOString());
   lines.push('');
@@ -2873,6 +3019,17 @@ async function buildEvidencePackText() {
   lines.push('• ∫𝒟 (télémétrie) : Σ π·Δt avec π issu de la formule affichée (κ, Σmax, η, profil α).');
   lines.push('• kWh, kg CO₂ eq., € : intégrale de la puissance (W) mesurée × tarifs saisis — empreinte du suivi, pas un « gain dôme » sans double mesure énergétique.');
   lines.push('• Benchmark A/B : alternance reproductible OFF/ON sur UNE commande KPI de votre choix ; export JSON des sessions.');
+  lines.push('');
+  lines.push('=== Mesure energetique exportable ===');
+  lines.push('Source energie: ' + (meter.power_source || 'N/A') + (meter.is_external_wall_source ? ' (prise externe)' : ''));
+  lines.push('Puissance live: ' + (meter.live_power_w == null ? 'N/A' : Number(meter.live_power_w).toFixed(2) + ' W'));
+  lines.push('Conso totale integree: ' + (meter.windows?.total_kwh == null ? 'N/A' : Number(meter.windows.total_kwh).toFixed(6) + ' kWh'));
+  lines.push('Cout total integre: ' + (meter.windows?.total_cost == null ? 'N/A' : Number(meter.windows.total_cost).toFixed(4) + ' ' + (meter.pricing?.currency || 'EUR')));
+  lines.push('CO2 total integre: ' + (meter.windows?.total_co2_kg == null ? 'N/A' : Number(meter.windows.total_co2_kg).toFixed(6) + ' kg'));
+  if (meter.external_power) {
+    lines.push('Etat prise externe: ' + (meter.external_power.last_watts_label || 'N/A') + ' | ' + (meter.external_power.freshness || 'N/A') + ' | bridge=' + (meter.external_power.bridge_state || 'N/A'));
+    lines.push('Fichier puissance: ' + (meter.external_power.power_file_path || 'N/A'));
+  }
   lines.push('');
   lines.push('=== Fichiers persistants (audit externe) ===');
   if (!hasTauri) {
@@ -2923,6 +3080,43 @@ document.getElementById('btnCopyGains').addEventListener('click', () => {
   }).catch(() => log('Copie echouee', 'err'));
 });
 
+const btnExportEnergyDay = document.getElementById('btnExportEnergyDay');
+if (btnExportEnergyDay) {
+  btnExportEnergyDay.addEventListener('click', async () => {
+    try {
+      const path = await exportEnergyPeriodReport('day');
+      log('Export energie jour enregistre : ' + path, 'ok');
+    } catch (e) {
+      if (String(e).includes('Annulé')) return;
+      log('Export energie jour: ' + e, 'err');
+    }
+  });
+}
+const btnExportEnergyWeek = document.getElementById('btnExportEnergyWeek');
+if (btnExportEnergyWeek) {
+  btnExportEnergyWeek.addEventListener('click', async () => {
+    try {
+      const path = await exportEnergyPeriodReport('week');
+      log('Export energie semaine enregistre : ' + path, 'ok');
+    } catch (e) {
+      if (String(e).includes('Annulé')) return;
+      log('Export energie semaine: ' + e, 'err');
+    }
+  });
+}
+const btnExportEnergyMonth = document.getElementById('btnExportEnergyMonth');
+if (btnExportEnergyMonth) {
+  btnExportEnergyMonth.addEventListener('click', async () => {
+    try {
+      const path = await exportEnergyPeriodReport('month');
+      log('Export energie mois enregistre : ' + path, 'ok');
+    } catch (e) {
+      if (String(e).includes('Annulé')) return;
+      log('Export energie mois: ' + e, 'err');
+    }
+  });
+}
+
 document.getElementById('btnExportGains').addEventListener('click', async () => {
   try {
     let snapshotBefore = state.snapshotBefore;
@@ -2951,6 +3145,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
       audit_log_path: state.auditLogPath,
       kpi_bench_sessions: state.kpiBench.sessions,
       telemetry_summary: state.telemetrySummary,
+      energy_meter_export: collectEnergyMeterExport(),
       diagnostic: diag,
       session_summary: state.domeHistory.length ? {
         count: state.domeHistory.length,
@@ -3098,6 +3293,8 @@ if (btnExportAB) {
           },
           benchmark_history: payload,
           benchmark_top: payload?.top_sessions || [],
+          telemetry_summary: state.telemetrySummary,
+          energy_meter_export: collectEnergyMeterExport(),
         }, null, 2),
       });
       log('Export benchmark enregistre : ' + path, 'ok');
@@ -3798,10 +3995,7 @@ function updateDomeBadge(on) {
   document.getElementById('domeStatus').className   = 'status-pill ' + (on ? 'pill-run' : 'pill-off');
   document.getElementById('domeBadge').classList.toggle('show', on);
 }
-clockIntervalId = setInterval(() => {
-  const clk = document.getElementById('clk');
-  if (clk) clk.textContent = new Date().toTimeString().slice(0, 8);
-}, 1000);
+startClockLoop();
 
 function soulKernelDomCleanup() {
   try {
@@ -3813,14 +4007,27 @@ function soulKernelDomCleanup() {
       clearInterval(clockIntervalId);
       clockIntervalId = null;
     }
-    if (processRefreshIntervalId != null) {
-      clearInterval(processRefreshIntervalId);
-      processRefreshIntervalId = null;
-    }
+    stopProcessRefreshLoop();
   } catch (_) {}
 }
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', soulKernelDomCleanup);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopClockLoop();
+      stopProcessRefreshLoop();
+    } else {
+      startClockLoop();
+      startProcessRefreshLoop();
+      if (state.lastMetrics) {
+        lastRenderedMetricKey = null;
+        scheduleMetricRender(state.lastMetrics);
+      }
+      refreshProcesses({ userInitiated: false });
+      refreshTelemetrySummary(true);
+      scheduleNextPoll();
+    }
+  });
 }
 
 function log(msg, lvl='info') {
@@ -4097,9 +4304,6 @@ renderAbSummary(state.kpiBench.lastSummary);
 renderBenchmarkLearning(state.kpiBench.tuningAdvice);
 saveRuntimeSettings();
   scheduleNextPoll();
-  processRefreshIntervalId = setInterval(
-    () => refreshProcesses({ userInitiated: false }),
-    PROCESS_REFRESH_MS
-  );
+  startProcessRefreshLoop();
   refreshSoulKernelLucide();
 }

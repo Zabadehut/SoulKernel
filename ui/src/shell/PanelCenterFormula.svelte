@@ -121,6 +121,37 @@
         <div class="green-it-label">∫𝒟 RÉELLE</div>
       </div>
     </div>
+    <div class="green-it-reports">
+      <div class="green-it-title" style="font-size:.58rem;margin:.75rem 0 .35rem">
+        <span class="pt-ico" style="color:var(--cpu)"><i data-lucide="calendar-range"></i></span><span>RAPPORTS ÉNERGIE</span>
+      </div>
+      <div class="green-it-report-grid">
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenDayKwh">—</div>
+          <div class="green-it-label">JOUR · KWH</div>
+          <div class="green-it-mini" id="greenDayEur">—</div>
+          <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyDay">
+            <span class="btn-ico"><i data-lucide="download"></i></span> Export jour
+          </button>
+        </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenWeekKwh">—</div>
+          <div class="green-it-label">SEMAINE · KWH</div>
+          <div class="green-it-mini" id="greenWeekEur">—</div>
+          <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyWeek">
+            <span class="btn-ico"><i data-lucide="download"></i></span> Export week
+          </button>
+        </div>
+        <div class="green-it-stat">
+          <div class="green-it-val" id="greenMonthKwh">—</div>
+          <div class="green-it-label">MOIS · KWH</div>
+          <div class="green-it-mini" id="greenMonthEur">—</div>
+          <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyMonth">
+            <span class="btn-ico"><i data-lucide="download"></i></span> Export mois
+          </button>
+        </div>
+      </div>
+    </div>
     <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
     <div
       class="green-it-hint compactable-copy"
