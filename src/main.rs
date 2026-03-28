@@ -7,17 +7,21 @@ mod audit;
 mod benchmark;
 mod external_power;
 mod formula;
-mod workload_catalog;
 mod hud;
 mod memory_policy;
 mod metrics;
 mod orchestrator;
 mod platform;
 mod telemetry;
+mod workload_catalog;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use std::{
+    fs::OpenOptions,
+    process::{Child, Command, Stdio},
+};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
 use tokio::sync::mpsc;
@@ -43,6 +47,13 @@ pub struct SoulKernelState {
 type SharedState = Arc<Mutex<SoulKernelState>>;
 type SharedTelemetry = Arc<Mutex<telemetry::TelemetryState>>;
 type SharedBenchmark = Arc<Mutex<benchmark::BenchmarkState>>;
+type SharedExternalBridge = Arc<Mutex<ExternalBridgeState>>;
+
+pub struct ExternalBridgeState {
+    pub child: Option<Child>,
+    pub last_error: Option<String>,
+    pub last_start_ts_ms: Option<u64>,
+}
 
 #[derive(serde::Serialize)]
 pub struct SoulRamStatusResponse {
@@ -59,6 +70,230 @@ pub struct ProcessInfo {
     pub parent_pid: Option<u32>,
     /// RSS approximative (KiB).
     pub memory_kb: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalBridgeStatusResponse {
+    pub running: bool,
+    pub pid: Option<u32>,
+    pub last_error: Option<String>,
+    pub last_start_ts_ms: Option<u64>,
+    pub script_path: String,
+    pub bridge_log_path: String,
+}
+
+fn resolve_meross_bridge_script(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let resource_candidate = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.join("scripts").join("meross_mss315_bridge.py"));
+    if let Some(path) = resource_candidate.filter(|p| p.exists()) {
+        return Ok(path);
+    }
+    let cwd_candidate = std::env::current_dir()
+        .ok()
+        .map(|p| p.join("scripts").join("meross_mss315_bridge.py"));
+    if let Some(path) = cwd_candidate.filter(|p| p.exists()) {
+        return Ok(path);
+    }
+    Err("meross bridge script not found".to_string())
+}
+
+fn external_bridge_log_path() -> Result<std::path::PathBuf, String> {
+    external_power::soulkernel_config_dir()
+        .map(|p| p.join("meross_bridge.log"))
+        .ok_or_else(|| "config dir unavailable".to_string())
+}
+
+fn effective_python_candidates(cfg: &external_power::MerossFileConfig) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(bin) = cfg
+        .python_bin
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        out.push(bin.to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        out.push("py".to_string());
+        out.push("python".to_string());
+        out.push("python3".to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        out.push("python3".to_string());
+        out.push("python".to_string());
+    }
+    out.dedup();
+    out
+}
+
+fn pick_python_bin(cfg: &external_power::MerossFileConfig) -> Result<String, String> {
+    for candidate in effective_python_candidates(cfg) {
+        if Command::new(&candidate)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Ok(candidate);
+        }
+    }
+    Err("python introuvable (essayés: python3/python/py)".to_string())
+}
+
+fn refresh_bridge_process_state(bridge: &SharedExternalBridge) -> (bool, Option<u32>) {
+    let mut g = match bridge.lock() {
+        Ok(v) => v,
+        Err(_) => return (false, None),
+    };
+    if let Some(child) = g.child.as_mut() {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                g.last_error = Some(format!("bridge arrêté ({status})"));
+                g.child = None;
+                (false, None)
+            }
+            Ok(None) => (true, Some(child.id())),
+            Err(e) => {
+                g.last_error = Some(format!("bridge status error: {e}"));
+                g.child = None;
+                (false, None)
+            }
+        }
+    } else {
+        (false, None)
+    }
+}
+
+fn external_bridge_status(
+    app: &AppHandle,
+    bridge: &SharedExternalBridge,
+) -> ExternalBridgeStatusResponse {
+    let (running, pid) = refresh_bridge_process_state(bridge);
+    let (last_error, last_start_ts_ms) = bridge
+        .lock()
+        .map(|g| (g.last_error.clone(), g.last_start_ts_ms))
+        .unwrap_or((Some("bridge state poisoned".to_string()), None));
+    ExternalBridgeStatusResponse {
+        running,
+        pid,
+        last_error,
+        last_start_ts_ms,
+        script_path: resolve_meross_bridge_script(app)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        bridge_log_path: external_bridge_log_path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    }
+}
+
+fn stop_external_bridge_inner(bridge: &SharedExternalBridge) -> Result<(), String> {
+    let mut g = bridge.lock().map_err(|e| e.to_string())?;
+    if let Some(mut child) = g.child.take() {
+        child.kill().map_err(|e| e.to_string())?;
+        let _ = child.wait();
+    }
+    Ok(())
+}
+
+fn set_bridge_error(bridge: &SharedExternalBridge, message: String) {
+    if let Ok(mut g) = bridge.lock() {
+        g.last_error = Some(message);
+    }
+}
+
+fn start_external_bridge_inner(
+    app: &AppHandle,
+    bridge: &SharedExternalBridge,
+) -> Result<(), String> {
+    let cfg = external_power::get_meross_config_or_default();
+    if !cfg.enabled {
+        return Err("active d'abord la source puissance externe".to_string());
+    }
+    let email = cfg
+        .meross_email
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "MEROSS email manquant".to_string())?;
+    let password = cfg
+        .meross_password
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "MEROSS password manquant".to_string())?;
+    let region = cfg
+        .meross_region
+        .as_deref()
+        .unwrap_or("eu")
+        .trim()
+        .to_string();
+    let device_type = cfg
+        .meross_device_type
+        .as_deref()
+        .unwrap_or("mss315")
+        .trim()
+        .to_string();
+    let interval = cfg.bridge_interval_s.unwrap_or(8.0).clamp(2.0, 300.0);
+    let python_bin = pick_python_bin(&cfg)?;
+    let script_path = resolve_meross_bridge_script(app)?;
+    let out_path = cfg
+        .power_file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(external_power::default_power_file)
+        .ok_or_else(|| "power file path unavailable".to_string())?;
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let log_path = external_bridge_log_path()?;
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| e.to_string())?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| e.to_string())?;
+
+    let mut g = bridge.lock().map_err(|e| e.to_string())?;
+    if let Some(child) = g.child.as_mut() {
+        if child.try_wait().map_err(|e| e.to_string())?.is_none() {
+            return Ok(());
+        }
+        g.child = None;
+    }
+
+    let mut cmd = Command::new(&python_bin);
+    cmd.arg(script_path)
+        .arg("--out")
+        .arg(out_path)
+        .arg("--interval")
+        .arg(format!("{interval:.1}"))
+        .env("MEROSS_EMAIL", email)
+        .env("MEROSS_PASSWORD", password)
+        .env("MEROSS_REGION", &region)
+        .env("MEROSS_DEVICE_TYPE", &device_type)
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .stdin(Stdio::null());
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    g.last_error = None;
+    g.last_start_ts_ms = Some(now_ms_local());
+    g.child = Some(child);
+    Ok(())
 }
 
 // ─── Tauri commands ───────────────────────────────────────────────────────────
@@ -742,6 +977,50 @@ fn get_lifetime_gains(
     Ok(t.lifetime())
 }
 
+#[tauri::command]
+fn get_external_power_config() -> Result<external_power::MerossFileConfig, String> {
+    Ok(external_power::get_meross_config_or_default())
+}
+
+#[tauri::command]
+fn set_external_power_config(config: external_power::MerossFileConfig) -> Result<(), String> {
+    external_power::save_meross_config(&config)
+}
+
+#[tauri::command]
+fn get_external_power_status() -> Result<external_power::ExternalPowerStatus, String> {
+    Ok(external_power::get_external_power_status())
+}
+
+#[tauri::command]
+fn get_external_bridge_status(
+    app: AppHandle,
+    bridge: State<'_, SharedExternalBridge>,
+) -> Result<ExternalBridgeStatusResponse, String> {
+    Ok(external_bridge_status(&app, &bridge))
+}
+
+#[tauri::command]
+fn start_external_bridge(
+    app: AppHandle,
+    bridge: State<'_, SharedExternalBridge>,
+) -> Result<ExternalBridgeStatusResponse, String> {
+    if let Err(e) = start_external_bridge_inner(&app, &bridge) {
+        set_bridge_error(&bridge, e.clone());
+        return Err(e);
+    }
+    Ok(external_bridge_status(&app, &bridge))
+}
+
+#[tauri::command]
+fn stop_external_bridge(
+    app: AppHandle,
+    bridge: State<'_, SharedExternalBridge>,
+) -> Result<ExternalBridgeStatusResponse, String> {
+    stop_external_bridge_inner(&bridge)?;
+    Ok(external_bridge_status(&app, &bridge))
+}
+
 #[derive(serde::Deserialize)]
 struct BenchmarkHistoryQuery {
     command: Option<String>,
@@ -946,6 +1225,11 @@ fn main() {
     let benchmark_state: SharedBenchmark = Arc::new(Mutex::new(benchmark::BenchmarkState::new(
         default_benchmark_history_path(),
     )));
+    let external_bridge_state: SharedExternalBridge = Arc::new(Mutex::new(ExternalBridgeState {
+        child: None,
+        last_error: None,
+        last_start_ts_ms: None,
+    }));
 
     let hud_state: SharedHud = Arc::new(Mutex::new(HudRuntimeState {
         visible: false,
@@ -1040,6 +1324,7 @@ fn main() {
         .manage(hud_tx_state)
         .manage(hud_data_state)
         .manage(hud_health_state)
+        .manage(external_bridge_state)
         .setup(move |app| {
             if let Some(w) = app.get_webview_window("hud") {
                 let _ = w.hide();
@@ -1087,10 +1372,29 @@ fn main() {
                 }
             });
 
+            {
+                let app_handle = app.handle().clone();
+                let bridge = app.state::<SharedExternalBridge>().inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    let cfg = external_power::get_meross_config_or_default();
+                    if cfg.enabled && cfg.autostart_bridge {
+                        if let Err(e) = start_external_bridge_inner(&app_handle, &bridge) {
+                            set_bridge_error(&bridge, e);
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
+                let bridge = window
+                    .app_handle()
+                    .state::<SharedExternalBridge>()
+                    .inner()
+                    .clone();
+                let _ = stop_external_bridge_inner(&bridge);
                 cleanup_hud_before_exit(&window.app_handle());
                 window.app_handle().exit(0);
             }
@@ -1131,6 +1435,12 @@ fn main() {
             get_energy_pricing,
             set_energy_pricing,
             get_lifetime_gains,
+            get_external_power_config,
+            set_external_power_config,
+            get_external_power_status,
+            get_external_bridge_status,
+            start_external_bridge,
+            stop_external_bridge,
             run_ab_benchmark,
             get_benchmark_history,
             clear_benchmark_history,

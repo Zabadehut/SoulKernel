@@ -33,6 +33,9 @@
       <button type="button" class="view-btn" id="btnViewBenchmark"
         ><span class="view-ico"><i data-lucide="flask-conical"></i></span> Benchmark</button
       >
+      <button type="button" class="view-btn" id="btnViewExternal"
+        ><span class="view-ico"><i data-lucide="plug-zap"></i></span> Prise externe</button
+      >
       <button type="button" class="view-btn" id="btnHudToggle"
         ><span class="view-ico"><i data-lucide="panel-top"></i></span> HUD OFF</button
       >

@@ -61,7 +61,7 @@ def _pick_plug(manager, preferred: str | None):
 async def poll_once(manager, dev, out_path: str) -> dict:
     await dev.async_update()
     metrics = await dev.async_get_instant_metrics(channel=0)
-    w = float(metrics.power_watts)
+    w = float(metrics.power)
     payload = {"watts": w, "ts_ms": int(time.time() * 1000)}
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:

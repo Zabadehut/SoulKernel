@@ -10,6 +10,7 @@
   import PanelRightColumn from './PanelRightColumn.svelte';
   import PanelBottomBar from './PanelBottomBar.svelte';
   import BenchmarkSection from './BenchmarkSection.svelte';
+  import ExternalPowerSection from './ExternalPowerSection.svelte';
 </script>
 
 <NoTauriBanner />
@@ -35,3 +36,4 @@
 </main>
 
 <BenchmarkSection />
+<ExternalPowerSection />

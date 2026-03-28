@@ -48,11 +48,7 @@ pub struct WorkloadCatalogEntry {
 fn load_entries() -> Vec<WorkloadCatalogEntry> {
     let raw: Vec<WorkloadSceneJson> =
         serde_json::from_str(include_str!("workload_scenes.json")).expect("workload_scenes.json");
-    assert_eq!(
-        raw.len(),
-        50,
-        "catalogue: attendu 50 scénarios"
-    );
+    assert_eq!(raw.len(), 50, "catalogue: attendu 50 scénarios");
     let mut out = Vec::with_capacity(raw.len());
     for j in raw {
         let sum: f64 = j.alpha.iter().sum();
@@ -86,10 +82,7 @@ fn entries_cached() -> &'static [WorkloadCatalogEntry] {
 }
 
 pub fn all_profiles() -> Vec<WorkloadProfile> {
-    entries_cached()
-        .iter()
-        .map(|e| e.profile.clone())
-        .collect()
+    entries_cached().iter().map(|e| e.profile.clone()).collect()
 }
 
 pub fn from_name(name: &str) -> Option<WorkloadProfile> {

@@ -223,7 +223,11 @@ pub async fn execute_system_probe(duration_ms: u64) -> Result<KpiProbeResult, St
     let elapsed = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let cpu_avg = if n > 0 { cpu_sum / n as f64 } else { 0.0 };
     let mem_avg = if n > 0 { mem_sum / n as f64 } else { 0.0 };
-    let io_avg = if io_n > 0 { io_sum / f64::from(io_n) } else { 0.0 };
+    let io_avg = if io_n > 0 {
+        io_sum / f64::from(io_n)
+    } else {
+        0.0
+    };
     let summary = format!(
         "OS {}ms | CPU~{:.1}% RAM~{:.0}% | I/O~{:.1}MB/s | n={}",
         elapsed,

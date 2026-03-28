@@ -502,8 +502,7 @@ pub fn set_system_hud_data(
     let app2 = app.clone();
     dispatch_on_main_thread(&app, move || {
         if app2.get_webview_window("hud").is_some() {
-            app2
-                .emit_to("hud", "soulkernel://hud", payload)
+            app2.emit_to("hud", "soulkernel://hud", payload)
                 .map_err(|e| e.to_string())?;
         }
         Ok::<(), String>(())
@@ -670,7 +669,9 @@ pub fn set_system_hud_presentation(
 #[tauri::command]
 pub fn list_displays(app: tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
     let app2 = app.clone();
-    Ok(dispatch_on_main_thread(&app, move || list_displays_internal(&app2))??)
+    Ok(dispatch_on_main_thread(&app, move || {
+        list_displays_internal(&app2)
+    })??)
 }
 
 #[tauri::command]

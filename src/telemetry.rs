@@ -269,16 +269,13 @@ impl TelemetryState {
         };
         self.last_ts_ms = Some(now_ms);
 
-        let (mem_used_ratio, mem_total_mb_stored) =
-            match (req.mem_used_mb, req.mem_total_mb) {
-                (Some(u), Some(t))
-                    if t > 0.0 && u.is_finite() && t.is_finite() =>
-                {
-                    let r = (u / t).clamp(0.0, 1.0);
-                    (Some(r), Some(t))
-                }
-                _ => (None, None),
-            };
+        let (mem_used_ratio, mem_total_mb_stored) = match (req.mem_used_mb, req.mem_total_mb) {
+            (Some(u), Some(t)) if t > 0.0 && u.is_finite() && t.is_finite() => {
+                let r = (u / t).clamp(0.0, 1.0);
+                (Some(r), Some(t))
+            }
+            _ => (None, None),
+        };
 
         let sample = TelemetrySample {
             ts_ms: now_ms,
@@ -536,8 +533,7 @@ impl TelemetryState {
                         };
                         if baseline > 0.0 {
                             let delta_gb = (baseline - r).max(0.0) * gb;
-                            self.lifetime.total_mem_gb_hours_saved +=
-                                delta_gb * s.dt_s / 3600.0;
+                            self.lifetime.total_mem_gb_hours_saved += delta_gb * s.dt_s / 3600.0;
                         }
                     }
                 }

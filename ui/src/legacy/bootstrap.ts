@@ -1166,6 +1166,146 @@ async function setEnergyPricing(pricePerKwh, currency = 'EUR', co2KgPerKwh = 0.0
   }
 }
 
+function renderExternalPowerConfig(cfg) {
+  const enabled = document.getElementById('merossEnabled');
+  if (enabled) enabled.checked = !!cfg?.enabled;
+  const powerFile = document.getElementById('merossPowerFile');
+  if (powerFile) powerFile.value = cfg?.power_file || '';
+  const maxAge = document.getElementById('merossMaxAgeMs');
+  if (maxAge) maxAge.value = String(Number(cfg?.max_age_ms || 15000));
+  const email = document.getElementById('merossEmail');
+  if (email) email.value = cfg?.meross_email || '';
+  const pwd = document.getElementById('merossPassword');
+  if (pwd) pwd.value = cfg?.meross_password || '';
+  const region = document.getElementById('merossRegion');
+  if (region) region.value = cfg?.meross_region || 'eu';
+  const devType = document.getElementById('merossDeviceType');
+  if (devType) devType.value = cfg?.meross_device_type || 'mss315';
+  const py = document.getElementById('merossPythonBin');
+  if (py) py.value = cfg?.python_bin || '';
+  const interval = document.getElementById('merossBridgeInterval');
+  if (interval) interval.value = String(Number(cfg?.bridge_interval_s || 8));
+  const autostart = document.getElementById('merossAutostartBridge');
+  if (autostart) autostart.checked = !!cfg?.autostart_bridge;
+}
+
+function renderExternalPowerStatus(status) {
+  if (!status) return;
+  const watts = status.lastWatts != null && Number.isFinite(Number(status.lastWatts))
+    ? Number(status.lastWatts).toFixed(2) + ' W'
+    : 'N/A';
+  const freshness = !status.enabled
+    ? 'source OFF'
+    : (status.isFresh ? 'frais' : 'stale');
+  const fileState = status.powerFileExists ? 'présent' : 'absent';
+  const tsLabel = status.lastTsMs ? new Date(Number(status.lastTsMs)).toLocaleString('fr-FR') : '—';
+
+  set('merossSourceTag', status.sourceTag || 'meross_wall');
+  set('merossLastWatts', watts);
+  set('merossFreshness', freshness);
+  set('merossFilePresence', fileState);
+  set('merossCredentialsState', status.credentialsPresent ? 'ok' : 'manquant');
+  set('merossConfigPath', status.configPath || '—');
+  set('merossResolvedPowerFile', status.powerFilePath || '—');
+  set('merossLastTs', tsLabel);
+  set('merossBridgeLogPath', status.bridgeLogPath || '—');
+
+  const info = document.getElementById('merossConfigStatus');
+  if (info) {
+    info.textContent =
+      'Config ' + (status.configExists ? 'trouvée' : 'absente') +
+      ' | JSON puissance ' + fileState +
+      ' | source ' + (status.enabled ? 'active' : 'désactivée');
+    info.style.color = status.enabled && status.isFresh ? 'var(--io)' : 'var(--muted)';
+  }
+
+  const bridge = document.getElementById('merossBridgeCommand');
+  if (bridge) {
+    const outPath = status.powerFilePath || '~/.config/soulkernel/meross_power.json';
+    bridge.textContent = `python3 scripts/meross_mss315_bridge.py --out ${outPath}`;
+  }
+}
+
+function renderExternalBridgeStatus(status) {
+  if (!status) return;
+  set('merossBridgeRunning', status.running ? 'ON' : 'OFF');
+  set('merossBridgeLogPath', status.bridgeLogPath || '—');
+  set('merossBridgeScriptPath', status.scriptPath || '—');
+  set('merossBridgeError', status.lastError || '—');
+  const info = document.getElementById('merossConfigStatus');
+  if (info && status.running) {
+    info.textContent = 'Bridge Meross actif' + (status.pid ? ' (PID ' + status.pid + ')' : '') + '.';
+    info.style.color = 'var(--io)';
+  }
+}
+
+async function loadExternalPowerConfig() {
+  const cfg = await invoke('get_external_power_config');
+  renderExternalPowerConfig(cfg);
+}
+
+async function refreshExternalPowerStatus() {
+  const status = await invoke('get_external_power_status');
+  renderExternalPowerStatus(status);
+}
+
+async function refreshExternalBridgeStatus() {
+  const status = await invoke('get_external_bridge_status');
+  renderExternalBridgeStatus(status);
+}
+
+async function applyExternalPowerConfig() {
+  const enabled = !!document.getElementById('merossEnabled')?.checked;
+  const rawPowerFile = String(document.getElementById('merossPowerFile')?.value || '').trim();
+  const rawMaxAge = parseInt(String(document.getElementById('merossMaxAgeMs')?.value || '15000'), 10);
+  const email = String(document.getElementById('merossEmail')?.value || '').trim();
+  const password = String(document.getElementById('merossPassword')?.value || '');
+  const region = String(document.getElementById('merossRegion')?.value || 'eu').trim() || 'eu';
+  const deviceType = String(document.getElementById('merossDeviceType')?.value || 'mss315').trim() || 'mss315';
+  const pythonBin = String(document.getElementById('merossPythonBin')?.value || '').trim();
+  const intervalS = parseFloat(String(document.getElementById('merossBridgeInterval')?.value || '8'));
+  const autostartBridge = !!document.getElementById('merossAutostartBridge')?.checked;
+  const info = document.getElementById('merossConfigStatus');
+  if (!Number.isFinite(rawMaxAge) || rawMaxAge < 1000 || !Number.isFinite(intervalS) || intervalS < 2) {
+    if (info) {
+      info.textContent = 'Configuration invalide: max_age_ms >= 1000 et intervalle >= 2 s.';
+      info.style.color = 'var(--stress)';
+    }
+    return;
+  }
+  await invoke('set_external_power_config', {
+    config: {
+      enabled,
+      power_file: rawPowerFile || null,
+      max_age_ms: rawMaxAge,
+      meross_email: email || null,
+      meross_password: password || null,
+      meross_region: region,
+      meross_device_type: deviceType || null,
+      python_bin: pythonBin || null,
+      bridge_interval_s: intervalS,
+      autostart_bridge: autostartBridge,
+    }
+  });
+  await loadExternalPowerConfig();
+  await refreshExternalPowerStatus();
+  await refreshExternalBridgeStatus();
+  if (info) {
+    info.textContent = 'Configuration prise externe enregistrée.';
+    info.style.color = 'var(--io)';
+  }
+}
+
+async function startExternalBridge() {
+  const status = await invoke('start_external_bridge');
+  renderExternalBridgeStatus(status);
+}
+
+async function stopExternalBridge() {
+  const status = await invoke('stop_external_bridge');
+  renderExternalBridgeStatus(status);
+}
+
 async function setDomeStateAdaptive(shouldEnable, reason) {
   if (shouldEnable === state.domeActive) return;
   if (shouldEnable) {
@@ -1813,7 +1953,7 @@ function loadRuntimeSettings() {
     if (typeof cfg.kpiCommand === 'string') { const el = document.getElementById('kpiCommand'); if (el) el.value = cfg.kpiCommand; }
     if (typeof cfg.kpiArgs === 'string') { const el = document.getElementById('kpiArgs'); if (el) el.value = cfg.kpiArgs; }
     if (typeof cfg.kpiRuns === 'number') { const el = document.getElementById('kpiRuns'); if (el) el.value = String(Math.max(5, Math.min(20, Math.floor(cfg.kpiRuns)))); }
-    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed' || cfg.viewMode === 'benchmark') state.viewMode = cfg.viewMode;
+    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed' || cfg.viewMode === 'benchmark' || cfg.viewMode === 'external') state.viewMode = cfg.viewMode;
     if (typeof cfg.hudVisible === 'boolean') state.hudVisible = cfg.hudVisible;
     if (typeof cfg.hudInteractive === 'boolean') state.hudInteractive = cfg.hudInteractive;
     if (cfg.hudPreset === 'mini' || cfg.hudPreset === 'compact' || cfg.hudPreset === 'detailed') state.hudPreset = cfg.hudPreset;
@@ -2965,6 +3105,57 @@ if (btnApplyEnergyPricing) {
     }
   });
 }
+const btnApplyMerossConfig = document.getElementById('btnApplyMerossConfig');
+if (btnApplyMerossConfig) {
+  btnApplyMerossConfig.addEventListener('click', async () => {
+    try {
+      await applyExternalPowerConfig();
+      log('Configuration prise externe enregistrée', 'ok');
+    } catch (e) {
+      const info = document.getElementById('merossConfigStatus');
+      if (info) {
+        info.textContent = 'Erreur enregistrement prise externe';
+        info.style.color = 'var(--stress)';
+      }
+      log('Prise externe error: ' + e, 'err');
+    }
+  });
+}
+const btnRefreshMerossStatus = document.getElementById('btnRefreshMerossStatus');
+if (btnRefreshMerossStatus) {
+  btnRefreshMerossStatus.addEventListener('click', async () => {
+    try {
+      await refreshExternalPowerStatus();
+      await refreshExternalBridgeStatus();
+      log('État prise externe rafraîchi', 'info');
+    } catch (e) {
+      log('Prise externe refresh: ' + e, 'err');
+    }
+  });
+}
+const btnStartMerossBridge = document.getElementById('btnStartMerossBridge');
+if (btnStartMerossBridge) {
+  btnStartMerossBridge.addEventListener('click', async () => {
+    try {
+      await startExternalBridge();
+      await refreshExternalPowerStatus();
+      log('Bridge Meross démarré', 'ok');
+    } catch (e) {
+      log('Bridge Meross start: ' + e, 'err');
+    }
+  });
+}
+const btnStopMerossBridge = document.getElementById('btnStopMerossBridge');
+if (btnStopMerossBridge) {
+  btnStopMerossBridge.addEventListener('click', async () => {
+    try {
+      await stopExternalBridge();
+      log('Bridge Meross arrêté', 'info');
+    } catch (e) {
+      log('Bridge Meross stop: ' + e, 'err');
+    }
+  });
+}
 const btnSoulRamOn = document.getElementById('btnSoulRamOn');
 if (btnSoulRamOn) {
   btnSoulRamOn.addEventListener('click', async () => {
@@ -3025,6 +3216,10 @@ if (btnViewDetailed) {
 const btnViewBenchmark = document.getElementById('btnViewBenchmark');
 if (btnViewBenchmark) {
   btnViewBenchmark.addEventListener('click', () => setViewMode('benchmark'));
+}
+const btnViewExternal = document.getElementById('btnViewExternal');
+if (btnViewExternal) {
+  btnViewExternal.addEventListener('click', () => setViewMode('external'));
 }
 const btnHudToggle = document.getElementById('btnHudToggle');
 if (btnHudToggle) {
@@ -3420,17 +3615,20 @@ async function setHudInteractive(on) {
   saveRuntimeSettings();
 }
 function setViewMode(mode) {
-  state.viewMode = (mode === 'compact' || mode === 'benchmark') ? mode : 'detailed';
+  state.viewMode = (mode === 'compact' || mode === 'benchmark' || mode === 'external') ? mode : 'detailed';
   document.body.classList.toggle('view-compact', state.viewMode === 'compact');
   document.body.classList.toggle('view-detailed', state.viewMode === 'detailed');
   document.body.classList.toggle('view-benchmark', state.viewMode === 'benchmark');
+  document.body.classList.toggle('view-external', state.viewMode === 'external');
 
   const bCompact = document.getElementById('btnViewCompact');
   const bDetailed = document.getElementById('btnViewDetailed');
   const bBenchmark = document.getElementById('btnViewBenchmark');
+  const bExternal = document.getElementById('btnViewExternal');
   if (bCompact) bCompact.classList.toggle('active', state.viewMode === 'compact');
   if (bDetailed) bDetailed.classList.toggle('active', state.viewMode === 'detailed');
   if (bBenchmark) bBenchmark.classList.toggle('active', state.viewMode === 'benchmark');
+  if (bExternal) bExternal.classList.toggle('active', state.viewMode === 'external');
 
   if (state.lastMetrics) renderCompactHud(state.lastMetrics);
   saveRuntimeSettings();
@@ -3718,6 +3916,51 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 });
   if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
   if (cmd === 'set_energy_pricing') return Promise.resolve(null);
+  if (cmd === 'get_external_power_config') return Promise.resolve({ enabled: false, power_file: '', max_age_ms: 15000 });
+  if (cmd === 'set_external_power_config') return Promise.resolve(null);
+  if (cmd === 'get_external_power_status') return Promise.resolve({
+    configPath: '(hors Tauri)',
+    powerFilePath: '~/.config/soulkernel/meross_power.json',
+    enabled: false,
+    maxAgeMs: 15000,
+    configExists: false,
+    powerFileExists: false,
+    lastWatts: null,
+    lastTsMs: null,
+    isFresh: false,
+    sourceTag: 'meross_wall',
+    autostartBridge: false,
+    bridgeIntervalS: 8,
+    merossRegion: 'eu',
+    merossDeviceType: 'mss315',
+    pythonBin: '',
+    credentialsPresent: false,
+    bridgeLogPath: '(hors Tauri)',
+  });
+  if (cmd === 'get_external_bridge_status') return Promise.resolve({
+    running: false,
+    pid: null,
+    lastError: null,
+    lastStartTsMs: null,
+    scriptPath: '(hors Tauri)',
+    bridgeLogPath: '(hors Tauri)',
+  });
+  if (cmd === 'start_external_bridge') return Promise.resolve({
+    running: false,
+    pid: null,
+    lastError: 'Bridge indisponible hors Tauri',
+    lastStartTsMs: null,
+    scriptPath: '(hors Tauri)',
+    bridgeLogPath: '(hors Tauri)',
+  });
+  if (cmd === 'stop_external_bridge') return Promise.resolve({
+    running: false,
+    pid: null,
+    lastError: null,
+    lastStartTsMs: null,
+    scriptPath: '(hors Tauri)',
+    bridgeLogPath: '(hors Tauri)',
+  });
   if (cmd === 'open_system_hud') return Promise.resolve(null);
   if (cmd === 'close_system_hud') return Promise.resolve(null);
   if (cmd === 'set_system_hud_data') return Promise.resolve(null);
@@ -3760,6 +4003,9 @@ await loadPolicyStatus();
 await applyStartupIntentIfAny();
 await loadBenchmarkHistory(true);
 await refreshTelemetrySummary(true);
+try { await loadExternalPowerConfig(); } catch (_) {}
+try { await refreshExternalPowerStatus(); } catch (_) {}
+try { await refreshExternalBridgeStatus(); } catch (_) {}
 updateSoulRamUi();
 const ad = document.getElementById('adaptiveEnabled'); if (ad) ad.checked = !!state.adaptiveEnabled;
 const aad = document.getElementById('adaptiveAutoDome'); if (aad) aad.checked = !!state.adaptiveAutoDome;
