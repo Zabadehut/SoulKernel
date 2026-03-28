@@ -1181,6 +1181,10 @@ function renderExternalPowerConfig(cfg) {
   if (region) region.value = cfg?.meross_region || 'eu';
   const devType = document.getElementById('merossDeviceType');
   if (devType) devType.value = cfg?.meross_device_type || 'mss315';
+  const httpProxy = document.getElementById('merossHttpProxy');
+  if (httpProxy) httpProxy.value = cfg?.meross_http_proxy || '';
+  const mfaCode = document.getElementById('merossMfaCode');
+  if (mfaCode) mfaCode.value = cfg?.meross_mfa_code || '';
   const py = document.getElementById('merossPythonBin');
   if (py) py.value = cfg?.python_bin || '';
   const interval = document.getElementById('merossBridgeInterval');
@@ -1207,8 +1211,11 @@ function renderExternalPowerStatus(status) {
   set('merossCredentialsState', status.credentialsPresent ? 'ok' : 'manquant');
   set('merossConfigPath', status.configPath || '—');
   set('merossResolvedPowerFile', status.powerFilePath || '—');
+  set('merossCredsCachePath', status.credsCachePath || '—');
   set('merossLastTs', tsLabel);
   set('merossBridgeLogPath', status.bridgeLogPath || '—');
+  set('merossHttpProxyStatus', status.merossHttpProxy || 'aucun');
+  set('merossMfaState', status.mfaPresent ? 'présent' : 'absent');
   const runtimeChip = document.getElementById('merossPythonRuntime');
   if (runtimeChip) {
     const configured = String(status.pythonBin || '').trim();
@@ -1323,6 +1330,8 @@ async function applyExternalPowerConfig() {
   const password = String(document.getElementById('merossPassword')?.value || '');
   const region = String(document.getElementById('merossRegion')?.value || 'eu').trim() || 'eu';
   const deviceType = String(document.getElementById('merossDeviceType')?.value || 'mss315').trim() || 'mss315';
+  const httpProxy = String(document.getElementById('merossHttpProxy')?.value || '').trim();
+  const mfaCode = String(document.getElementById('merossMfaCode')?.value || '').trim();
   const pythonBin = String(document.getElementById('merossPythonBin')?.value || '').trim();
   const intervalS = parseFloat(String(document.getElementById('merossBridgeInterval')?.value || '8'));
   const autostartBridge = !!document.getElementById('merossAutostartBridge')?.checked;
@@ -1343,6 +1352,8 @@ async function applyExternalPowerConfig() {
       meross_password: password || null,
       meross_region: region,
       meross_device_type: deviceType || null,
+      meross_http_proxy: httpProxy || null,
+      meross_mfa_code: mfaCode || null,
       python_bin: pythonBin || null,
       bridge_interval_s: intervalS,
       autostart_bridge: autostartBridge,
@@ -3994,6 +4005,10 @@ function fallbackInvoke(cmd, args) {
     bridgeIntervalS: 8,
     merossRegion: 'eu',
     merossDeviceType: 'mss315',
+    merossHttpProxy: '',
+    mfaPresent: false,
+    credsCachePath: '(hors Tauri)',
+    credsCacheExists: false,
     pythonBin: '',
     defaultPythonHint: 'python3',
     credentialsPresent: false,

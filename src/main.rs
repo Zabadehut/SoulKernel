@@ -346,6 +346,18 @@ fn start_external_bridge_inner(
         .unwrap_or("mss315")
         .trim()
         .to_string();
+    let http_proxy = cfg
+        .meross_http_proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let mfa_code = cfg
+        .meross_mfa_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let interval = cfg.bridge_interval_s.unwrap_or(8.0).clamp(2.0, 300.0);
     let python_bin = pick_python_bin(app, &cfg)?;
     let script_path = resolve_meross_bridge_script(app)?;
@@ -359,7 +371,12 @@ fn start_external_bridge_inner(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let log_path = external_bridge_log_path()?;
+    let creds_cache_path = external_power::default_creds_cache_file()
+        .ok_or_else(|| "creds cache path unavailable".to_string())?;
     if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if let Some(parent) = creds_cache_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let stdout = OpenOptions::new()
@@ -391,9 +408,16 @@ fn start_external_bridge_inner(
         .env("MEROSS_PASSWORD", password)
         .env("MEROSS_REGION", &region)
         .env("MEROSS_DEVICE_TYPE", &device_type)
+        .env("MEROSS_CREDS_CACHE", &creds_cache_path)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .stdin(Stdio::null());
+    if let Some(proxy) = http_proxy {
+        cmd.env("MEROSS_HTTP_PROXY", proxy);
+    }
+    if let Some(mfa_code) = mfa_code {
+        cmd.env("MEROSS_MFA_CODE", mfa_code);
+    }
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     g.last_error = None;
     g.last_start_ts_ms = Some(now_ms_local());

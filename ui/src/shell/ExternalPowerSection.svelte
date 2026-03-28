@@ -68,6 +68,17 @@
           </div>
         </div>
 
+        <div class="external-inline-grid" style="margin-top:.45rem">
+          <div>
+            <label class="kappa-name" for="merossHttpProxy">Proxy HTTP</label>
+            <input id="merossHttpProxy" class="target-select" type="text" placeholder="optionnel: http://proxy:8080" />
+          </div>
+          <div>
+            <label class="kappa-name" for="merossMfaCode">Code MFA</label>
+            <input id="merossMfaCode" class="target-select" type="password" placeholder="optionnel" />
+          </div>
+        </div>
+
         <label class="target-auto" style="margin-top:.55rem">
           <input type="checkbox" id="merossAutostartBridge" />
           Démarrer le bridge automatiquement au lancement
@@ -158,7 +169,10 @@
             <div class="proof-panel">
               <div><strong>Config</strong> : <span id="merossConfigPath">—</span></div>
               <div style="margin-top:.25rem"><strong>Fichier puissance</strong> : <span id="merossResolvedPowerFile">—</span></div>
+              <div style="margin-top:.25rem"><strong>Cache token</strong> : <span id="merossCredsCachePath">—</span></div>
               <div style="margin-top:.25rem"><strong>Timestamp</strong> : <span id="merossLastTs">—</span></div>
+              <div style="margin-top:.25rem"><strong>Proxy HTTP</strong> : <span id="merossHttpProxyStatus">—</span></div>
+              <div style="margin-top:.25rem"><strong>MFA</strong> : <span id="merossMfaState">—</span></div>
               <div style="margin-top:.25rem"><strong>Dernière erreur</strong> : <span id="merossBridgeError">—</span></div>
               <div style="margin-top:.25rem"><strong>Bridge log</strong> : <span id="merossBridgeLogPath">—</span></div>
               <div style="margin-top:.25rem"><strong>Bridge script</strong> : <span id="merossBridgeScriptPath">—</span></div>

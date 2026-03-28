@@ -9,6 +9,9 @@ Variables d'environnement :
   MEROSS_REGION   (eu | us | ap, défaut eu)
   MEROSS_OUT      (chemin sortie JSON)
   MEROSS_DEVICE_TYPE (optionnel, ex. mss315)
+  MEROSS_HTTP_PROXY  (optionnel, ex. http://proxy:8080)
+  MEROSS_MFA_CODE    (optionnel)
+  MEROSS_CREDS_CACHE (optionnel, json sérialisé MerossCloudCreds)
 
 Activez la fusion côté SoulKernel : ~/.config/soulkernel/meross.json
   {"enabled": true}
@@ -33,6 +36,15 @@ def default_out() -> str:
             return os.path.join(base, "SoulKernel", "meross_power.json")
     home = os.environ.get("HOME") or ""
     return os.path.join(home, ".config", "soulkernel", "meross_power.json")
+
+
+def default_creds_cache() -> str:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA", "")
+        if base:
+            return os.path.join(base, "SoulKernel", "meross_cloud_creds.json")
+    home = os.environ.get("HOME") or ""
+    return os.path.join(home, ".config", "soulkernel", "meross_cloud_creds.json")
 
 
 def _api_base(region: str) -> str:
@@ -72,6 +84,7 @@ async def poll_once(manager, dev, out_path: str) -> dict:
 async def run_session(out_path: str, once: bool, interval: float, device_type: str | None) -> None:
     from meross_iot.http_api import MerossHttpClient
     from meross_iot.manager import MerossManager
+    from meross_iot.model.credentials import MerossCloudCreds
 
     email = os.environ.get("MEROSS_EMAIL", "").strip()
     password = os.environ.get("MEROSS_PASSWORD", "")
@@ -79,11 +92,34 @@ async def run_session(out_path: str, once: bool, interval: float, device_type: s
         raise RuntimeError("MEROSS_EMAIL et MEROSS_PASSWORD sont requis.")
 
     region = (os.environ.get("MEROSS_REGION") or "eu").strip()
-    http_client = await MerossHttpClient.async_from_user_password(
-        api_base_url=_api_base(region),
-        email=email,
-        password=password,
-    )
+    http_proxy = (os.environ.get("MEROSS_HTTP_PROXY") or "").strip() or None
+    mfa_code = (os.environ.get("MEROSS_MFA_CODE") or "").strip() or None
+    creds_cache_path = (os.environ.get("MEROSS_CREDS_CACHE") or default_creds_cache()).strip()
+    http_client = None
+
+    if creds_cache_path and os.path.exists(creds_cache_path):
+        try:
+            with open(creds_cache_path, "r", encoding="utf-8") as f:
+                cached = MerossCloudCreds.from_json(f.read())
+            http_client = await MerossHttpClient.async_from_cloud_creds(
+                creds=cached,
+                http_proxy=http_proxy,
+            )
+        except Exception as e:
+            print(f"meross cached creds invalid: {e}", file=sys.stderr)
+
+    if http_client is None:
+        http_client = await MerossHttpClient.async_from_user_password(
+            api_base_url=_api_base(region),
+            email=email,
+            password=password,
+            http_proxy=http_proxy,
+            mfa_code=mfa_code,
+        )
+        if creds_cache_path:
+            os.makedirs(os.path.dirname(creds_cache_path) or ".", exist_ok=True)
+            with open(creds_cache_path, "w", encoding="utf-8") as f:
+                f.write(http_client.cloud_credentials.to_json())
     manager = MerossManager(http_client=http_client)
     await manager.async_init()
     await manager.async_device_discovery()
@@ -110,7 +146,17 @@ def main() -> None:
     p.add_argument("--once", action="store_true")
     p.add_argument("--interval", type=float, default=8.0)
     p.add_argument("--device-type", default=os.environ.get("MEROSS_DEVICE_TYPE"))
+    p.add_argument("--http-proxy", default=os.environ.get("MEROSS_HTTP_PROXY"))
+    p.add_argument("--mfa-code", default=os.environ.get("MEROSS_MFA_CODE"))
+    p.add_argument("--creds-cache", default=os.environ.get("MEROSS_CREDS_CACHE") or default_creds_cache())
     args = p.parse_args()
+
+    if args.http_proxy:
+        os.environ["MEROSS_HTTP_PROXY"] = args.http_proxy
+    if args.mfa_code:
+        os.environ["MEROSS_MFA_CODE"] = args.mfa_code
+    if args.creds_cache:
+        os.environ["MEROSS_CREDS_CACHE"] = args.creds_cache
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

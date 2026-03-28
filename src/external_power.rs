@@ -24,6 +24,10 @@ pub struct MerossFileConfig {
     #[serde(default)]
     pub meross_device_type: Option<String>,
     #[serde(default)]
+    pub meross_http_proxy: Option<String>,
+    #[serde(default)]
+    pub meross_mfa_code: Option<String>,
+    #[serde(default)]
     pub python_bin: Option<String>,
     #[serde(default)]
     pub bridge_interval_s: Option<f64>,
@@ -41,6 +45,8 @@ impl Default for MerossFileConfig {
             meross_password: None,
             meross_region: None,
             meross_device_type: None,
+            meross_http_proxy: None,
+            meross_mfa_code: None,
             python_bin: None,
             bridge_interval_s: None,
             autostart_bridge: false,
@@ -65,6 +71,10 @@ pub struct ExternalPowerStatus {
     pub bridge_interval_s: f64,
     pub meross_region: String,
     pub meross_device_type: String,
+    pub meross_http_proxy: String,
+    pub mfa_present: bool,
+    pub creds_cache_path: String,
+    pub creds_cache_exists: bool,
     pub python_bin: String,
     pub default_python_hint: String,
     pub credentials_present: bool,
@@ -123,6 +133,10 @@ pub fn config_path() -> Option<PathBuf> {
 
 pub fn default_power_file() -> Option<PathBuf> {
     soulkernel_config_dir().map(|d| d.join("meross_power.json"))
+}
+
+pub fn default_creds_cache_file() -> Option<PathBuf> {
+    soulkernel_config_dir().map(|d| d.join("meross_cloud_creds.json"))
 }
 
 pub fn load_meross_config() -> Option<MerossFileConfig> {
@@ -193,6 +207,24 @@ pub fn get_external_power_status() -> ExternalPowerStatus {
         .unwrap_or("mss315")
         .trim()
         .to_string();
+    let meross_http_proxy = cfg
+        .meross_http_proxy
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mfa_present = cfg
+        .meross_mfa_code
+        .as_deref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let creds_cache_path = default_creds_cache_file()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let creds_cache_exists = default_creds_cache_file()
+        .as_ref()
+        .map(|p| p.exists())
+        .unwrap_or(false);
     let python_bin = cfg.python_bin.as_deref().unwrap_or("").trim().to_string();
     let default_python_hint = if cfg!(target_os = "windows") {
         "py".to_string()
@@ -231,6 +263,10 @@ pub fn get_external_power_status() -> ExternalPowerStatus {
         bridge_interval_s,
         meross_region,
         meross_device_type,
+        meross_http_proxy,
+        mfa_present,
+        creds_cache_path,
+        creds_cache_exists,
         python_bin,
         default_python_hint,
         credentials_present,
