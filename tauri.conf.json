@@ -33,7 +33,8 @@
     "bundle":  {
                    "active":  true,
                    "resources": [
-                                     "scripts/meross_mss315_bridge.py"
+                                     "scripts/meross_mss315_bridge.py",
+                                     "runtime/python"
                                  ],
                    "icon":  [
                                 "icons/png/icon_16x16.png",

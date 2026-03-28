@@ -18,14 +18,18 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
+            target: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin'
           - platform: macos-latest
+            target: x86_64-apple-darwin
             args: '--target x86_64-apple-darwin'
           - platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
             args: ''
           - platform: windows-latest
+            target: x86_64-pc-windows-msvc
             # Pas de certificat dans les secrets GitHub : build non signé (voir README).
-            args: '--no-sign'
+            args: '--target x86_64-pc-windows-msvc --no-sign'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -36,6 +40,10 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: ui/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Dépendances npm UI (Vite + Svelte)
         run: npm ci --prefix ui
@@ -57,6 +65,9 @@ jobs:
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version '^2.0' --locked
+
+      - name: Préparer runtime Python embarqué (Meross)
+        run: python scripts/prepare_embedded_python.py --target ${{ matrix.target }}
 
       # Pas de tag « v1 » sur le dépôt ; dernière ligne stable v0.x (mars 2026).
       - uses: tauri-apps/tauri-action@v0.6.2

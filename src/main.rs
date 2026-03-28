@@ -101,14 +101,89 @@ fn resolve_meross_bridge_script(app: &AppHandle) -> Result<std::path::PathBuf, S
     Err("meross bridge script not found".to_string())
 }
 
+fn bundled_python_relative_paths() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        &[
+            "python/windows/python.exe",
+            "runtime/python/windows/python.exe",
+        ]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &[
+            "python/macos/bin/python3",
+            "runtime/python/macos/bin/python3",
+        ]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        &[
+            "python/linux/bin/python3",
+            "runtime/python/linux/bin/python3",
+        ]
+    }
+}
+
+fn resolve_bundled_python(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let mut bases = Vec::new();
+    if let Some(resource_dir) = app.path().resource_dir().ok() {
+        bases.push(resource_dir);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        bases.push(cwd);
+    }
+
+    for base in bases {
+        for rel in bundled_python_relative_paths() {
+            let candidate = base.join(rel);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 fn external_bridge_log_path() -> Result<std::path::PathBuf, String> {
     external_power::soulkernel_config_dir()
         .map(|p| p.join("meross_bridge.log"))
         .ok_or_else(|| "config dir unavailable".to_string())
 }
 
-fn effective_python_candidates(cfg: &external_power::MerossFileConfig) -> Vec<String> {
+fn bridge_log_last_non_empty_line() -> Option<String> {
+    let path = external_bridge_log_path().ok()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| {
+            const MAX_CHARS: usize = 320;
+            if line.chars().count() > MAX_CHARS {
+                let tail: String = line
+                    .chars()
+                    .rev()
+                    .take(MAX_CHARS)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                format!("...{tail}")
+            } else {
+                line.to_string()
+            }
+        })
+}
+
+fn effective_python_candidates(
+    app: &AppHandle,
+    cfg: &external_power::MerossFileConfig,
+) -> Vec<String> {
     let mut out = Vec::new();
+    if let Some(path) = resolve_bundled_python(app) {
+        out.push(path.to_string_lossy().into_owned());
+    }
     if let Some(bin) = cfg
         .python_bin
         .as_deref()
@@ -132,8 +207,11 @@ fn effective_python_candidates(cfg: &external_power::MerossFileConfig) -> Vec<St
     out
 }
 
-fn pick_python_bin(cfg: &external_power::MerossFileConfig) -> Result<String, String> {
-    for candidate in effective_python_candidates(cfg) {
+fn pick_python_bin(
+    app: &AppHandle,
+    cfg: &external_power::MerossFileConfig,
+) -> Result<String, String> {
+    for candidate in effective_python_candidates(app, cfg) {
         if Command::new(&candidate)
             .arg("--version")
             .stdout(Stdio::null())
@@ -145,7 +223,10 @@ fn pick_python_bin(cfg: &external_power::MerossFileConfig) -> Result<String, Str
             return Ok(candidate);
         }
     }
-    Err("python introuvable (essayés: python3/python/py)".to_string())
+    Err(
+        "python introuvable (essayés: runtime embarqué, python configuré, python3/python/py)"
+            .to_string(),
+    )
 }
 
 fn refresh_bridge_process_state(bridge: &SharedExternalBridge) -> (bool, Option<u32>) {
@@ -156,7 +237,11 @@ fn refresh_bridge_process_state(bridge: &SharedExternalBridge) -> (bool, Option<
     if let Some(child) = g.child.as_mut() {
         match child.try_wait() {
             Ok(Some(status)) => {
-                g.last_error = Some(format!("bridge arrêté ({status})"));
+                let detail = bridge_log_last_non_empty_line();
+                g.last_error = Some(match detail {
+                    Some(detail) => format!("bridge arrêté ({status}) | {detail}"),
+                    None => format!("bridge arrêté ({status})"),
+                });
                 g.child = None;
                 (false, None)
             }
@@ -242,7 +327,7 @@ fn start_external_bridge_inner(
         .trim()
         .to_string();
     let interval = cfg.bridge_interval_s.unwrap_or(8.0).clamp(2.0, 300.0);
-    let python_bin = pick_python_bin(&cfg)?;
+    let python_bin = pick_python_bin(app, &cfg)?;
     let script_path = resolve_meross_bridge_script(app)?;
     let out_path = cfg
         .power_file

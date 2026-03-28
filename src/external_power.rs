@@ -66,6 +66,7 @@ pub struct ExternalPowerStatus {
     pub meross_region: String,
     pub meross_device_type: String,
     pub python_bin: String,
+    pub default_python_hint: String,
     pub credentials_present: bool,
     pub bridge_log_path: String,
 }
@@ -193,6 +194,11 @@ pub fn get_external_power_status() -> ExternalPowerStatus {
         .trim()
         .to_string();
     let python_bin = cfg.python_bin.as_deref().unwrap_or("").trim().to_string();
+    let default_python_hint = if cfg!(target_os = "windows") {
+        "py".to_string()
+    } else {
+        "python3".to_string()
+    };
     let credentials_present = cfg
         .meross_email
         .as_deref()
@@ -226,6 +232,7 @@ pub fn get_external_power_status() -> ExternalPowerStatus {
         meross_region,
         meross_device_type,
         python_bin,
+        default_python_hint,
         credentials_present,
         bridge_log_path: soulkernel_config_dir()
             .map(|d| d.join("meross_bridge.log").to_string_lossy().into_owned())

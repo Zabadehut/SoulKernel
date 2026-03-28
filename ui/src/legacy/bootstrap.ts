@@ -1222,7 +1222,8 @@ function renderExternalPowerStatus(status) {
   const bridge = document.getElementById('merossBridgeCommand');
   if (bridge) {
     const outPath = status.powerFilePath || '~/.config/soulkernel/meross_power.json';
-    bridge.textContent = `python3 scripts/meross_mss315_bridge.py --out ${outPath}`;
+    const pythonBin = String(status.pythonBin || status.defaultPythonHint || 'python3').trim() || 'python3';
+    bridge.textContent = `${pythonBin} scripts/meross_mss315_bridge.py --out "${outPath}"`;
   }
 }
 

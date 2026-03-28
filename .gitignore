@@ -17,6 +17,8 @@
 *.log
 *.tmp
 *.cache
+/runtime/python/*
+!/runtime/python/README.md
 
 # --- Local helper/generated scratch files ---
 .tmp_*.js

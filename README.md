@@ -2,7 +2,7 @@
 
 **Orchestrateur Performance Dome** — Tauri + Rust, cross‑plateforme. Donne un maximum d’amplitude au processus cible et **prouve les gains** (export + avant/après).
 
-**Vision** : SoulKernel orchestre l’activité des OS (charge, mémoire, priorités, politiques) pour réduire ou stabiliser la consommation électrique du PC ; la mesure **au secteur** (prise connectée) sert de validation — voir [`docs/VISION.md`](docs/VISION.md) et [`docs/MEROSS.md`](docs/MEROSS.md) (ex. prise **MSS315ZF** Meross via `scripts/meross_mss315_bridge.py`).
+**Vision** : SoulKernel orchestre l’activité des OS (charge, mémoire, priorités, politiques) pour réduire ou stabiliser la consommation électrique du PC ; la mesure **au secteur** (prise connectée) sert de validation — voir [`docs/VISION.md`](docs/VISION.md) et [`docs/MEROSS.md`](docs/MEROSS.md) (ex. prise **MSS315ZF** Meross via `scripts/meross_mss315_bridge.py` et runtime Python embarqué optionnel dans le bundle).
 
 ## Preuve que ça fonctionne
 
@@ -62,7 +62,7 @@ L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du
   git tag v1.1.2   # adapter à la version du manifeste
   git push origin v1.1.2
   ```
-  Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
+  Ensuite, onglet **Actions** puis **Release** : les installateurs (.msi, .dmg, .AppImage/.deb selon config Tauri) apparaissent sous **Releases** une fois le workflow vert. Le workflow prépare aussi un **runtime Python embarqué** pour la feature Meross avant le bundle Tauri, afin que l’utilisateur final n’ait pas à installer Python ni `meross-iot`. À la fin du workflow, un job ajoute les **empreintes SHA256** dans la description de la release et publie le fichier **`SHA256SUMS`** (intégrité des fichiers ; ce n’est pas une signature éditeur Windows).
 - **Windows — signature** : les [Releases](https://github.com/Zabadehut/SoulKernel/releases) sont construites avec **`--no-sign`** tant qu’aucun certificat n’est dans le dépôt (pas d’avertissement côté CI). **Build local** : `cargo tauri build --no-sign` si tu n’as pas encore de certificat. Quand tu auras un **certificat OV** ou un compte **Trusted Signing** éligible, tu pourras retirer `--no-sign` dans `.github/workflows/release.yml`, réactiver `bundle.windows.signCommand` / thumbprint dans `tauri.conf.json` et utiliser le modèle `scripts/trusted-sign.ps1` si besoin.
 - **MCP Cursor** (autonomie agent, docs, GitHub optionnel) : `.cursor/mcp.json` et `.cursor/README-MCP.md` — indexation légère : `.cursorignore` + `@codebase` dans le chat.
 
@@ -134,6 +134,9 @@ sudo dnf install -y pkgconf-pkg-config gcc gcc-c++ make cmake patchelf openssl-d
   cairo-devel cairo-gobject-devel pango-devel gdk-pixbuf2-devel atk-devel librsvg2-devel \
   webkit2gtk4.1-devel libsoup3-devel libappindicator-gtk3-devel
 
+# Python hôte pour préparer le runtime Meross embarqué
+python3 --version
+
 # ── Rocky Linux 9 / RHEL 9 / Alma 9 : lire ceci avant de perdre du temps ─────────
 # Les dépôts EL9 restent en **glib 2.68.x**. Or gtk-rs / wry (Tauri 2) demandent
 # **glib / gio / gobject >= 2.70** dans pkg-config. Résultat typique :
@@ -173,6 +176,7 @@ L’UI est servie par **Vite** (`beforeDevCommand` = `npm --prefix ui run dev`).
 
 ### Dev
 ```bash
+python scripts/prepare_embedded_python.py
 cargo tauri dev
 
 # Ou lancer l’app sans hot-reload :
@@ -205,6 +209,7 @@ Vite (`npm run dev`) peut être **OK** alors que le binaire Rust plante : le ser
 
 ### Release (packaging pour distribution / vente)
 ```bash
+python scripts/prepare_embedded_python.py
 cargo tauri build
 # Output: target/release/bundle/
 # Linux:   .deb + .AppImage

@@ -42,7 +42,27 @@ Le pont (ou un test manuel) doit écrire un JSON du type :
 Clés acceptées pour la puissance : `watts`, `w` ou `power`.  
 `ts_ms` est l’horodatage Unix **millisecondes** ; s’il est absent, le fichier est considéré comme valide dès la lecture (moins strict).
 
-## Pont Python (optionnel)
+## Runtime Python embarqué
+
+Le build Tauri embarque désormais un runtime Python minimal dédié à cette feature. SoulKernel cherche d'abord un interpréteur packagé dans les ressources, puis seulement un Python système (`python_bin`, `python3`, `python`, `py`).
+
+Structure attendue dans le dépôt avant `cargo tauri build` :
+
+| Plateforme | Binaire attendu |
+|------------|-----------------|
+| Windows | `runtime/python/windows/python.exe` |
+| Linux | `runtime/python/linux/bin/python3` |
+| macOS | `runtime/python/macos/bin/python3` |
+
+Ce runtime contient au minimum :
+
+- CPython exécutable
+- stdlib nécessaire à `asyncio`, `json`, `ssl`
+- le package `meross-iot` dans son `site-packages`
+
+Le script `scripts/prepare_embedded_python.py` prépare automatiquement ce runtime pour Linux, macOS et Windows à partir de `astral-sh/python-build-standalone`, puis installe `meross-iot` dedans. Les workflows CI/release l'exécutent avant `cargo tauri build`, donc les bundles publiés incluent déjà ce runtime et l'utilisateur final n'a rien à installer.
+
+## Pont Python (fallback / développement)
 
 Le dépôt fournit `scripts/meross_mss315_bridge.py`, qui s’appuie sur la bibliothèque communautaire **`meross-iot`** (protocole cloud Meross — **pas** le firmware Meross).
 
@@ -55,6 +75,12 @@ python3 scripts/meross_mss315_bridge.py --out ~/.config/soulkernel/meross_power.
 ```
 
 Lance-le en tâche de fond ou via systemd / Planificateur Windows. Adapte l’URL régionale (`iotx-eu.meross.com`, etc.) selon ton compte.
+
+Pour préparer manuellement le runtime embarqué avant un build local :
+
+```bash
+python scripts/prepare_embedded_python.py
+```
 
 **Sécurité** : ne commite jamais identifiants ni `meross.json` avec secrets ; utilise des variables d’environnement ou un fichier hors dépôt.
 
