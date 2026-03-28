@@ -136,6 +136,12 @@ def install_meross(python_bin: Path, package_spec: str) -> None:
         [str(python_bin), "-m", "pip", "install", "--no-cache-dir", "--upgrade", package_spec],
         env=env,
     )
+    # Évite le résolveur c-ares dans le runtime embarqué Windows: aiohttp retombera
+    # ainsi sur le résolveur système threadé, plus robuste en bundle portable.
+    run(
+        [str(python_bin), "-m", "pip", "uninstall", "-y", "aiodns", "pycares"],
+        env=env,
+    )
 
 
 def prune_runtime(dest_dir: Path, target: str) -> None:

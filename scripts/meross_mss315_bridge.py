@@ -70,6 +70,23 @@ def _pick_plug(manager, preferred: str | None):
     )
 
 
+def _prefer_system_dns_resolver() -> None:
+    """
+    Sur Windows, le combo aiohttp+aiodns/pycares peut échouer dans un runtime embarqué
+    avec "Could not contact DNS servers". On force alors le résolveur threadé standard.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import aiohttp.connector
+        import aiohttp.resolver
+
+        aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
+        aiohttp.connector.DefaultResolver = aiohttp.resolver.ThreadedResolver
+    except Exception:
+        pass
+
+
 async def poll_once(manager, dev, out_path: str) -> dict:
     await dev.async_update()
     metrics = await dev.async_get_instant_metrics(channel=0)
@@ -82,6 +99,7 @@ async def poll_once(manager, dev, out_path: str) -> dict:
 
 
 async def run_session(out_path: str, once: bool, interval: float, device_type: str | None) -> None:
+    _prefer_system_dns_resolver()
     from meross_iot.http_api import MerossHttpClient
     from meross_iot.manager import MerossManager
     from meross_iot.model.credentials import MerossCloudCreds
