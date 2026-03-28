@@ -98,9 +98,13 @@
         <div class="target-hint" style="margin-top:.15rem">
           Utilise l’app mobile Meross pour appairer la prise, puis lance ce bridge avec le même compte cloud.
         </div>
-        <pre class="external-pre" id="merossBridgeCommand">python3 scripts/meross_mss315_bridge.py --out ~/.config/soulkernel/meross_power.json</pre>
-        <div class="target-hint">
-          Variables attendues : <code>MEROSS_EMAIL</code>, <code>MEROSS_PASSWORD</code>, <code>MEROSS_REGION</code>.
+        <div class="advisor-text" style="margin-top:.35rem">
+          Si le bridge démarre mais qu’aucune mesure n’arrive, ouvre <strong>Diagnostic technique</strong> pour voir la
+          commande exacte, le log et la dernière erreur remontée.
+        </div>
+        <div class="target-hint" style="margin-top:.3rem">
+          SoulKernel injecte <code>MEROSS_EMAIL</code>, <code>MEROSS_PASSWORD</code> et <code>MEROSS_REGION</code>
+          automatiquement au lancement du bridge.
         </div>
       </div>
     </div>
@@ -109,6 +113,15 @@
       <div class="advisor-panel external-panel">
         <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem">
           <span class="pt-ico" style="color:var(--warning)"><i data-lucide="activity"></i></span><span>État live</span>
+        </div>
+        <div class="external-hero">
+          <div class="external-hero-line">
+            <div class="external-hero-status" id="merossOverallStatus">En attente</div>
+            <div class="external-runtime-chip" id="merossPythonRuntime">Runtime inconnu</div>
+          </div>
+          <div class="external-hero-sub" id="merossOverallSummary">
+            SoulKernel attend une première mesure murale pour basculer la preuve énergétique sur la prise externe.
+          </div>
         </div>
         <div class="external-status-grid">
           <div class="raw-cell">
@@ -136,15 +149,26 @@
             <div class="raw-val" id="merossCredentialsState">N/A</div>
           </div>
         </div>
-
-        <div class="proof-panel" style="margin-top:.55rem">
-          <div><strong>Config</strong> : <span id="merossConfigPath">—</span></div>
-          <div style="margin-top:.25rem"><strong>Fichier puissance</strong> : <span id="merossResolvedPowerFile">—</span></div>
-          <div style="margin-top:.25rem"><strong>Timestamp</strong> : <span id="merossLastTs">—</span></div>
-          <div style="margin-top:.25rem"><strong>Bridge log</strong> : <span id="merossBridgeLogPath">—</span></div>
-          <div style="margin-top:.25rem"><strong>Bridge script</strong> : <span id="merossBridgeScriptPath">—</span></div>
-          <div style="margin-top:.25rem"><strong>Dernière erreur</strong> : <span id="merossBridgeError">—</span></div>
+        <div class="target-hint" id="merossActionHint" style="margin-top:.55rem">
+          Sauvegarde la configuration, démarre le bridge, puis attends l'écriture du JSON de puissance.
         </div>
+        <details class="advanced-fold" style="margin-top:.55rem">
+          <summary>Diagnostic technique</summary>
+          <div class="advanced-stack">
+            <div class="proof-panel">
+              <div><strong>Config</strong> : <span id="merossConfigPath">—</span></div>
+              <div style="margin-top:.25rem"><strong>Fichier puissance</strong> : <span id="merossResolvedPowerFile">—</span></div>
+              <div style="margin-top:.25rem"><strong>Timestamp</strong> : <span id="merossLastTs">—</span></div>
+              <div style="margin-top:.25rem"><strong>Dernière erreur</strong> : <span id="merossBridgeError">—</span></div>
+              <div style="margin-top:.25rem"><strong>Bridge log</strong> : <span id="merossBridgeLogPath">—</span></div>
+              <div style="margin-top:.25rem"><strong>Bridge script</strong> : <span id="merossBridgeScriptPath">—</span></div>
+            </div>
+            <div class="advisor-panel" style="padding:.5rem .6rem">
+              <div class="raw-label" style="margin-bottom:.25rem">Commande debug</div>
+              <pre class="external-pre" id="merossBridgeCommand">python3 scripts/meross_mss315_bridge.py --out ~/.config/soulkernel/meross_power.json</pre>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div class="advisor-panel external-panel">

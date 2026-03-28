@@ -81,6 +81,8 @@ pub struct ExternalBridgeStatusResponse {
     pub last_start_ts_ms: Option<u64>,
     pub script_path: String,
     pub bridge_log_path: String,
+    pub resolved_python_bin: String,
+    pub python_source: String,
 }
 
 fn resolve_meross_bridge_script(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -229,6 +231,19 @@ fn pick_python_bin(
     )
 }
 
+fn detect_python_source(app: &AppHandle, resolved_python_bin: &str) -> String {
+    let resolved = resolved_python_bin.trim();
+    if resolved.is_empty() {
+        return "none".to_string();
+    }
+    if let Some(bundled) = resolve_bundled_python(app) {
+        if bundled.to_string_lossy() == resolved {
+            return "embedded".to_string();
+        }
+    }
+    "system".to_string()
+}
+
 fn refresh_bridge_process_state(bridge: &SharedExternalBridge) -> (bool, Option<u32>) {
     let mut g = match bridge.lock() {
         Ok(v) => v,
@@ -262,10 +277,13 @@ fn external_bridge_status(
     bridge: &SharedExternalBridge,
 ) -> ExternalBridgeStatusResponse {
     let (running, pid) = refresh_bridge_process_state(bridge);
+    let cfg = external_power::get_meross_config_or_default();
     let (last_error, last_start_ts_ms) = bridge
         .lock()
         .map(|g| (g.last_error.clone(), g.last_start_ts_ms))
         .unwrap_or((Some("bridge state poisoned".to_string()), None));
+    let resolved_python_bin = pick_python_bin(app, &cfg).unwrap_or_default();
+    let python_source = detect_python_source(app, &resolved_python_bin);
     ExternalBridgeStatusResponse {
         running,
         pid,
@@ -277,6 +295,8 @@ fn external_bridge_status(
         bridge_log_path: external_bridge_log_path()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default(),
+        resolved_python_bin,
+        python_source,
     }
 }
 

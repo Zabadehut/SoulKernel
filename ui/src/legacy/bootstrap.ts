@@ -1209,6 +1209,11 @@ function renderExternalPowerStatus(status) {
   set('merossResolvedPowerFile', status.powerFilePath || '—');
   set('merossLastTs', tsLabel);
   set('merossBridgeLogPath', status.bridgeLogPath || '—');
+  const runtimeChip = document.getElementById('merossPythonRuntime');
+  if (runtimeChip) {
+    const configured = String(status.pythonBin || '').trim();
+    runtimeChip.textContent = configured ? 'Python forcé' : 'Python auto';
+  }
 
   const info = document.getElementById('merossConfigStatus');
   if (info) {
@@ -1229,13 +1234,68 @@ function renderExternalPowerStatus(status) {
 
 function renderExternalBridgeStatus(status) {
   if (!status) return;
+  const bridgeOn = !!status.running;
+  const hasError = !!String(status.lastError || '').trim();
+  const hasMeasure = String(document.getElementById('merossLastWatts')?.textContent || '').trim() !== 'N/A';
+  const freshness = String(document.getElementById('merossFreshness')?.textContent || '').trim();
+  const overall = document.getElementById('merossOverallStatus');
+  const summary = document.getElementById('merossOverallSummary');
+  const actionHint = document.getElementById('merossActionHint');
+  const runtimeChip = document.getElementById('merossPythonRuntime');
   set('merossBridgeRunning', status.running ? 'ON' : 'OFF');
   set('merossBridgeLogPath', status.bridgeLogPath || '—');
   set('merossBridgeScriptPath', status.scriptPath || '—');
   set('merossBridgeError', status.lastError || '—');
+  const bridge = document.getElementById('merossBridgeCommand');
+  if (bridge && status.scriptPath) {
+    const outPath = document.getElementById('merossResolvedPowerFile')?.textContent || '~/.config/soulkernel/meross_power.json';
+    const pythonBin = String(status.resolvedPythonBin || '').trim() || 'python3';
+    const sourceLabel = status.pythonSource === 'embedded' ? 'embedded' : 'system';
+    bridge.textContent = `${pythonBin} "${status.scriptPath}" --out "${outPath}"  # ${sourceLabel}`;
+  }
+  if (runtimeChip) {
+    const sourceLabel = status.pythonSource === 'embedded' ? 'Runtime embarqué' : (status.pythonSource === 'system' ? 'Python système' : 'Runtime inconnu');
+    runtimeChip.textContent = sourceLabel;
+    runtimeChip.style.color = status.pythonSource === 'embedded' ? 'var(--io)' : 'var(--warning)';
+    runtimeChip.style.borderColor = status.pythonSource === 'embedded' ? 'rgba(0,255,157,.35)' : 'var(--border)';
+  }
+  if (overall && summary && actionHint) {
+    if (bridgeOn && hasMeasure && freshness === 'frais') {
+      overall.textContent = 'Mesure murale active';
+      overall.style.color = 'var(--io)';
+      summary.textContent = 'La prise externe alimente désormais SoulKernel avec une mesure secteur fraîche.';
+      actionHint.textContent = 'Aucune action requise. Les watts et les intégrations d’énergie passent par la prise externe.';
+      actionHint.style.color = 'var(--io)';
+    } else if (bridgeOn && hasError) {
+      overall.textContent = 'Bridge lancé, mais bloqué';
+      overall.style.color = 'var(--warning)';
+      summary.textContent = 'Le bridge tourne, mais il ne livre pas encore de mesure valide. Vérifie l’erreur et le log.';
+      actionHint.textContent = String(status.lastError || '').trim();
+      actionHint.style.color = 'var(--warning)';
+    } else if (bridgeOn) {
+      overall.textContent = 'Bridge actif, attente de mesure';
+      overall.style.color = 'var(--cpu)';
+      summary.textContent = 'Le bridge est démarré, mais aucun JSON de puissance frais n’a encore été reçu.';
+      actionHint.textContent = 'Attends quelques secondes puis rafraîchis l’état. Si rien n’apparaît, ouvre le diagnostic technique.';
+      actionHint.style.color = 'var(--muted)';
+    } else if (hasError) {
+      overall.textContent = 'Bridge arrêté avec erreur';
+      overall.style.color = 'var(--stress)';
+      summary.textContent = 'Le bridge s’est arrêté avant de produire une mesure secteur exploitable.';
+      actionHint.textContent = String(status.lastError || '').trim();
+      actionHint.style.color = 'var(--stress)';
+    } else {
+      overall.textContent = 'Bridge non démarré';
+      overall.style.color = 'var(--text)';
+      summary.textContent = 'La configuration est prête, mais la prise externe ne remontera rien tant que le bridge Meross ne tourne pas.';
+      actionHint.textContent = 'Sauvegarde la configuration puis lance le bridge. SoulKernel basculera automatiquement sur la prise dès que le JSON sera frais.';
+      actionHint.style.color = 'var(--muted)';
+    }
+  }
   const info = document.getElementById('merossConfigStatus');
   if (info && status.running) {
-    info.textContent = 'Bridge Meross actif' + (status.pid ? ' (PID ' + status.pid + ')' : '') + '.';
+    const sourceLabel = status.pythonSource === 'embedded' ? 'runtime embarqué' : 'python système';
+    info.textContent = 'Bridge Meross actif' + (status.pid ? ' (PID ' + status.pid + ')' : '') + ' · ' + sourceLabel + '.';
     info.style.color = 'var(--io)';
   }
 }
@@ -3935,6 +3995,7 @@ function fallbackInvoke(cmd, args) {
     merossRegion: 'eu',
     merossDeviceType: 'mss315',
     pythonBin: '',
+    defaultPythonHint: 'python3',
     credentialsPresent: false,
     bridgeLogPath: '(hors Tauri)',
   });
@@ -3945,6 +4006,8 @@ function fallbackInvoke(cmd, args) {
     lastStartTsMs: null,
     scriptPath: '(hors Tauri)',
     bridgeLogPath: '(hors Tauri)',
+    resolvedPythonBin: 'python3',
+    pythonSource: 'system',
   });
   if (cmd === 'start_external_bridge') return Promise.resolve({
     running: false,
@@ -3953,6 +4016,8 @@ function fallbackInvoke(cmd, args) {
     lastStartTsMs: null,
     scriptPath: '(hors Tauri)',
     bridgeLogPath: '(hors Tauri)',
+    resolvedPythonBin: 'python3',
+    pythonSource: 'system',
   });
   if (cmd === 'stop_external_bridge') return Promise.resolve({
     running: false,
@@ -3961,6 +4026,8 @@ function fallbackInvoke(cmd, args) {
     lastStartTsMs: null,
     scriptPath: '(hors Tauri)',
     bridgeLogPath: '(hors Tauri)',
+    resolvedPythonBin: 'python3',
+    pythonSource: 'system',
   });
   if (cmd === 'open_system_hud') return Promise.resolve(null);
   if (cmd === 'close_system_hud') return Promise.resolve(null);
