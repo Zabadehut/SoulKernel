@@ -20,6 +20,7 @@ use std::thread;
 use std::time::Duration;
 use std::{
     fs::OpenOptions,
+    path::Path,
     process::{Child, Command, Stdio},
 };
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
@@ -62,7 +63,7 @@ pub struct SoulRamStatusResponse {
     pub backend: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -85,6 +86,57 @@ pub struct ProcessInfo {
     pub attribution_method: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+pub struct ProcessImpactSummary {
+    pub process_count: usize,
+    pub top_count: usize,
+    pub observed_cpu_count: usize,
+    pub observed_memory_count: usize,
+    pub observed_io_count: usize,
+    pub machine_power_w: Option<f64>,
+    pub attribution_method: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProcessImpactReport {
+    pub processes: Vec<ProcessInfo>,
+    pub top_processes: Vec<ProcessInfo>,
+    pub top_process_rows: Vec<ProcessImpactUiRow>,
+    pub grouped_processes: Vec<ProcessImpactGroup>,
+    pub summary: ProcessImpactSummary,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProcessImpactUiRow {
+    pub pid: u32,
+    pub name: String,
+    pub exe: Option<String>,
+    pub cmd_preview: Option<String>,
+    pub cpu_label: String,
+    pub ram_label: String,
+    pub ram_share_label: String,
+    pub io_label: String,
+    pub io_split_label: String,
+    pub power_label: String,
+    pub impact_label: String,
+    pub duration_label: String,
+    pub status_label: String,
+    pub role: String,
+    pub attribution_method: String,
+    pub is_self_process: bool,
+    pub is_embedded_webview: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProcessImpactGroup {
+    pub key: String,
+    pub process_count: usize,
+    pub cpu_usage_pct: f64,
+    pub memory_kb: u64,
+    pub estimated_power_w: Option<f64>,
+    pub impact_score_pct_estimated: Option<f64>,
+}
+
 fn is_embedded_webview_name(name: &str) -> bool {
     let n = name.to_lowercase();
     n.contains("msedgewebview")
@@ -93,6 +145,116 @@ fn is_embedded_webview_name(name: &str) -> bool {
         || n.contains("webkit.webcontent")
         || n.contains("webkitwebprocess")
         || (n.contains("webkit") && n.contains("gpu"))
+}
+
+fn format_bytes_iec(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let value = bytes as f64;
+    if bytes == 0 {
+        "—".to_string()
+    } else if value >= GIB {
+        format!("{:.2} GiB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.1} MiB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn format_runtime_compact(run_time_s: Option<u64>) -> String {
+    let Some(secs) = run_time_s else {
+        return "—".to_string();
+    };
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}h {m:02}m")
+    } else if m > 0 {
+        format!("{m}m {s:02}s")
+    } else {
+        format!("{s}s")
+    }
+}
+
+fn process_role(info: &ProcessInfo) -> &'static str {
+    if info.is_self_process {
+        "self"
+    } else if info.is_embedded_webview {
+        "webview"
+    } else {
+        "other"
+    }
+}
+
+fn process_group_key(info: &ProcessInfo) -> String {
+    if let Some(exe) = info.exe.as_deref() {
+        if let Some(stem) = Path::new(exe).file_stem().and_then(|s| s.to_str()) {
+            let trimmed = stem.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_lowercase();
+            }
+        }
+    }
+    info.name.trim().to_lowercase()
+}
+
+fn build_process_ui_row(info: &ProcessInfo) -> ProcessImpactUiRow {
+    let cmd_preview = if info.cmd.is_empty() {
+        None
+    } else {
+        Some(info.cmd.join(" "))
+    };
+    let ram_mib = info.memory_kb as f64 / 1024.0;
+    let io_read = info.disk_read_bytes.unwrap_or(0);
+    let io_write = info.disk_written_bytes.unwrap_or(0);
+    ProcessImpactUiRow {
+        pid: info.pid,
+        name: info.name.clone(),
+        exe: info.exe.clone(),
+        cmd_preview,
+        cpu_label: if info.cpu_usage.is_finite() {
+            format!("{:.1} %", info.cpu_usage)
+        } else {
+            "—".to_string()
+        },
+        ram_label: if info.memory_kb > 0 {
+            format!("{:.0} MiB", ram_mib)
+        } else {
+            "—".to_string()
+        },
+        ram_share_label: info
+            .memory_share_pct
+            .map(|v| format!("{v:.1}%"))
+            .unwrap_or_else(|| "—".to_string()),
+        io_label: format_bytes_iec(io_read.saturating_add(io_write)),
+        io_split_label: format!(
+            "R {} / W {}",
+            format_bytes_iec(io_read),
+            format_bytes_iec(io_write)
+        ),
+        power_label: info
+            .estimated_power_w
+            .map(|v| format!("{v:.2} W"))
+            .unwrap_or_else(|| "—".to_string()),
+        impact_label: info
+            .impact_score_pct_estimated
+            .map(|v| format!("{v:.2} %"))
+            .unwrap_or_else(|| "—".to_string()),
+        duration_label: format_runtime_compact(info.run_time_s),
+        status_label: info.status.clone().unwrap_or_else(|| "—".to_string()),
+        role: process_role(info).to_string(),
+        attribution_method: info
+            .attribution_method
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+        is_self_process: info.is_self_process,
+        is_embedded_webview: info.is_embedded_webview,
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -461,7 +623,7 @@ fn start_external_bridge_inner(
 // ─── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn list_processes() -> Result<Vec<ProcessInfo>, String> {
+fn list_processes() -> Result<ProcessImpactReport, String> {
     let mut sys = sysinfo::System::new_all();
     sys.refresh_processes();
     thread::sleep(Duration::from_millis(220));
@@ -566,7 +728,78 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
             .partial_cmp(&a.impact_score_pct_estimated.unwrap_or(a.cpu_usage))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    Ok(list)
+
+    let top_limit = 12usize;
+    let top_processes = list.iter().take(top_limit).cloned().collect::<Vec<_>>();
+    let top_process_rows = top_processes
+        .iter()
+        .map(build_process_ui_row)
+        .collect::<Vec<_>>();
+    let mut grouped = std::collections::BTreeMap::<String, ProcessImpactGroup>::new();
+    for info in &list {
+        let key = process_group_key(info);
+        let entry = grouped.entry(key.clone()).or_insert(ProcessImpactGroup {
+            key,
+            process_count: 0,
+            cpu_usage_pct: 0.0,
+            memory_kb: 0,
+            estimated_power_w: Some(0.0),
+            impact_score_pct_estimated: Some(0.0),
+        });
+        entry.process_count += 1;
+        entry.cpu_usage_pct += info.cpu_usage.max(0.0);
+        entry.memory_kb = entry.memory_kb.saturating_add(info.memory_kb);
+        entry.estimated_power_w = match (entry.estimated_power_w, info.estimated_power_w) {
+            (Some(a), Some(b)) => Some(a + b),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        entry.impact_score_pct_estimated = match (
+            entry.impact_score_pct_estimated,
+            info.impact_score_pct_estimated,
+        ) {
+            (Some(a), Some(b)) => Some(a + b),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+    }
+    let mut grouped_processes = grouped.into_values().collect::<Vec<_>>();
+    grouped_processes.sort_by(|a, b| {
+        b.impact_score_pct_estimated
+            .unwrap_or(b.cpu_usage_pct)
+            .partial_cmp(&a.impact_score_pct_estimated.unwrap_or(a.cpu_usage_pct))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    grouped_processes.truncate(12);
+    let summary = ProcessImpactSummary {
+        process_count: list.len(),
+        top_count: top_processes.len(),
+        observed_cpu_count: top_processes
+            .iter()
+            .filter(|p| p.cpu_usage.is_finite())
+            .count(),
+        observed_memory_count: top_processes.iter().filter(|p| p.memory_kb > 0).count(),
+        observed_io_count: top_processes
+            .iter()
+            .filter(|p| p.disk_read_bytes.unwrap_or(0) > 0 || p.disk_written_bytes.unwrap_or(0) > 0)
+            .count(),
+        machine_power_w,
+        attribution_method: if has_power {
+            "estimated_weighted_cpu_mem_io_over_measured_machine_power".to_string()
+        } else {
+            "estimated_weighted_cpu_mem_io".to_string()
+        },
+    };
+
+    Ok(ProcessImpactReport {
+        processes: list,
+        top_processes,
+        top_process_rows,
+        grouped_processes,
+        summary,
+    })
 }
 
 #[tauri::command]
