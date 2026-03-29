@@ -2,7 +2,7 @@
     "$schema":  "https://schema.tauri.app/config/2",
     "identifier":  "dev.soulkernel.app",
     "productName":  "SoulKernel",
-    "version":  "1.1.5",
+    "version":  "1.1.6",
     "build":  {
                   "beforeBuildCommand":  {
                                             "script":  "npm run build",

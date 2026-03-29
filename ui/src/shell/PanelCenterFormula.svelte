@@ -178,7 +178,7 @@
         class="green-it-hint compactable-copy"
         style="margin-top:.35rem;font-size:.72rem;line-height:1.4;color:var(--muted);border:none;padding:0;max-width:42rem"
       >
-        <strong>CPU·h</strong> et <strong>RAM·GB·h</strong> comparent baseline OFF et mesures ON sur fenêtre glissante.
+        <strong>CPU·h diff.</strong> et <strong>RAM·GB·h diff.</strong> comparent baseline OFF et mesures ON sur fenêtre glissante.
         <br /><br />
         <strong>∫𝒟</strong> dépend de <strong>π(t)</strong>, de la friction et des paramètres visibles. SoulRAM traite
         la pression mémoire, pas un gain marketing figé.

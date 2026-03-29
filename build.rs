@@ -40,6 +40,17 @@ fn find_host_python() -> Option<String> {
 }
 
 fn prepare_embedded_python() {
+    let profile = std::env::var("PROFILE").unwrap_or_default();
+    let allow_in_debug = std::env::var("SOULKERNEL_PREPARE_EMBEDDED_PYTHON_IN_DEBUG")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    if profile == "debug" && !allow_in_debug {
+        println!(
+            "cargo:warning=runtime Python embarqué ignoré en debug (tauri dev utilise le Python système)"
+        );
+        return;
+    }
+
     let enabled = std::env::var("SOULKERNEL_PREPARE_EMBEDDED_PYTHON")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
         .unwrap_or(true);
@@ -88,6 +99,7 @@ fn main() {
     println!("cargo:rerun-if-changed=scripts/prepare_embedded_python.py");
     println!("cargo:rerun-if-changed=runtime/python/README.md");
     println!("cargo:rerun-if-env-changed=SOULKERNEL_PREPARE_EMBEDDED_PYTHON");
+    println!("cargo:rerun-if-env-changed=SOULKERNEL_PREPARE_EMBEDDED_PYTHON_IN_DEBUG");
     println!("cargo:rerun-if-env-changed=SOULKERNEL_BUILD_PYTHON");
     prepare_embedded_python();
     tauri_build::build()

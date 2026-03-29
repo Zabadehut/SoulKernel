@@ -354,6 +354,7 @@ let state = {
   autoProcessTarget: true,
   lastProcessRefreshTs: null,
   lastProcessCount: 0,
+  processImpactReport: [],
   pendingAdvice: null,
   soulRamActive: false,
   soulRamPercent: 20,
@@ -1026,7 +1027,7 @@ function renderTelemetrySummary(s) {
   const fmtEnergy = (w, key) => (w?.has_power_data ? `${f(w?.[key])}` : 'N/A');
   const gain = s.total?.kpi_gain_median_pct;
   set('rawOptReal', gain == null ? 'N/A' : gain.toFixed(2) + '%');
-  const mgb = s.total?.mem_gb_hours_saved;
+  const mgb = s.total?.mem_gb_hours_differential;
   set('rawMemGbHTel', mgb != null && Number.isFinite(Number(mgb)) ? Number(mgb).toFixed(3) : 'N/A');
   set('rawEnergyTotal', fmtEnergy(s.total, 'energy_kwh') + ' kWh');
   set('rawCostTotal', (s.total?.has_power_data ? f(s.total?.cost) : 'N/A') + ' ' + ccy);
@@ -1061,7 +1062,7 @@ function renderSoulRamFromTelemetry(s) {
   const lt = s.lifetime;
   const sh = Number(lt.soulram_active_hours ?? 0);
   const pch = s.total?.passive_clean_h != null ? Number(s.total.passive_clean_h) : null;
-  const memGb = lt.total_mem_gb_hours_saved != null ? Number(lt.total_mem_gb_hours_saved) : 0;
+  const memGb = lt.total_mem_gb_hours_differential != null ? Number(lt.total_mem_gb_hours_differential) : 0;
   el.innerHTML =
     'Durée cumulée <strong>SoulRAM ON + dôme OFF</strong> (Δt entre échantillons réels) : <strong>' +
     (Number.isFinite(sh) ? sh.toFixed(2) : '0') + ' h</strong> · ' +
@@ -1088,9 +1089,9 @@ function renderGreenItPanel(s) {
   set('greenItSource', srcMap[s.power_source] || s.power_source || '--');
 
   // Main stats
-  set('greenCpuH', f2(lt.total_cpu_hours_saved));
-  set('greenMemGh', f2(lt.total_mem_gb_hours_saved ?? 0));
-  set('greenCo2', f3(lt.total_co2_avoided_kg));
+  set('greenCpuH', f2(lt.total_cpu_hours_differential));
+  set('greenMemGh', f2(lt.total_mem_gb_hours_differential ?? 0));
+  set('greenCo2', f3(lt.total_co2_measured_kg));
   set('greenKwh', lt.has_real_power ? f3(lt.total_energy_kwh) : '--');
   set('greenDomeN', String(lt.total_dome_activations || 0));
   set('greenDomeH', f2(lt.total_dome_hours));
@@ -1111,12 +1112,12 @@ function renderGreenItPanel(s) {
     let text = `Depuis le ${firstDate} : `;
     text += `<strong>${lt.total_dome_activations}</strong> activations, `;
     text += `<strong>${f2(lt.total_dome_hours)}</strong> h de dome, `;
-      text += `<strong>${f2(lt.total_cpu_hours_saved)}</strong> CPU-h (diff. mesure), `;
-    text += `<strong>${f2(lt.total_mem_gb_hours_saved ?? 0)}</strong> RAM·GB·h (diff. mesure)`;
+      text += `<strong>${f2(lt.total_cpu_hours_differential)}</strong> CPU-h (diff. mesure), `;
+    text += `<strong>${f2(lt.total_mem_gb_hours_differential ?? 0)}</strong> RAM·GB·h (diff. mesure)`;
     if (lt.has_real_power) {
-      text += ` | <strong>${f3(lt.total_energy_kwh)}</strong> kWh integres (capteur)`;
-      text += `, <strong>${f3(lt.total_co2_avoided_kg)}</strong> kg CO2 eq. (kWh × intensite)`;
-      text += `, <strong>${f2(lt.total_cost_saved)}</strong> ${s.pricing?.currency || 'EUR'} cout energie cumule`;
+      text += ` | <strong>${f3(lt.total_energy_kwh)}</strong> kWh mesures`;
+      text += `, <strong>${f3(lt.total_co2_measured_kg)}</strong> kg CO2 mesures`;
+      text += `, <strong>${f2(lt.total_energy_cost_measured)}</strong> ${s.pricing?.currency || 'EUR'} cout energie mesure`;
     }
     if (lt.avg_kpi_gain_pct != null) {
       text += ` | gain KPI median: <strong>${Number(lt.avg_kpi_gain_pct).toFixed(1)}%</strong>`;
@@ -1134,16 +1135,16 @@ function renderGreenItPanel(s) {
   // Sigma gauge green indicator
   const sigmaGauge = document.querySelector('.sigma-gauge');
   if (sigmaGauge) {
-    sigmaGauge.classList.toggle('green-saving', !!state.domeActive && lt.total_cpu_hours_saved > 0);
+    sigmaGauge.classList.toggle('green-saving', !!state.domeActive && lt.total_cpu_hours_differential > 0);
   }
 
   // HUD compact enrichment
   const hudCo2 = document.getElementById('hudCo2');
-  if (hudCo2) hudCo2.textContent = lt.has_real_power ? f3(lt.total_co2_avoided_kg) + ' kg' : '--';
+  if (hudCo2) hudCo2.textContent = lt.has_real_power ? f3(lt.total_co2_measured_kg) + ' kg' : '--';
   const hudCpuH = document.getElementById('hudCpuH');
-  if (hudCpuH) hudCpuH.textContent = f2(lt.total_cpu_hours_saved) + ' h';
+  if (hudCpuH) hudCpuH.textContent = f2(lt.total_cpu_hours_differential) + ' h';
   const hudMemGh = document.getElementById('hudMemGh');
-  if (hudMemGh) hudMemGh.textContent = f2(lt.total_mem_gb_hours_saved ?? 0) + ' GB·h';
+  if (hudMemGh) hudMemGh.textContent = f2(lt.total_mem_gb_hours_differential ?? 0) + ' GB·h';
 }
 
 async function refreshTelemetrySummary(force = false) {
@@ -1945,6 +1946,7 @@ async function refreshProcesses(options = {}) {
   const userInitiated = options.userInitiated === true;
   try {
     const rawList = await invoke('list_processes');
+    state.processImpactReport = Array.isArray(rawList) ? rawList : [];
     const sel = document.getElementById('targetProcess');
     const current = sel.value;
     const list = capProcessListForSelect(rawList, current);
@@ -1954,7 +1956,9 @@ async function refreshProcesses(options = {}) {
       opt.value = p.pid;
       const rss = (p.memory_kb != null) ? ` · ${(Number(p.memory_kb) / 1024).toFixed(0)} MiB` : '';
       const par = (p.parent_pid != null) ? ` ←${p.parent_pid}` : '';
-      opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${rss}`;
+      const impact = p.impact_score_pct_estimated != null ? ` · impact ${Number(p.impact_score_pct_estimated).toFixed(1)}%` : '';
+      const pw = p.estimated_power_w != null ? ` · ~${Number(p.estimated_power_w).toFixed(1)} W est.` : '';
+      opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${rss}${impact}${pw}`;
       sel.appendChild(opt);
     });
     if (state.autoProcessTarget) {
@@ -2748,6 +2752,23 @@ function selectedTargetSnapshot() {
   };
 }
 
+function collectProcessImpactExport() {
+  const list = Array.isArray(state.processImpactReport) ? state.processImpactReport : [];
+  const target = selectedTargetSnapshot();
+  const top = [...list]
+    .sort((a, b) => Number(b.impact_score_pct_estimated || 0) - Number(a.impact_score_pct_estimated || 0))
+    .slice(0, 20);
+  return {
+    exported_at: new Date().toISOString(),
+    process_count: list.length,
+    selected_target: target,
+    attribution_notice:
+      'CPU, RAM et I/O par processus sont observés. impact_score_pct_estimated et estimated_power_w restent des attributions estimées, pas une mesure énergétique directe par processus.',
+    processes: list,
+    top_contributors: top,
+  };
+}
+
 function benchmarkDiagPayload(extra = {}) {
   const target = selectedTargetSnapshot();
   return {
@@ -2789,8 +2810,8 @@ function collectEnergyMeterExport() {
   } : null;
   const lifetime = t?.lifetime ? {
     total_energy_kwh: t.lifetime.total_energy_kwh ?? null,
-    total_cost_saved: t.lifetime.total_cost_saved ?? null,
-    total_co2_avoided_kg: t.lifetime.total_co2_avoided_kg ?? null,
+    total_energy_cost_measured: t.lifetime.total_energy_cost_measured ?? null,
+    total_co2_measured_kg: t.lifetime.total_co2_measured_kg ?? null,
     has_real_power: !!t.lifetime.has_real_power,
   } : null;
   const external = {
@@ -2818,6 +2839,80 @@ function collectEnergyMeterExport() {
   };
 }
 
+function collectStrictEvidenceExport() {
+  const t = state.telemetrySummary || null;
+  const meter = collectEnergyMeterExport();
+  const lastBench = state.kpiBench?.lastSummary || null;
+  const live = state.lastMetrics || null;
+  const hasMeasuredEnergy = !!t?.total?.has_power_data;
+  const hasRealBenchmark = !!(lastBench && lastBench.samples_off_ok > 0 && lastBench.samples_on_ok > 0);
+  const allowedClaims = [
+    'Mesures OS natives: CPU, RAM, GPU, I/O, sigma selon disponibilité plateforme.',
+    hasMeasuredEnergy
+      ? 'Consommation énergétique mesurée: kWh, coût et CO2 calculés depuis une puissance réelle.'
+      : 'Aucune affirmation énergétique stricte sans capteur de puissance réel.',
+    hasRealBenchmark
+      ? 'Le benchmark A/B permet une comparaison OFF vs ON reproductible sur une commande donnée.'
+      : 'Aucune affirmation stricte de gain sans benchmark A/B exploitable.'
+  ];
+  const forbiddenClaims = [
+    'Ne pas présenter π(t) ou ∫𝒟 comme une mesure physique.',
+    'Ne pas présenter CPU·h ou RAM·GB·h différentielles comme des économies matérielles absolues.',
+    'Ne pas présenter coût ou CO2 mesurés comme des gains évités sans baseline énergétique OFF vs ON.'
+  ];
+  return {
+    mode: 'strict_evidence',
+    exported_at: new Date().toISOString(),
+    machine_activity: state.machineActivity || 'active',
+    assertions: {
+      measured_os_metrics: {
+        cpu_pct: live?.raw?.cpu_pct ?? null,
+        mem_used_mb: live?.raw?.mem_used_mb ?? null,
+        mem_total_mb: live?.raw?.mem_total_mb ?? null,
+        io_read_mb_s: live?.raw?.io_read_mb_s ?? null,
+        io_write_mb_s: live?.raw?.io_write_mb_s ?? null,
+        gpu_pct: live?.raw?.gpu_pct ?? null,
+        sigma: live?.sigma ?? null,
+      },
+      measured_energy: hasMeasuredEnergy ? {
+        power_source: t?.power_source || null,
+        live_power_w: t?.live_power_w ?? null,
+        total_energy_kwh: t?.total?.energy_kwh ?? null,
+        total_cost: t?.total?.cost ?? null,
+        total_co2_kg: t?.total?.co2_kg ?? null,
+        period_windows: {
+          hour_kwh: t?.hour?.energy_kwh ?? null,
+          day_kwh: t?.day?.energy_kwh ?? null,
+          week_kwh: t?.week?.energy_kwh ?? null,
+          month_kwh: t?.month?.energy_kwh ?? null,
+          year_kwh: t?.year?.energy_kwh ?? null,
+        },
+      } : null,
+      measured_differentials: t ? {
+        cpu_hours_differential: t.total?.cpu_hours_differential ?? null,
+        mem_gb_hours_differential: t.total?.mem_gb_hours_differential ?? null,
+        lifetime_cpu_hours_differential: t.lifetime?.total_cpu_hours_differential ?? null,
+        lifetime_mem_gb_hours_differential: t.lifetime?.total_mem_gb_hours_differential ?? null,
+        idle_ratio: t.total?.idle_ratio ?? null,
+        media_ratio: t.total?.media_ratio ?? null,
+      } : null,
+      benchmark_ab: lastBench ? {
+        samples_off_ok: lastBench.samples_off_ok ?? 0,
+        samples_on_ok: lastBench.samples_on_ok ?? 0,
+        gain_median_pct: lastBench.gain_median_pct ?? null,
+        gain_p95_pct: lastBench.gain_p95_pct ?? null,
+        gain_power_median_pct: lastBench.gain_power_median_pct ?? null,
+        gain_cpu_median_pct: lastBench.gain_cpu_median_pct ?? null,
+        gain_mem_median_pct: lastBench.gain_mem_median_pct ?? null,
+        gain_sigma_median_pct: lastBench.gain_sigma_median_pct ?? null,
+      } : null,
+    },
+    allowed_claims: allowedClaims,
+    forbidden_claims: forbiddenClaims,
+    external_power: meter.external_power,
+  };
+}
+
 function collectEnergyPeriodReport(periodKey) {
   const t = state.telemetrySummary || null;
   const w = t?.[periodKey] || null;
@@ -2835,11 +2930,13 @@ function collectEnergyPeriodReport(periodKey) {
     avg_power_w: w?.avg_power_w ?? null,
     samples: w?.samples ?? null,
     external_power: collectEnergyMeterExport().external_power,
+    strict_evidence: collectStrictEvidenceExport(),
+    process_impact_report: collectProcessImpactExport(),
   };
 }
 
 async function exportEnergyPeriodReport(periodKey) {
-  const labelMap = { day: 'daily', week: 'weekly', month: 'monthly' };
+  const labelMap = { hour: 'hourly', day: 'daily', week: 'weekly', month: 'monthly' };
   const path = await invoke('export_gains_to_file', {
     content: JSON.stringify({
       product: 'SoulKernel',
@@ -2848,6 +2945,8 @@ async function exportEnergyPeriodReport(periodKey) {
       period_label: labelMap[periodKey] || periodKey,
       report: collectEnergyPeriodReport(periodKey),
       telemetry_summary: state.telemetrySummary,
+      strict_evidence: collectStrictEvidenceExport(),
+      process_impact_report: collectProcessImpactExport(),
     }, null, 2),
   });
   return path;
@@ -2867,6 +2966,7 @@ function buildSessionReportText() {
     ? state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length
     : 0;
   const meter = collectEnergyMeterExport();
+  const proc = collectProcessImpactExport();
   const lines = [];
 
   lines.push('SoulKernel - Rapport complet de session');
@@ -2964,11 +3064,11 @@ function buildSessionReportText() {
       lines.push('Fenetres kWh H/J/S/M/A: N/A');
     }
     lines.push('Optimisation reelle mediane A/B (historique global): ' + (t.total?.kpi_gain_median_pct == null ? 'N/A' : Number(t.total.kpi_gain_median_pct).toFixed(2) + '%'));
-    lines.push('CPU·h / RAM·GB·h (fenetre telemetrie): ' + f(t.total?.cpu_hours_saved) + ' / ' + f(t.total?.mem_gb_hours_saved));
+    lines.push('CPU·h / RAM·GB·h diff. (fenetre telemetrie): ' + f(t.total?.cpu_hours_differential) + ' / ' + f(t.total?.mem_gb_hours_differential));
     lines.push('Clean passif (h): ' + f(t.total?.passive_clean_h) + ' | ratio dome actif: ' + f((t.total?.dome_active_ratio ?? 0) * 100) + '%');
     const lt = t.lifetime;
     if (lt) {
-      lines.push('Vie entiere GREEN IT: CPU·h=' + Number(lt.total_cpu_hours_saved || 0).toFixed(3) + ' | RAM·GB·h=' + Number(lt.total_mem_gb_hours_saved || 0).toFixed(3));
+      lines.push('Vie entiere GREEN IT: CPU·h diff.=' + Number(lt.total_cpu_hours_differential || 0).toFixed(3) + ' | RAM·GB·h diff.=' + Number(lt.total_mem_gb_hours_differential || 0).toFixed(3));
       const idleH = Number(lt.total_idle_hours || 0);
       const mediaH = Number(lt.total_media_hours || 0);
       if (idleH > 0.01 || mediaH > 0.01) {
@@ -2997,6 +3097,15 @@ function buildSessionReportText() {
       ' | runtime=' + (meter.external_power.runtime || 'N/A'));
     lines.push('Fichier puissance: ' + (meter.external_power.power_file_path || 'N/A'));
   }
+  lines.push('');
+  lines.push('Impact processus (observe + attribution estimee)');
+  lines.push('Processus suivis: ' + proc.process_count);
+  lines.push('Cible courante: ' + (proc.selected_target?.target_label || 'N/A'));
+  proc.top_contributors.slice(0, 10).forEach(p => {
+    lines.push(
+      `- ${p.name} PID=${p.pid} | CPU=${Number(p.cpu_usage || 0).toFixed(1)}% | RAM=${((Number(p.memory_kb || 0)) / 1024).toFixed(0)} MiB | I/O=${Number((p.disk_read_bytes || 0) + (p.disk_written_bytes || 0)).toFixed(0)} B | impact est.=${p.impact_score_pct_estimated == null ? 'N/A' : Number(p.impact_score_pct_estimated).toFixed(2) + '%'} | W est.=${p.estimated_power_w == null ? 'N/A' : Number(p.estimated_power_w).toFixed(2)}`
+    );
+  });
   const logs = collectVisibleLogLines();
   lines.push('');
   lines.push('Logs (' + logs.length + ')');
@@ -3012,15 +3121,20 @@ function buildSessionReportText() {
 async function buildEvidencePackText() {
   const lines = [];
   const meter = collectEnergyMeterExport();
+  const proc = collectProcessImpactExport();
   lines.push('SoulKernel — dossier de preuve (méthode courte)');
   lines.push('Généré: ' + new Date().toISOString());
   lines.push('');
   lines.push('=== Définitions (à citer tel quel) ===');
   lines.push('• Mesures OS : collecte native (sysinfo + APIs plateforme). Pas de valeurs inventées : champ absent = non disponible.');
-  lines.push('• CPU·h / RAM·GB·h : modèle différentiel (baseline dôme OFF vs échantillons dôme ON), fenêtre ~10 min, activité ACTIF uniquement.');
+  lines.push('• CPU·h / RAM·GB·h diff. : modèle différentiel (baseline dôme OFF vs échantillons dôme ON), fenêtre ~10 min, activité ACTIF uniquement.');
   lines.push('• ∫𝒟 (télémétrie) : Σ π·Δt avec π issu de la formule affichée (κ, Σmax, η, profil α).');
-  lines.push('• kWh, kg CO₂ eq., € : intégrale de la puissance (W) mesurée × tarifs saisis — empreinte du suivi, pas un « gain dôme » sans double mesure énergétique.');
+  lines.push('• kWh, kg CO₂, € : intégrale de la puissance (W) mesurée × tarifs saisis — empreinte du suivi, pas un « gain dôme » sans double mesure énergétique.');
   lines.push('• Benchmark A/B : alternance reproductible OFF/ON sur UNE commande KPI de votre choix ; export JSON des sessions.');
+  lines.push('');
+  lines.push('=== Mode preuve stricte ===');
+  collectStrictEvidenceExport().allowed_claims.forEach(line => lines.push('• ' + line));
+  collectStrictEvidenceExport().forbidden_claims.forEach(line => lines.push('• Limite: ' + line));
   lines.push('');
   lines.push('=== Mesure energetique exportable ===');
   lines.push('Source energie: ' + (meter.power_source || 'N/A') + (meter.is_external_wall_source ? ' (prise externe)' : ''));
@@ -3032,6 +3146,15 @@ async function buildEvidencePackText() {
     lines.push('Etat prise externe: ' + (meter.external_power.last_watts_label || 'N/A') + ' | ' + (meter.external_power.freshness || 'N/A') + ' | bridge=' + (meter.external_power.bridge_state || 'N/A'));
     lines.push('Fichier puissance: ' + (meter.external_power.power_file_path || 'N/A'));
   }
+  lines.push('');
+  lines.push('=== Processus observes / attribution estimee ===');
+  lines.push('Methode: CPU/RAM/I/O sont lus par processus; la part energetique par processus reste une estimation ponderee sur la puissance machine mesuree.');
+  lines.push('Processus suivis: ' + proc.process_count);
+  proc.top_contributors.slice(0, 12).forEach(p => {
+    lines.push(
+      `• ${p.name} (PID ${p.pid}) | CPU ${Number(p.cpu_usage || 0).toFixed(1)}% | RAM ${((Number(p.memory_kb || 0)) / 1024).toFixed(0)} MiB | impact est. ${p.impact_score_pct_estimated == null ? 'N/A' : Number(p.impact_score_pct_estimated).toFixed(2) + '%'} | puissance est. ${p.estimated_power_w == null ? 'N/A' : Number(p.estimated_power_w).toFixed(2) + ' W'}`
+    );
+  });
   lines.push('');
   lines.push('=== Fichiers persistants (audit externe) ===');
   if (!hasTauri) {
@@ -3147,7 +3270,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
     const payload = {
       exported_at: new Date().toISOString(),
       product: 'SoulKernel',
-      version: '1.1.2',
+      version: '1.1.6',
       dome_active: state.domeActive,
       machine_activity: state.machineActivity || 'active',
       dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
@@ -3160,6 +3283,8 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
       kpi_bench_sessions: state.kpiBench.sessions,
       telemetry_summary: state.telemetrySummary,
       energy_meter_export: collectEnergyMeterExport(),
+      strict_evidence: collectStrictEvidenceExport(),
+      process_impact_report: collectProcessImpactExport(),
       diagnostic: diag,
       session_summary: state.domeHistory.length ? {
         count: state.domeHistory.length,
@@ -3309,6 +3434,8 @@ if (btnExportAB) {
           benchmark_top: payload?.top_sessions || [],
           telemetry_summary: state.telemetrySummary,
           energy_meter_export: collectEnergyMeterExport(),
+          strict_evidence: collectStrictEvidenceExport(),
+          process_impact_report: collectProcessImpactExport(),
         }, null, 2),
       });
       log('Export benchmark enregistre : ' + path, 'ok');
@@ -4205,8 +4332,8 @@ function fallbackInvoke(cmd, args) {
     auditLogJsonl: '(hors Tauri)',
   });
   if (cmd === 'ingest_telemetry_sample') return Promise.resolve(null);
-  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: { mem_gb_hours_saved: 0, passive_clean_h: 0 }, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 } });
-  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_saved: 0, total_mem_gb_hours_saved: 0, total_energy_kwh: 0, total_co2_avoided_kg: 0, total_cost_saved: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 });
+  if (cmd === 'get_telemetry_summary') return Promise.resolve({ pricing: { currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 }, total: { mem_gb_hours_differential: 0, passive_clean_h: 0 }, hour: {}, day: {}, week: {}, month: {}, year: {}, live_power_w: null, data_real_power: false, power_source: 'cpu_differential', lifetime: { first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_differential: 0, total_mem_gb_hours_differential: 0, total_energy_kwh: 0, total_co2_measured_kg: 0, total_energy_cost_measured: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 } });
+  if (cmd === 'get_lifetime_gains') return Promise.resolve({ first_launch_ts: 0, total_dome_activations: 0, total_dome_hours: 0, total_cpu_hours_differential: 0, total_mem_gb_hours_differential: 0, total_energy_kwh: 0, total_co2_measured_kg: 0, total_energy_cost_measured: 0, total_dome_gain_integral: 0, avg_kpi_gain_pct: null, total_samples: 0, has_real_power: false, total_idle_hours: 0, total_media_hours: 0, soulram_active_hours: 0 });
   if (cmd === 'get_energy_pricing') return Promise.resolve({ currency: 'EUR', price_per_kwh: 0.22, co2_kg_per_kwh: 0.05 });
   if (cmd === 'set_energy_pricing') return Promise.resolve(null);
   if (cmd === 'get_external_power_config') return Promise.resolve({ enabled: false, power_file: '', max_age_ms: 15000 });

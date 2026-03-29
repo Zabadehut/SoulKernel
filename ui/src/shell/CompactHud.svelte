@@ -23,7 +23,7 @@
     <div class="compact-hud-item"><span>Power:</span> <strong id="hudPower">-</strong></div>
     <div class="compact-hud-item"><span>Energie:</span> <strong id="hudEnergy">-</strong></div>
     <div class="compact-hud-item"><span>CO₂ (kWh mes.):</span> <strong id="hudCo2">-</strong></div>
-    <div class="compact-hud-item"><span>CPU·h saved:</span> <strong id="hudCpuH">-</strong></div>
-    <div class="compact-hud-item"><span>RAM·GB·h:</span> <strong id="hudMemGh">-</strong></div>
+    <div class="compact-hud-item"><span>CPU·h diff.:</span> <strong id="hudCpuH">-</strong></div>
+    <div class="compact-hud-item"><span>RAM·GB·h diff.:</span> <strong id="hudMemGh">-</strong></div>
   </div>
 </div>

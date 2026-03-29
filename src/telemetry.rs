@@ -98,13 +98,18 @@ pub struct WindowSummary {
     pub dome_active_ratio: f64,
     pub passive_clean_h: f64,
     pub kpi_gain_median_pct: Option<f64>,
-    /// CPU·h «épargnées» = modèle différentiel (baseline CPU dôme OFF vs mesure dôme ON), entrées `cpu_pct` réelles.
-    pub cpu_hours_saved: f64,
+    /// CPU·h différentielles = baseline CPU dôme OFF vs mesure dôme ON, entrées `cpu_pct` réelles.
+    #[serde(rename = "cpu_hours_differential", alias = "cpu_hours_saved", default)]
+    pub cpu_hours_differential: f64,
     /// Real dome gain integral Σ(π_i × dt_i) for dome-active samples.
     pub dome_gain_integral: f64,
     /// ∫ max(0, ratio_baseline − ratio_dome) × (total_GB) dt / 3600 — équivalent « gigaoctet-heures » de pression RAM évitée.
-    #[serde(default)]
-    pub mem_gb_hours_saved: f64,
+    #[serde(
+        rename = "mem_gb_hours_differential",
+        alias = "mem_gb_hours_saved",
+        default
+    )]
+    pub mem_gb_hours_differential: f64,
     /// Ratio of idle samples in the window.
     pub idle_ratio: f64,
     /// Ratio of media samples in the window.
@@ -120,14 +125,29 @@ pub struct LifetimeGains {
     pub total_dome_activations: u64,
     /// Total hours the dome was active.
     pub total_dome_hours: f64,
-    /// CPU·hours saved (measured differential, always available).
-    pub total_cpu_hours_saved: f64,
+    /// CPU·hours differential (measured differential, always available).
+    #[serde(
+        rename = "total_cpu_hours_differential",
+        alias = "total_cpu_hours_saved",
+        default
+    )]
+    pub total_cpu_hours_differential: f64,
     /// Énergie intégrée depuis le capteur de puissance (kWh). Zéro si pas de watts réels.
     pub total_energy_kwh: f64,
     /// kg CO₂ équivalent = `total_energy_kwh` × facteur (empreinte liée au kWh mesuré, pas un «gain évité» sans baseline énergétique).
-    pub total_co2_avoided_kg: f64,
+    #[serde(
+        rename = "total_co2_measured_kg",
+        alias = "total_co2_avoided_kg",
+        default
+    )]
+    pub total_co2_measured_kg: f64,
     /// Coût cumulé = `total_energy_kwh` × prix (idem : pas des euros «économisés» par le dôme sans référence).
-    pub total_cost_saved: f64,
+    #[serde(
+        rename = "total_energy_cost_measured",
+        alias = "total_cost_saved",
+        default
+    )]
+    pub total_energy_cost_measured: f64,
     /// ∫ π(t)·dt sur les ticks dôme ACTIF (π issu de la formule ; entrées r(t) mesurées côté OS).
     pub total_dome_gain_integral: f64,
     /// Median KPI gain % across all measurements.
@@ -141,8 +161,12 @@ pub struct LifetimeGains {
     /// Total hours spent in media consumption (video/film).
     pub total_media_hours: f64,
     /// Cumul RAM·GB·h (pression mémoire × temps, même principe que CPU·h).
-    #[serde(default)]
-    pub total_mem_gb_hours_saved: f64,
+    #[serde(
+        rename = "total_mem_gb_hours_differential",
+        alias = "total_mem_gb_hours_saved",
+        default
+    )]
+    pub total_mem_gb_hours_differential: f64,
     /// Heures cumulées d’échantillonnage avec SoulRAM actif et dôme inactif (Δt réels entre ticks télémétrie).
     #[serde(default)]
     pub soulram_active_hours: f64,
@@ -154,17 +178,17 @@ impl Default for LifetimeGains {
             first_launch_ts: 0,
             total_dome_activations: 0,
             total_dome_hours: 0.0,
-            total_cpu_hours_saved: 0.0,
+            total_cpu_hours_differential: 0.0,
             total_energy_kwh: 0.0,
-            total_co2_avoided_kg: 0.0,
-            total_cost_saved: 0.0,
+            total_co2_measured_kg: 0.0,
+            total_energy_cost_measured: 0.0,
             total_dome_gain_integral: 0.0,
             avg_kpi_gain_pct: None,
             total_samples: 0,
             has_real_power: false,
             total_idle_hours: 0.0,
             total_media_hours: 0.0,
-            total_mem_gb_hours_saved: 0.0,
+            total_mem_gb_hours_differential: 0.0,
             soulram_active_hours: 0.0,
         }
     }
@@ -407,13 +431,13 @@ impl TelemetryState {
                 // CPU·h saved = (baseline% − dome%) × dt / 3600 / 100
                 if let Some(cpu) = s.cpu_pct {
                     let delta_pct = (cpu_baseline_pct - cpu).max(0.0);
-                    out.cpu_hours_saved += delta_pct * s.dt_s / 360_000.0;
+                    out.cpu_hours_differential += delta_pct * s.dt_s / 360_000.0;
                 }
                 if let (Some(r), Some(tmb)) = (s.mem_used_ratio, s.mem_total_mb) {
                     let gb = tmb / 1024.0;
                     if gb > 0.01 && mem_off_dt > 0.0 {
                         let delta_gb = (mem_baseline_ratio - r).max(0.0) * gb;
-                        out.mem_gb_hours_saved += delta_gb * s.dt_s / 3600.0;
+                        out.mem_gb_hours_differential += delta_gb * s.dt_s / 3600.0;
                     }
                 }
                 // Real π integral.
@@ -515,7 +539,7 @@ impl TelemetryState {
                         0.0
                     };
                     let delta_pct = (baseline - cpu).max(0.0);
-                    self.lifetime.total_cpu_hours_saved += delta_pct * s.dt_s / 360_000.0;
+                    self.lifetime.total_cpu_hours_differential += delta_pct * s.dt_s / 360_000.0;
                 }
 
                 // Real π integral.
@@ -533,7 +557,8 @@ impl TelemetryState {
                         };
                         if baseline > 0.0 {
                             let delta_gb = (baseline - r).max(0.0) * gb;
-                            self.lifetime.total_mem_gb_hours_saved += delta_gb * s.dt_s / 3600.0;
+                            self.lifetime.total_mem_gb_hours_differential +=
+                                delta_gb * s.dt_s / 3600.0;
                         }
                     }
                 }
@@ -565,9 +590,9 @@ impl TelemetryState {
         if let Some(w) = s.power_watts {
             self.lifetime.has_real_power = true;
             self.lifetime.total_energy_kwh += (w * s.dt_s) / 3_600_000.0;
-            self.lifetime.total_co2_avoided_kg =
+            self.lifetime.total_co2_measured_kg =
                 self.lifetime.total_energy_kwh * self.pricing.co2_kg_per_kwh;
-            self.lifetime.total_cost_saved =
+            self.lifetime.total_energy_cost_measured =
                 self.lifetime.total_energy_kwh * self.pricing.price_per_kwh;
         }
 
@@ -646,4 +671,157 @@ fn load_pricing(path: &PathBuf) -> Option<EnergyPricing> {
 fn load_lifetime(path: &PathBuf) -> Option<LifetimeGains> {
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice::<LifetimeGains>(&bytes).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(name: &str) -> PathBuf {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("soulkernel-{name}-{uniq}.jsonl"))
+    }
+
+    fn new_state() -> TelemetryState {
+        let base = temp_path("telemetry");
+        let pricing = base.with_extension("pricing.json");
+        let lifetime = base.with_extension("lifetime.json");
+        TelemetryState::new(base, pricing, lifetime)
+    }
+
+    fn ingest_sample(
+        state: &mut TelemetryState,
+        ts_ms: u64,
+        dome_active: bool,
+        cpu_pct: f64,
+        mem_used_mb: f64,
+        power_watts: Option<f64>,
+        machine_activity: MachineActivity,
+    ) {
+        state
+            .ingest(TelemetryIngestRequest {
+                ts_ms: Some(ts_ms),
+                power_watts,
+                dome_active,
+                soulram_active: false,
+                kpi_gain_median_pct: None,
+                cpu_pct: Some(cpu_pct),
+                pi: Some(1.0),
+                machine_activity: Some(machine_activity),
+                mem_used_mb: Some(mem_used_mb),
+                mem_total_mb: Some(8_192.0),
+                power_source_tag: power_watts.map(|_| "meross_wall".to_string()),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn window_summary_computes_energy_and_differentials() {
+        let mut state = new_state();
+        let base = 1_000_000;
+        ingest_sample(
+            &mut state,
+            base,
+            false,
+            60.0,
+            4_096.0,
+            Some(120.0),
+            MachineActivity::Active,
+        );
+        ingest_sample(
+            &mut state,
+            base + 5_000,
+            true,
+            30.0,
+            2_048.0,
+            Some(60.0),
+            MachineActivity::Active,
+        );
+
+        let summary = state.summary(base + 5_000);
+        assert!(summary.total.has_power_data);
+        assert_eq!(summary.power_source, "meross_wall");
+        assert!((summary.total.energy_kwh - 0.00025).abs() < 1e-9);
+        assert!((summary.total.cpu_hours_differential - (30.0 * 5.0 / 360_000.0)).abs() < 1e-9);
+        assert!((summary.total.mem_gb_hours_differential - (2.0 * 5.0 / 3600.0)).abs() < 1e-9);
+        assert!((summary.lifetime.total_energy_kwh - 0.00025).abs() < 1e-9);
+        assert!(summary.lifetime.total_cpu_hours_differential > 0.0);
+        assert!(summary.lifetime.total_mem_gb_hours_differential > 0.0);
+    }
+
+    #[test]
+    fn idle_and_media_do_not_count_as_dome_differential_gain() {
+        let mut state = new_state();
+        let base = 2_000_000;
+        ingest_sample(
+            &mut state,
+            base,
+            false,
+            50.0,
+            4_096.0,
+            None,
+            MachineActivity::Active,
+        );
+        ingest_sample(
+            &mut state,
+            base + 5_000,
+            true,
+            5.0,
+            2_048.0,
+            None,
+            MachineActivity::Idle,
+        );
+        ingest_sample(
+            &mut state,
+            base + 10_000,
+            true,
+            4.0,
+            2_048.0,
+            None,
+            MachineActivity::Media,
+        );
+
+        let summary = state.summary(base + 10_000);
+        assert_eq!(summary.total.cpu_hours_differential, 0.0);
+        assert_eq!(summary.total.mem_gb_hours_differential, 0.0);
+        assert!(summary.total.idle_ratio > 0.0);
+        assert!(summary.total.media_ratio > 0.0);
+        assert_eq!(summary.lifetime.total_cpu_hours_differential, 0.0);
+        assert_eq!(summary.lifetime.total_mem_gb_hours_differential, 0.0);
+    }
+
+    #[test]
+    fn deserialize_legacy_lifetime_names() {
+        let path = temp_path("legacy-lifetime");
+        let payload = r#"{
+          "first_launch_ts": 1,
+          "total_dome_activations": 2,
+          "total_dome_hours": 3.5,
+          "total_cpu_hours_saved": 1.25,
+          "total_energy_kwh": 0.75,
+          "total_co2_avoided_kg": 0.02,
+          "total_cost_saved": 0.11,
+          "total_dome_gain_integral": 9.0,
+          "avg_kpi_gain_pct": 4.0,
+          "total_samples": 10,
+          "has_real_power": true,
+          "total_idle_hours": 0.5,
+          "total_media_hours": 0.25,
+          "total_mem_gb_hours_saved": 2.5,
+          "soulram_active_hours": 1.0
+        }"#;
+        fs::write(&path, payload).unwrap();
+        let loaded = load_lifetime(&path).unwrap();
+        assert_eq!(loaded.total_cpu_hours_differential, 1.25);
+        assert_eq!(loaded.total_mem_gb_hours_differential, 2.5);
+        assert_eq!(loaded.total_co2_measured_kg, 0.02);
+        assert_eq!(loaded.total_energy_cost_measured, 0.11);
+        let _ = fs::remove_file(path);
+    }
 }

@@ -70,6 +70,29 @@ pub struct ProcessInfo {
     pub parent_pid: Option<u32>,
     /// RSS approximative (KiB).
     pub memory_kb: u64,
+    pub memory_share_pct: Option<f64>,
+    pub disk_read_bytes: Option<u64>,
+    pub disk_written_bytes: Option<u64>,
+    pub run_time_s: Option<u64>,
+    pub status: Option<String>,
+    pub exe: Option<String>,
+    pub cmd: Vec<String>,
+    pub is_self_process: bool,
+    pub is_embedded_webview: bool,
+    pub impact_score_pct_estimated: Option<f64>,
+    pub estimated_power_share_pct: Option<f64>,
+    pub estimated_power_w: Option<f64>,
+    pub attribution_method: Option<String>,
+}
+
+fn is_embedded_webview_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("msedgewebview")
+        || n.contains("webview2")
+        || n.contains("webkitnetworkprocess")
+        || n.contains("webkit.webcontent")
+        || n.contains("webkitwebprocess")
+        || (n.contains("webkit") && n.contains("gpu"))
 }
 
 #[derive(serde::Serialize)]
@@ -127,7 +150,16 @@ fn bundled_python_relative_paths() -> &'static [&'static str] {
     }
 }
 
+fn allow_bundled_python_in_dev() -> bool {
+    std::env::var("SOULKERNEL_USE_BUNDLED_PYTHON_IN_DEV")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false)
+}
+
 fn resolve_bundled_python(app: &AppHandle) -> Option<std::path::PathBuf> {
+    if cfg!(debug_assertions) && !allow_bundled_python_in_dev() {
+        return None;
+    }
     let mut bases = Vec::new();
     if let Some(resource_dir) = app.path().resource_dir().ok() {
         bases.push(resource_dir);
@@ -409,6 +441,7 @@ fn start_external_bridge_inner(
         .env("MEROSS_REGION", &region)
         .env("MEROSS_DEVICE_TYPE", &device_type)
         .env("MEROSS_CREDS_CACHE", &creds_cache_path)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .stdin(Stdio::null());
@@ -429,27 +462,114 @@ fn start_external_bridge_inner(
 
 #[tauri::command]
 fn list_processes() -> Result<Vec<ProcessInfo>, String> {
-    let mut sys = sysinfo::System::new();
+    let mut sys = sysinfo::System::new_all();
     sys.refresh_processes();
     thread::sleep(Duration::from_millis(220));
     sys.refresh_processes();
-    let mut list: Vec<ProcessInfo> = sys
+    sys.refresh_memory();
+
+    let machine_metrics = metrics::collect().ok();
+    let machine_power_w = machine_metrics.as_ref().and_then(|m| m.raw.power_watts);
+    let total_mem_kb = (sys.total_memory() / 1024).max(1);
+    let self_pid = sysinfo::get_current_pid().ok().map(|p| p.as_u32());
+    let cpu_sum = sys
+        .processes()
+        .values()
+        .map(|p| (p.cpu_usage() as f64).max(0.0))
+        .sum::<f64>();
+    let io_sum = sys
+        .processes()
+        .values()
+        .map(|p| {
+            let du = p.disk_usage();
+            du.read_bytes.saturating_add(du.written_bytes) as f64
+        })
+        .sum::<f64>();
+
+    let mut rows: Vec<(ProcessInfo, f64)> = sys
         .processes()
         .iter()
-        .map(|(pid, p)| ProcessInfo {
-            pid: pid.as_u32(),
-            name: p.name().to_string(),
-            cpu_usage: p.cpu_usage() as f64,
-            parent_pid: p.parent().map(|pp| pp.as_u32()),
-            memory_kb: p.memory() / 1024,
+        .map(|(pid, p)| {
+            let cpu_usage = p.cpu_usage() as f64;
+            let memory_kb = p.memory() / 1024;
+            let memory_share_pct = Some((memory_kb as f64 / total_mem_kb as f64) * 100.0);
+            let du = p.disk_usage();
+            let disk_bytes = du.read_bytes.saturating_add(du.written_bytes) as f64;
+            let cpu_share_pct = if cpu_sum > 0.0 {
+                (cpu_usage.max(0.0) / cpu_sum) * 100.0
+            } else {
+                0.0
+            };
+            let io_share_pct = if io_sum > 0.0 {
+                (disk_bytes / io_sum) * 100.0
+            } else {
+                0.0
+            };
+            let impact_raw = (0.70 * cpu_share_pct
+                + 0.20 * memory_share_pct.unwrap_or(0.0)
+                + 0.10 * io_share_pct)
+                .max(0.0);
+            let name = p.name().to_string();
+            (
+                ProcessInfo {
+                    pid: pid.as_u32(),
+                    name: name.clone(),
+                    cpu_usage,
+                    parent_pid: p.parent().map(|pp| pp.as_u32()),
+                    memory_kb,
+                    memory_share_pct,
+                    disk_read_bytes: Some(du.read_bytes),
+                    disk_written_bytes: Some(du.written_bytes),
+                    run_time_s: Some(p.run_time()),
+                    status: Some(format!("{:?}", p.status()).to_lowercase()),
+                    exe: p.exe().map(|v| v.to_string_lossy().into_owned()),
+                    cmd: p
+                        .cmd()
+                        .iter()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .collect(),
+                    is_self_process: self_pid == Some(pid.as_u32()),
+                    is_embedded_webview: is_embedded_webview_name(&name),
+                    impact_score_pct_estimated: None,
+                    estimated_power_share_pct: None,
+                    estimated_power_w: None,
+                    attribution_method: None,
+                },
+                impact_raw,
+            )
         })
         .collect();
+
+    let impact_sum = rows.iter().map(|(_, raw)| raw.max(0.0)).sum::<f64>();
+    let has_power = machine_power_w.is_some();
+    let mut list: Vec<ProcessInfo> = rows
+        .drain(..)
+        .map(|(mut info, impact_raw)| {
+            let impact_pct = if impact_sum > 0.0 {
+                Some((impact_raw / impact_sum) * 100.0)
+            } else {
+                None
+            };
+            info.impact_score_pct_estimated = impact_pct;
+            info.estimated_power_share_pct = impact_pct;
+            info.estimated_power_w = impact_pct
+                .zip(machine_power_w)
+                .map(|(pct, w)| (pct / 100.0) * w);
+            info.attribution_method = Some(if has_power {
+                "estimated_weighted_cpu_mem_io_over_measured_machine_power".to_string()
+            } else {
+                "estimated_weighted_cpu_mem_io".to_string()
+            });
+            info
+        })
+        .collect();
+
     list.sort_by(|a, b| {
-        b.cpu_usage
-            .partial_cmp(&a.cpu_usage)
+        b.impact_score_pct_estimated
+            .unwrap_or(b.cpu_usage)
+            .partial_cmp(&a.impact_score_pct_estimated.unwrap_or(a.cpu_usage))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    list.truncate(100);
     Ok(list)
 }
 
