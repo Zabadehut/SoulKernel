@@ -375,7 +375,7 @@ body.hud-only .compact-hud.hud-detailed .compact-hud-item{font-size:.62rem}
 .green-it-label{font-size:.52rem;color:var(--muted);margin-top:.12rem;letter-spacing:.06em;line-height:1.25;}
 .green-it-mini{font-size:.56rem;color:var(--text);margin-top:.22rem}
 .green-it-reports{margin-top:.2rem}
-.green-it-report-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.35rem}
+.green-it-report-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.35rem}
 .green-it-export{margin-top:.4rem;font-size:.56rem;padding:.22rem .42rem}
 .green-it-source{display:inline-block;font-size:.5rem;padding:.12rem .45rem;border-radius:999px;border:1px solid var(--io);color:var(--io);margin-left:.5rem;}
 .green-it-lifetime{font-size:.56rem;color:var(--text);margin-top:.45rem;line-height:1.5;}

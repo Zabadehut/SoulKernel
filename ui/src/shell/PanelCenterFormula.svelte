@@ -127,6 +127,14 @@
       </div>
       <div class="green-it-report-grid">
         <div class="green-it-stat">
+          <div class="green-it-val" id="greenHourKwh">—</div>
+          <div class="green-it-label">HEURE · KWH</div>
+          <div class="green-it-mini" id="greenHourEur">—</div>
+          <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyHour">
+            <span class="btn-ico"><i data-lucide="download"></i></span> Export heure
+          </button>
+        </div>
+        <div class="green-it-stat">
           <div class="green-it-val" id="greenDayKwh">—</div>
           <div class="green-it-label">JOUR · KWH</div>
           <div class="green-it-mini" id="greenDayEur">—</div>

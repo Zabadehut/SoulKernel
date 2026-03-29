@@ -1095,6 +1095,8 @@ function renderGreenItPanel(s) {
   set('greenDomeN', String(lt.total_dome_activations || 0));
   set('greenDomeH', f2(lt.total_dome_hours));
   set('greenDomeD', f2(lt.total_dome_gain_integral));
+  set('greenHourKwh', s.hour?.has_power_data ? f3(s.hour?.energy_kwh) : '--');
+  set('greenHourEur', s.hour?.has_power_data ? (f2(s.hour?.cost) + ' ' + (s.pricing?.currency || 'EUR')) : '--');
   set('greenDayKwh', s.day?.has_power_data ? f3(s.day?.energy_kwh) : '--');
   set('greenDayEur', s.day?.has_power_data ? (f2(s.day?.cost) + ' ' + (s.pricing?.currency || 'EUR')) : '--');
   set('greenWeekKwh', s.week?.has_power_data ? f3(s.week?.energy_kwh) : '--');
@@ -3080,6 +3082,18 @@ document.getElementById('btnCopyGains').addEventListener('click', () => {
   }).catch(() => log('Copie echouee', 'err'));
 });
 
+const btnExportEnergyHour = document.getElementById('btnExportEnergyHour');
+if (btnExportEnergyHour) {
+  btnExportEnergyHour.addEventListener('click', async () => {
+    try {
+      const path = await exportEnergyPeriodReport('hour');
+      log('Export energie heure enregistre : ' + path, 'ok');
+    } catch (e) {
+      if (String(e).includes('Annulé')) return;
+      log('Export energie heure: ' + e, 'err');
+    }
+  });
+}
 const btnExportEnergyDay = document.getElementById('btnExportEnergyDay');
 if (btnExportEnergyDay) {
   btnExportEnergyDay.addEventListener('click', async () => {
