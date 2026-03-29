@@ -84,6 +84,36 @@
         Si un processus est choisi, le dôme lui donne un maximum d’amplitude et de performance (tous les cœurs,
         priorité haute, working set 2–4 Go).
       </div>
+      <div class="process-impact-card">
+        <div class="process-impact-head">
+          <div class="process-impact-title">Impact processus</div>
+          <div class="process-impact-sub" id="processImpactSummary">En attente de collecte...</div>
+        </div>
+        <div class="process-impact-scroll">
+          <table class="process-impact-table">
+            <thead>
+              <tr>
+                <th>Processus</th>
+                <th>PID</th>
+                <th>CPU % 🔬</th>
+                <th>RAM 🔬</th>
+                <th>I/O 🔬</th>
+                <th>Puiss. est. 〜</th>
+                <th>Impact est. % 〜</th>
+                <th>Durée</th>
+                <th>Statut</th>
+                <th>Rôle</th>
+              </tr>
+            </thead>
+            <tbody id="processImpactRows">
+              <tr><td colspan="10" class="process-impact-empty">Aucune donnée processus.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="target-hint" style="margin-top:.35rem">
+          🔬 = observé par processus. 〜 = attribution estimée à partir de CPU/RAM/I/O et, si disponible, de la puissance machine mesurée.
+        </div>
+      </div>
     </div>
 
     <div class="advisor-panel">

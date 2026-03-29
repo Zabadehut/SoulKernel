@@ -42,6 +42,15 @@ function sanitizeAudit(value, depth = 0) {
   return String(value);
 }
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 async function auditEmit(category, action, level = 'info', data = null) {
   if (!hasTauri) return;
   try {
@@ -1912,6 +1921,81 @@ function setProcessRefreshInfo() {
   info.textContent = `maj auto: ${state.lastProcessRefreshTs}`;
 }
 
+function formatProcessIoBytes(readBytes, writeBytes) {
+  const total = Number(readBytes || 0) + Number(writeBytes || 0);
+  if (!Number.isFinite(total) || total <= 0) return '—';
+  if (total >= 1024 * 1024 * 1024) return (total / (1024 * 1024 * 1024)).toFixed(2) + ' GiB';
+  if (total >= 1024 * 1024) return (total / (1024 * 1024)).toFixed(1) + ' MiB';
+  if (total >= 1024) return (total / 1024).toFixed(1) + ' KiB';
+  return total.toFixed(0) + ' B';
+}
+
+function formatProcessDuration(runTimeS) {
+  const secs = Number(runTimeS);
+  if (!Number.isFinite(secs) || secs < 0) return '—';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0) return `${h}h ${m.toString().padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${s.toString().padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function renderProcessImpactPanel() {
+  const tbody = document.getElementById('processImpactRows');
+  const summary = document.getElementById('processImpactSummary');
+  if (!tbody || !summary) return;
+  const list = Array.isArray(state.processImpactReport) ? state.processImpactReport : [];
+  if (!list.length) {
+    summary.textContent = 'Aucune donnée processus collectée.';
+    tbody.innerHTML = '<tr><td colspan="10" class="process-impact-empty">Aucune donnée processus.</td></tr>';
+    return;
+  }
+  const top = [...list]
+    .sort((a, b) => Number(b.impact_score_pct_estimated || 0) - Number(a.impact_score_pct_estimated || 0))
+    .slice(0, 12);
+  const selectedPid = state.targetPid;
+  const observedCpu = top.filter(p => Number.isFinite(Number(p.cpu_usage))).length;
+  const observedMem = top.filter(p => Number.isFinite(Number(p.memory_kb)) && Number(p.memory_kb) > 0).length;
+  summary.textContent = `${list.length} processus | top ${top.length} affichés | CPU observé ${observedCpu}/${top.length} | RAM observée ${observedMem}/${top.length}`;
+  tbody.innerHTML = top.map(p => {
+    const pills = [];
+    if (selectedPid != null && Number(p.pid) === Number(selectedPid)) pills.push('<span class="process-pill process-pill--target">TARGET</span>');
+    if (p.is_self_process) pills.push('<span class="process-pill process-pill--self">SELF</span>');
+    if (p.is_embedded_webview) pills.push('<span class="process-pill process-pill--wv">WV</span>');
+    const exe = p.exe ? escapeHtml(String(p.exe)) : '—';
+    const cmd = Array.isArray(p.cmd) && p.cmd.length ? escapeHtml(p.cmd.join(' ')) : '—';
+    const cpu = Number.isFinite(Number(p.cpu_usage)) ? Number(p.cpu_usage).toFixed(1) + ' %' : '—';
+    const ramMiB = Number.isFinite(Number(p.memory_kb)) && Number(p.memory_kb) > 0
+      ? ((Number(p.memory_kb) / 1024).toFixed(0) + ' MiB')
+      : '—';
+    const ramPct = Number.isFinite(Number(p.memory_share_pct)) ? Number(p.memory_share_pct).toFixed(1) + '%' : '—';
+    const io = formatProcessIoBytes(p.disk_read_bytes, p.disk_written_bytes);
+    const power = Number.isFinite(Number(p.estimated_power_w)) ? Number(p.estimated_power_w).toFixed(2) + ' W' : '—';
+    const impact = Number.isFinite(Number(p.impact_score_pct_estimated)) ? Number(p.impact_score_pct_estimated).toFixed(2) + ' %' : '—';
+    const duration = formatProcessDuration(p.run_time_s);
+    const status = p.status ? escapeHtml(String(p.status)) : '—';
+    return `<tr>
+      <td>
+        <div class="process-impact-name">
+          <div class="process-impact-main">${escapeHtml(p.name || '—')}</div>
+          <div>${pills.join('')}</div>
+          <div class="process-impact-meta" title="${cmd}">exe: ${exe}</div>
+        </div>
+      </td>
+      <td>${escapeHtml(p.pid)}</td>
+      <td>${cpu}</td>
+      <td>${ramMiB}<br><span class="process-impact-meta">${ramPct}</span></td>
+      <td>${io}<br><span class="process-impact-meta">R ${formatProcessIoBytes(p.disk_read_bytes, 0)} / W ${formatProcessIoBytes(0, p.disk_written_bytes)}</span></td>
+      <td>${power}</td>
+      <td>${impact}</td>
+      <td>${duration}</td>
+      <td>${status}</td>
+      <td><span class="process-impact-meta">${escapeHtml(p.attribution_method || '—')}</span></td>
+    </tr>`;
+  }).join('');
+}
+
 function startClockLoop() {
   if (clockIntervalId != null) return;
   clockIntervalId = setInterval(() => {
@@ -1993,6 +2077,7 @@ async function refreshProcesses(options = {}) {
       log(`Liste processus : ${list.length} affichées (${rawList.length} au total)`, 'ok');
     }
     state.lastProcessCount = rawList.length;
+    renderProcessImpactPanel();
   } catch (e) {
     if (userInitiated) log(`list_processes: ${e}`, 'err');
   }

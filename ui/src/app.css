@@ -187,6 +187,23 @@ header{
 .target-tools{display:flex;justify-content:space-between;align-items:center;margin:.3rem 0 .25rem;gap:.4rem;}
 .target-auto{display:flex;align-items:center;gap:.35rem;font-size:.54rem;color:var(--muted);}
 .target-auto input{accent-color:var(--cpu);}
+.process-impact-card{margin-top:.45rem;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--s2) 86%,transparent);padding:.45rem;}
+.process-impact-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;margin-bottom:.3rem;}
+.process-impact-title{font-size:.66rem;letter-spacing:.06em;color:var(--mem);text-transform:uppercase;}
+.process-impact-sub{font-size:.56rem;color:var(--muted);text-align:right;line-height:1.35;}
+.process-impact-scroll{overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg);}
+.process-impact-table{width:100%;border-collapse:collapse;font-size:.57rem;min-width:860px;}
+.process-impact-table th,.process-impact-table td{padding:.32rem .38rem;border-bottom:1px solid color-mix(in srgb,var(--border) 85%, transparent);text-align:left;vertical-align:top;white-space:nowrap;}
+.process-impact-table th{position:sticky;top:0;background:var(--s2);z-index:1;color:var(--muted);font-weight:700;letter-spacing:.04em;}
+.process-impact-table tbody tr:hover{background:color-mix(in srgb,var(--s2) 70%, transparent);}
+.process-impact-name{display:flex;flex-direction:column;gap:.12rem;min-width:150px;}
+.process-impact-main{font-weight:600;color:var(--text);}
+.process-impact-meta{font-size:.5rem;color:var(--muted);white-space:normal;line-height:1.3;max-width:240px;}
+.process-impact-empty{text-align:center;color:var(--muted);font-style:italic;}
+.process-pill{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:.04rem .28rem;font-size:.48rem;letter-spacing:.04em;color:var(--muted);margin-right:.16rem;}
+.process-pill--target{color:var(--io);border-color:color-mix(in srgb,var(--io) 45%, var(--border));}
+.process-pill--self{color:var(--cpu);border-color:color-mix(in srgb,var(--cpu) 45%, var(--border));}
+.process-pill--wv{color:var(--gpu);border-color:color-mix(in srgb,var(--gpu) 45%, var(--border));}
 .advisor-panel{background:linear-gradient(180deg, rgba(15,30,48,.88), rgba(11,19,32,.88));border:1px solid var(--border);border-radius:12px;padding:.55rem;}
 .operator-brief{border-color:rgba(0,212,255,.35);box-shadow:inset 0 0 0 1px rgba(0,212,255,.05)}
 .advisor-title{font-size:.56rem;color:var(--cpu);letter-spacing:.08em;margin-bottom:.22rem;}
