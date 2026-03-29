@@ -523,11 +523,7 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
                     run_time_s: Some(p.run_time()),
                     status: Some(format!("{:?}", p.status()).to_lowercase()),
                     exe: p.exe().map(|v| v.to_string_lossy().into_owned()),
-                    cmd: p
-                        .cmd()
-                        .iter()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .collect(),
+                    cmd: p.cmd().iter().map(|s| s.to_string()).collect(),
                     is_self_process: self_pid == Some(pid.as_u32()),
                     is_embedded_webview: is_embedded_webview_name(&name),
                     impact_score_pct_estimated: None,
