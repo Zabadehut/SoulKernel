@@ -428,7 +428,9 @@ const MAX_KPI_SESSIONS_IN_MEMORY = 20;
 const MAX_BENCH_TOP_UI = 24;
 /** Sessions A/B chargées depuis le disque : garde les derniers échantillons si export massif. */
 const MAX_SAMPLES_PER_SESSION_UI = 500;
-const PROCESS_REFRESH_MS = 7000;
+const PROCESS_REFRESH_ACTIVE_MS = 8000;
+const PROCESS_REFRESH_IDLE_MS = 15000;
+const PROCESS_REFRESH_HIDDEN_MS = 30000;
 const ADAPTIVE_WORKLOAD_CONFIRM_CYCLES = 3;
 const ADAPTIVE_WORKLOAD_COOLDOWN_MS = 30000;
 const ADVICE_CONFIRM_CYCLES = 4;
@@ -442,6 +444,9 @@ let pollInFlight = false;
 let pollTimer = null;
 let clockIntervalId = null;
 let processRefreshIntervalId = null;
+let processRefreshInFlight = false;
+let lastProcessReportRevision = null;
+let lastProcessUiRevision = null;
 let pendingUiMetric = null;
 let uiFrameScheduled = false;
 let lastMetricsAuditTs = 0;
@@ -454,6 +459,12 @@ function nextPollDelayMs() {
   if (state.kpiBench.running) return POLL_MEDIUM_MS;
   if (state.domeActive || state.adaptiveEnabled) return POLL_FAST_MS;
   return POLL_SLOW_MS;
+}
+
+function nextProcessRefreshDelayMs() {
+  if (document.hidden) return PROCESS_REFRESH_HIDDEN_MS;
+  if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return PROCESS_REFRESH_ACTIVE_MS;
+  return PROCESS_REFRESH_IDLE_MS;
 }
 
 function scheduleNextPoll() {
@@ -1987,21 +1998,23 @@ function stopClockLoop() {
 
 function startProcessRefreshLoop() {
   if (processRefreshIntervalId != null || document.hidden) return;
-  processRefreshIntervalId = setInterval(
-    () => refreshProcesses({ userInitiated: false }),
-    PROCESS_REFRESH_MS
-  );
+  processRefreshIntervalId = setTimeout(() => {
+    processRefreshIntervalId = null;
+    refreshProcesses({ userInitiated: false });
+  }, nextProcessRefreshDelayMs());
 }
 
 function stopProcessRefreshLoop() {
   if (processRefreshIntervalId != null) {
-    clearInterval(processRefreshIntervalId);
+    clearTimeout(processRefreshIntervalId);
     processRefreshIntervalId = null;
   }
 }
 
 async function refreshProcesses(options = {}) {
   const userInitiated = options.userInitiated === true;
+  if (processRefreshInFlight) return;
+  processRefreshInFlight = true;
   try {
     const rawReport = await invoke('list_processes');
     const rawList = Array.isArray(rawReport)
@@ -2013,22 +2026,33 @@ async function refreshProcesses(options = {}) {
     const topProcessRows = Array.isArray(rawReport?.top_process_rows) ? rawReport.top_process_rows : [];
     const groupedProcesses = Array.isArray(rawReport?.grouped_processes) ? rawReport.grouped_processes : [];
     const summary = rawReport?.summary && typeof rawReport.summary === 'object' ? rawReport.summary : null;
-    state.processList = rawList;
-    state.processImpactReport = { processes: rawList, top_processes: topProcesses, top_process_rows: topProcessRows, grouped_processes: groupedProcesses, summary };
+    const reportRevision = summary?.report_revision || null;
+    const uiRevision = summary?.ui_revision || reportRevision || null;
+    const reportChanged = userInitiated || reportRevision == null || reportRevision !== lastProcessReportRevision;
+    const uiChanged = userInitiated || uiRevision == null || uiRevision !== lastProcessUiRevision;
+    if (reportChanged) {
+      state.processList = rawList;
+      state.processImpactReport = { processes: rawList, top_processes: topProcesses, top_process_rows: topProcessRows, grouped_processes: groupedProcesses, summary };
+      lastProcessReportRevision = reportRevision;
+    } else if (state.processImpactReport && typeof state.processImpactReport === 'object') {
+      state.processImpactReport.summary = summary;
+    }
     const sel = document.getElementById('targetProcess');
     const current = sel.value;
-    const list = capProcessListForSelect(rawList, current);
-    sel.innerHTML = '<option value="">Ce processus (SoulKernel)</option>';
-    list.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.pid;
-      const rss = (p.memory_kb != null) ? ` · ${(Number(p.memory_kb) / 1024).toFixed(0)} MiB` : '';
-      const par = (p.parent_pid != null) ? ` ←${p.parent_pid}` : '';
-      const impact = p.impact_score_pct_estimated != null ? ` · impact ${Number(p.impact_score_pct_estimated).toFixed(1)}%` : '';
-      const pw = p.estimated_power_w != null ? ` · ~${Number(p.estimated_power_w).toFixed(1)} W est.` : '';
-      opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${rss}${impact}${pw}`;
-      sel.appendChild(opt);
-    });
+    const list = reportChanged ? capProcessListForSelect(rawList, current) : capProcessListForSelect(state.processList, current);
+    if (reportChanged) {
+      sel.innerHTML = '<option value="">Ce processus (SoulKernel)</option>';
+      list.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.pid;
+        const rss = (p.memory_kb != null) ? ` · ${(Number(p.memory_kb) / 1024).toFixed(0)} MiB` : '';
+        const par = (p.parent_pid != null) ? ` ←${p.parent_pid}` : '';
+        const impact = p.impact_score_pct_estimated != null ? ` · impact ${Number(p.impact_score_pct_estimated).toFixed(1)}%` : '';
+        const pw = p.estimated_power_w != null ? ` · ~${Number(p.estimated_power_w).toFixed(1)} W est.` : '';
+        opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${rss}${impact}${pw}`;
+        sel.appendChild(opt);
+      });
+    }
     if (state.autoProcessTarget) {
       const pick = pickAutoProcess(list, current);
       if (pick) sel.value = pick;
@@ -2061,9 +2085,15 @@ async function refreshProcesses(options = {}) {
       log(`Liste processus : ${list.length} affichées (${rawList.length} au total)`, 'ok');
     }
     state.lastProcessCount = rawList.length;
-    renderProcessImpactPanel();
+    if (uiChanged && !document.hidden) {
+      renderProcessImpactPanel();
+      lastProcessUiRevision = uiRevision;
+    }
   } catch (e) {
     if (userInitiated) log(`list_processes: ${e}`, 'err');
+  } finally {
+    processRefreshInFlight = false;
+    if (!document.hidden) startProcessRefreshLoop();
   }
 }
 function updateSoulRamUi() {
@@ -3407,6 +3437,7 @@ document.getElementById('targetProcess').addEventListener('change', e => {
     document.getElementById('autoProcessTarget').checked = false;
     log('Selection manuelle detectee: auto-cible desactivee', 'info');
   }
+  renderProcessImpactPanel();
 });
 
 

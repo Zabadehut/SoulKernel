@@ -19,7 +19,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::{
+    collections::hash_map::DefaultHasher,
     fs::OpenOptions,
+    hash::{Hash, Hasher},
     path::Path,
     process::{Child, Command, Stdio},
 };
@@ -95,6 +97,8 @@ pub struct ProcessImpactSummary {
     pub observed_io_count: usize,
     pub machine_power_w: Option<f64>,
     pub attribution_method: String,
+    pub report_revision: String,
+    pub ui_revision: String,
 }
 
 #[derive(serde::Serialize)]
@@ -255,6 +259,49 @@ fn build_process_ui_row(info: &ProcessInfo) -> ProcessImpactUiRow {
         is_self_process: info.is_self_process,
         is_embedded_webview: info.is_embedded_webview,
     }
+}
+
+fn hash_f64(hasher: &mut DefaultHasher, value: f64) {
+    if value.is_finite() {
+        value.to_bits().hash(hasher);
+    } else {
+        0u64.hash(hasher);
+    }
+}
+
+fn build_process_report_revision(processes: &[ProcessInfo]) -> String {
+    let mut hasher = DefaultHasher::new();
+    processes.len().hash(&mut hasher);
+    for p in processes.iter().take(64) {
+        p.pid.hash(&mut hasher);
+        p.name.hash(&mut hasher);
+        hash_f64(&mut hasher, p.cpu_usage);
+        p.memory_kb.hash(&mut hasher);
+        p.disk_read_bytes.unwrap_or(0).hash(&mut hasher);
+        p.disk_written_bytes.unwrap_or(0).hash(&mut hasher);
+        hash_f64(
+            &mut hasher,
+            p.impact_score_pct_estimated.unwrap_or_default(),
+        );
+        hash_f64(&mut hasher, p.estimated_power_w.unwrap_or_default());
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+fn build_process_ui_revision(rows: &[ProcessImpactUiRow]) -> String {
+    let mut hasher = DefaultHasher::new();
+    rows.len().hash(&mut hasher);
+    for row in rows {
+        row.pid.hash(&mut hasher);
+        row.cpu_label.hash(&mut hasher);
+        row.ram_label.hash(&mut hasher);
+        row.io_label.hash(&mut hasher);
+        row.power_label.hash(&mut hasher);
+        row.impact_label.hash(&mut hasher);
+        row.status_label.hash(&mut hasher);
+        row.role.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
 }
 
 #[derive(serde::Serialize)]
@@ -735,6 +782,8 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
         .iter()
         .map(build_process_ui_row)
         .collect::<Vec<_>>();
+    let report_revision = build_process_report_revision(&list);
+    let ui_revision = build_process_ui_revision(&top_process_rows);
     let mut grouped = std::collections::BTreeMap::<String, ProcessImpactGroup>::new();
     for info in &list {
         let key = process_group_key(info);
@@ -791,6 +840,8 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
         } else {
             "estimated_weighted_cpu_mem_io".to_string()
         },
+        report_revision,
+        ui_revision,
     };
 
     Ok(ProcessImpactReport {
