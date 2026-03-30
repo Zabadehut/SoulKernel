@@ -371,6 +371,9 @@ let state = {
   soulRamActive: false,
   soulRamPercent: 20,
   soulRamBackend: '',
+  soulRamPlatform: '',
+  soulRamEquivalentGoal: '',
+  soulRamRoadmap: [],
   lastTaskbarPushTs: 0,
   policyMode: 'privileged',
   autoReapplyIntent: true,
@@ -1110,6 +1113,18 @@ function renderSoulRamFromTelemetry(s) {
     'Même notion sur la fenêtre télémétrie courante : <strong>' +
     (pch != null && Number.isFinite(pch) ? pch.toFixed(2) + ' h</strong>' : 'N/A</strong>') + '. ' +
     '<span style="opacity:.9">Le cumul <strong>RAM·GB·h</strong> affiché ailleurs reflète surtout le <strong>dôme</strong> actif, pas un « gain SoulRAM » isolé.</span>';
+}
+
+function renderSoulRamBackendDetails() {
+  const goalEl = document.getElementById('soulRamGoalLine');
+  const roadmapEl = document.getElementById('soulRamRoadmapLine');
+  if (goalEl) {
+    goalEl.textContent = 'Equivalent fonctionnel : ' + (state.soulRamEquivalentGoal || '—');
+  }
+  if (roadmapEl) {
+    const items = Array.isArray(state.soulRamRoadmap) ? state.soulRamRoadmap.filter(Boolean) : [];
+    roadmapEl.textContent = 'Roadmap OS : ' + (items.length ? items.join(' | ') : '—');
+  }
 }
 
 function renderGreenItPanel(s) {
@@ -2151,6 +2166,7 @@ function updateSoulRamUi() {
   const offBtn = document.getElementById('btnSoulRamOff');
   if (onBtn) onBtn.disabled = !!state.soulRamActive;
   if (offBtn) offBtn.disabled = !state.soulRamActive;
+  renderSoulRamBackendDetails();
 }
 
 async function syncSoulRamStatus() {
@@ -2159,10 +2175,13 @@ async function syncSoulRamStatus() {
     state.soulRamActive = !!s.active;
     state.soulRamPercent = Number(s.percent || 20);
     state.soulRamBackend = (s.backend && String(s.backend)) || '';
+    state.soulRamPlatform = (s.platform && String(s.platform)) || '';
+    state.soulRamEquivalentGoal = (s.equivalent_goal && String(s.equivalent_goal)) || '';
+    state.soulRamRoadmap = Array.isArray(s.roadmap) ? s.roadmap.slice(0, 3).map(String) : [];
     const slider = document.getElementById('soulRamPct');
     if (slider) slider.value = String(state.soulRamPercent);
     updateSoulRamUi();
-    if (s.backend) log(`SoulRAM backend: ${s.backend}`, 'info');
+    if (s.backend) log(`SoulRAM backend ${s.platform || 'os'}: ${s.backend}`, 'info');
   } catch (_) {}
 }
 
@@ -2277,6 +2296,7 @@ async function loadPolicyStatus() {
       const mc = status?.memory_compression_enabled;
       pol.textContent =
         'Backend SoulRAM : ' + (state.soulRamBackend || '—') +
+        ' · plateforme : ' + (state.soulRamPlatform || '—') +
         ' · politique : ' + (state.policyMode || '—').toUpperCase() +
         ' · admin : ' + (status?.is_admin ? 'oui' : 'non') +
         ' · compression mémoire (OS) : ' +
@@ -3134,6 +3154,11 @@ function buildSessionReportText() {
   lines.push('Cible: ' + diag.target_label);
   lines.push('Auto-cible: ' + (state.autoProcessTarget ? 'on' : 'off'));
   lines.push('SoulRAM: ' + (state.soulRamActive ? 'on' : 'off') + ' (' + state.soulRamPercent + '%)');
+  lines.push('SoulRAM backend: ' + (state.soulRamBackend || '—') + ' · plateforme=' + (state.soulRamPlatform || '—'));
+  lines.push('SoulRAM equivalent: ' + (state.soulRamEquivalentGoal || '—'));
+  if (Array.isArray(state.soulRamRoadmap) && state.soulRamRoadmap.length) {
+    lines.push('SoulRAM roadmap: ' + state.soulRamRoadmap.join(' | '));
+  }
   lines.push('SoulRAM reboot requis: ' + (state.soulRamNeedsReboot ? 'oui' : 'non'));
   lines.push('Adaptive: ' + (state.adaptiveEnabled ? 'on' : 'off') + ' | auto-dome: ' + (state.adaptiveAutoDome ? 'on' : 'off'));
   lines.push('Audit JSONL: ' + (state.auditLogPath || 'N/A')); 
@@ -3304,6 +3329,15 @@ async function buildEvidencePackText() {
   if (meter.external_power) {
     lines.push('Etat prise externe: ' + (meter.external_power.last_watts_label || 'N/A') + ' | ' + (meter.external_power.freshness || 'N/A') + ' | bridge=' + (meter.external_power.bridge_state || 'N/A'));
     lines.push('Fichier puissance: ' + (meter.external_power.power_file_path || 'N/A'));
+  }
+  lines.push('');
+  lines.push('=== Processus observes / attribution estimee ===');
+  lines.push('=== Backend memoire SoulRAM ===');
+  lines.push('Plateforme: ' + (state.soulRamPlatform || '—'));
+  lines.push('Backend: ' + (state.soulRamBackend || '—'));
+  lines.push('Equivalent fonctionnel: ' + (state.soulRamEquivalentGoal || '—'));
+  if (Array.isArray(state.soulRamRoadmap) && state.soulRamRoadmap.length) {
+    state.soulRamRoadmap.forEach(step => lines.push('• Roadmap OS: ' + step));
   }
   lines.push('');
   lines.push('=== Processus observes / attribution estimee ===');
@@ -4416,7 +4450,18 @@ function fallbackInvoke(cmd, args) {
   if (cmd === 'rollback_dome') return Promise.resolve(['Non disponible hors Tauri.']);
   if (cmd === 'get_snapshot_before_dome') return Promise.resolve(null);
   if (cmd === 'set_soulram') return Promise.resolve(['[ko] Non disponible hors Tauri.']);
-  if (cmd === 'get_soulram_status') return Promise.resolve({ active: false, percent: 20, backend: 'Hors Tauri' });
+  if (cmd === 'get_soulram_status') return Promise.resolve({
+    active: false,
+    percent: 20,
+    backend: 'Hors Tauri',
+    platform: 'web',
+    equivalent_goal: 'Lecture seule sans backend memoire natif',
+    roadmap: [
+      'Utiliser l’app native pour le backend memoire reel.',
+      'Afficher le backend OS reel depuis Tauri.',
+      'Comparer l’effet host avant/apres dans les exports.',
+    ],
+  });
   if (cmd === 'set_policy_mode') return Promise.resolve('privileged');
   if (cmd === 'get_policy_status') return Promise.resolve({ mode: state.policyMode || 'privileged', is_admin: false, reboot_pending: false, memory_compression_enabled: null });
   if (cmd === 'set_taskbar_gauge') return Promise.resolve(null);

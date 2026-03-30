@@ -355,7 +355,20 @@ pub fn policy_status(mode: crate::platform::PolicyMode) -> crate::platform::Poli
 }
 
 pub fn soulram_backend_name() -> String {
-    "macOS Compressed Memory".into()
+    "macOS Compressed Memory + purge hints".into()
+}
+
+pub fn soulram_backend_info() -> crate::platform::SoulRamBackendInfo {
+    crate::platform::SoulRamBackendInfo {
+        platform: "macos".into(),
+        backend: soulram_backend_name(),
+        equivalent_goal: "Native compressed memory + pressure-aware cache relief".into(),
+        roadmap: vec![
+            "Backend actuel: compression memoire geree par le noyau macOS, avec hints prudents type purge cache.".into(),
+            "Etape suivante: mieux suivre memory pressure et separer cache purge, pression et simple observation.".into(),
+            "A terme: exposer un backend memoire macOS comparable aux autres OS sans pretendre embarquer zRAM hors Linux.".into(),
+        ],
+    }
 }
 
 pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {

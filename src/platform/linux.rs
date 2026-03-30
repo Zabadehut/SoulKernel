@@ -997,7 +997,20 @@ pub fn policy_status(mode: crate::platform::PolicyMode) -> crate::platform::Poli
 }
 
 pub fn soulram_backend_name() -> String {
-    "Linux zRAM".into()
+    "Linux zRAM swap backend".into()
+}
+
+pub fn soulram_backend_info() -> crate::platform::SoulRamBackendInfo {
+    crate::platform::SoulRamBackendInfo {
+        platform: "linux".into(),
+        backend: soulram_backend_name(),
+        equivalent_goal: "Compression swap in RAM + pressure-aware memory relief".into(),
+        roadmap: vec![
+            "Backend actuel: zRAM pilote par SoulKernel quand /sys/block/zram0 et les privileges le permettent.".into(),
+            "Etape suivante: ajouter un mode zswap/quota quand zRAM n'est pas disponible ou deja gere par la distribution.".into(),
+            "A terme: relier PSI memoire, zRAM/zswap et cgroup v2 pour des actions plus fines par charge.".into(),
+        ],
+    }
 }
 
 pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {

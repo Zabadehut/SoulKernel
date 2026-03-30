@@ -63,6 +63,9 @@ pub struct SoulRamStatusResponse {
     pub active: bool,
     pub percent: u8,
     pub backend: String,
+    pub platform: String,
+    pub equivalent_goal: String,
+    pub roadmap: Vec<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1156,10 +1159,14 @@ async fn set_soulram(
 #[tauri::command]
 fn get_soulram_status(shared: State<'_, SharedState>) -> SoulRamStatusResponse {
     let s = shared.lock().unwrap();
+    let backend = platform::soulram_backend_info();
     SoulRamStatusResponse {
         active: s.soulram_active,
         percent: s.soulram_percent,
-        backend: platform::soulram_backend_name(),
+        backend: backend.backend,
+        platform: backend.platform,
+        equivalent_goal: backend.equivalent_goal,
+        roadmap: backend.roadmap,
     }
 }
 

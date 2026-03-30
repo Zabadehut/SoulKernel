@@ -43,6 +43,14 @@ pub struct PolicyStatus {
     pub memory_compression_enabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulRamBackendInfo {
+    pub platform: String,
+    pub backend: String,
+    pub equivalent_goal: String,
+    pub roadmap: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CpuBias {
@@ -317,4 +325,27 @@ pub fn soulram_backend_name() -> String {
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     "Unsupported".into()
+}
+
+pub fn soulram_backend_info() -> SoulRamBackendInfo {
+    #[cfg(target_os = "linux")]
+    return linux::soulram_backend_info();
+
+    #[cfg(target_os = "windows")]
+    return windows::soulram_backend_info();
+
+    #[cfg(target_os = "macos")]
+    return macos::soulram_backend_info();
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    SoulRamBackendInfo {
+        platform: "unknown".into(),
+        backend: "Unsupported".into(),
+        equivalent_goal: "Memory relief backend unavailable on this OS".into(),
+        roadmap: vec![
+            "Identifier un backend memoire natif defensable.".into(),
+            "Exposer les preconditions privilegees et l'etat reel.".into(),
+            "Mesurer l'effet host avant/apres au lieu de promettre un gain fixe.".into(),
+        ],
+    }
 }

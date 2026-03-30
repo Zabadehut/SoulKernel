@@ -1063,6 +1063,19 @@ pub fn soulram_backend_name() -> String {
     "Windows Memory Compression + WorkingSet Trim".into()
 }
 
+pub fn soulram_backend_info() -> crate::platform::SoulRamBackendInfo {
+    crate::platform::SoulRamBackendInfo {
+        platform: "windows".into(),
+        backend: soulram_backend_name(),
+        equivalent_goal: "Native compressed memory + working-set relief".into(),
+        roadmap: vec![
+            "Backend actuel: Memory Compression native Windows + trim global des working sets quand les garde-fous l'autorisent.".into(),
+            "Etape suivante: distinguer plus proprement trim global, trim cible et cooldowns dans l'audit SoulRAM.".into(),
+            "A terme: ajouter des politiques plus fines par processus et mesurer explicitement le cout/benefice du backend memoire Windows.".into(),
+        ],
+    }
+}
+
 pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {
     let pct = percent.clamp(5, 60);
     let mut out = vec![(format!("SoulRAM target ratio -> {}%", pct), true)];

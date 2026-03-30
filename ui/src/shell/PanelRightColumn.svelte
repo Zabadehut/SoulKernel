@@ -142,13 +142,14 @@
             <span class="kappa-name" style="color:var(--io);display:inline-flex;align-items:center;gap:.3rem"
               ><span class="pt-ico" style="width:13px;height:13px;color:var(--io)"
                 ><i data-lucide="memory-stick"></i></span
-              > SoulRAM</span
+              > SoulRAM · backend memoire OS</span
             >
             <span class="kappa-num" id="soulRamStatus" style="color:var(--stress)">OFF</span>
           </div>
           <p class="target-hint" style="margin:.25rem 0 .35rem;line-height:1.45">
-            <strong>But :</strong> détendre la mémoire hors dôme. Le curseur fixe un <strong>objectif de politique</strong>,
-            pas un gain garanti, et les effets se lisent dans la télémétrie réelle ci-dessous.
+            <strong>But :</strong> détendre la mémoire hors dôme via un <strong>backend natif propre à l’OS</strong>.
+            Le curseur fixe un <strong>objectif de politique</strong>, pas un gain garanti, et les effets se lisent dans la
+            télémétrie réelle ci-dessous.
           </p>
           <div class="kappa-row" style="gap:.5rem;align-items:center">
             <input type="range" id="soulRamPct" min="5" max="60" step="1" value="20" style="flex:1" />
@@ -157,9 +158,11 @@
           <div class="proof-panel" id="soulRamTelemetryBox" style="margin-top:.3rem;padding:.35rem;font-size:.62rem;line-height:1.4">
             <strong>Télémétrie réelle</strong>
             <div id="soulRamTelemetryLine" style="margin-top:.2rem;color:var(--muted)">
-              Chargez les métriques (app native) pour voir le cumul SoulRAM.
+              Chargez les métriques (app native) pour voir le cumul SoulRAM par backend OS.
             </div>
-            <div id="soulRamPolicyLine" style="margin-top:.15rem;color:var(--muted)">Politique / compression : —</div>
+            <div id="soulRamPolicyLine" style="margin-top:.15rem;color:var(--muted)">Backend / politique : —</div>
+            <div id="soulRamGoalLine" style="margin-top:.15rem;color:var(--muted)">Equivalent fonctionnel : —</div>
+            <div id="soulRamRoadmapLine" style="margin-top:.15rem;color:var(--muted)">Roadmap OS : —</div>
           </div>
           <div class="gains-actions" style="margin-top:.35rem">
             <button type="button" class="ctrl-btn btn-secondary" id="btnSoulRamOn" style="font-size:.62rem;padding:.25rem .45rem"
