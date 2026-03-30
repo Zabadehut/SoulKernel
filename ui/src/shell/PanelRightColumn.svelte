@@ -115,7 +115,7 @@
           </table>
         </div>
         <div class="target-hint" style="margin-top:.35rem">
-          🔬 = observé par processus. 〜 = attribution estimée à partir de CPU/GPU/RAM/I/O et, si disponible, de la puissance machine mesurée.
+          Priorité de lecture: <strong>CPU/GPU/RAM/I/O observés</strong> d’abord. 〜 = attribution énergétique secondaire à partir des métriques observées et, si disponible, de la puissance machine mesurée.
         </div>
       </div>
     </div>

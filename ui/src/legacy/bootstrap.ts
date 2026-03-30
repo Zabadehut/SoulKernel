@@ -1994,10 +1994,9 @@ function renderProcessImpactPanel() {
   }
   if (overhead) {
     if (audit) {
-      const fmtW = (v) => v == null || !Number.isFinite(Number(v)) ? '—' : `${Number(v).toFixed(2)} W est.`;
       const fmtMem = (kb) => Number.isFinite(Number(kb)) && Number(kb) > 0 ? `${(Number(kb) / 1024).toFixed(0)} MiB` : '—';
       overhead.textContent =
-        `Overhead cumulé SoulKernel + WebView: ${Number(audit.combined_cpu_usage_pct || 0).toFixed(1)} % CPU · ${Number(audit.combined_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.combined_memory_kb)} · ${fmtW(audit.combined_estimated_power_w)} | ` +
+        `Overhead cumulé SoulKernel + WebView: ${Number(audit.combined_cpu_usage_pct || 0).toFixed(1)} % CPU · ${Number(audit.combined_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.combined_memory_kb)} | ` +
         `SoulKernel: ${Number(audit.soulkernel_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.soulkernel_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.soulkernel_memory_kb)} | ` +
         `WebView: ${Number(audit.webview_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.webview_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.webview_memory_kb)} (${Number(audit.webview_process_count || 0)} proc)`;
     } else {
@@ -2024,8 +2023,8 @@ function renderProcessImpactPanel() {
       <td>${escapeHtml(p.gpu_label)}</td>
       <td>${escapeHtml(p.ram_label)}<br><span class="process-impact-meta">${escapeHtml(p.ram_share_label)}</span></td>
       <td>${escapeHtml(p.io_label)}<br><span class="process-impact-meta">${escapeHtml(p.io_split_label)}</span></td>
-      <td>${escapeHtml(p.power_label)}</td>
-      <td>${escapeHtml(p.impact_label)}</td>
+      <td><span class="process-impact-est">${escapeHtml(p.power_label)}</span><br><span class="process-impact-meta">attribution secondaire</span></td>
+      <td><span class="process-impact-est">${escapeHtml(p.impact_label)}</span><br><span class="process-impact-meta">attribution secondaire</span></td>
       <td>${escapeHtml(p.duration_label)}</td>
       <td>${escapeHtml(p.status_label)}</td>
       <td><span class="process-impact-meta">${escapeHtml(p.attribution_method || '—')}</span></td>
@@ -2105,9 +2104,8 @@ async function refreshProcesses(options = {}) {
         opt.value = p.pid;
         const rss = (p.memory_kb != null) ? ` · ${(Number(p.memory_kb) / 1024).toFixed(0)} MiB` : '';
         const par = (p.parent_pid != null) ? ` ←${p.parent_pid}` : '';
-        const impact = p.impact_score_pct_estimated != null ? ` · impact ${Number(p.impact_score_pct_estimated).toFixed(1)}%` : '';
-        const pw = p.estimated_power_w != null ? ` · ~${Number(p.estimated_power_w).toFixed(1)} W est.` : '';
-        opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${rss}${impact}${pw}`;
+        const gpu = p.gpu_usage_pct != null ? ` · ${Number(p.gpu_usage_pct).toFixed(1)}% GPU` : '';
+        opt.textContent = `${p.name} (PID ${p.pid})${par} — ${p.cpu_usage.toFixed(1)}% CPU${gpu}${rss}`;
         sel.appendChild(opt);
       });
     }
@@ -2940,6 +2938,103 @@ function collectProcessImpactExport() {
   };
 }
 
+function collectRawHostMetricsExport() {
+  const m = state.lastMetrics || null;
+  const raw = m?.raw || null;
+  if (!m || !raw) {
+    return {
+      exported_at: new Date().toISOString(),
+      available: false,
+      platform: null,
+      observed_metric_count: 0,
+      observed_metric_keys: [],
+      normalized: null,
+      raw: null,
+    };
+  }
+  const observedPairs = [
+    ['cpu_pct', raw.cpu_pct],
+    ['cpu_clock_mhz', raw.cpu_clock_mhz],
+    ['cpu_max_clock_mhz', raw.cpu_max_clock_mhz],
+    ['cpu_freq_ratio', raw.cpu_freq_ratio],
+    ['cpu_temp_c', raw.cpu_temp_c],
+    ['mem_used_mb', raw.mem_used_mb],
+    ['mem_total_mb', raw.mem_total_mb],
+    ['ram_clock_mhz', raw.ram_clock_mhz],
+    ['swap_used_mb', raw.swap_used_mb],
+    ['swap_total_mb', raw.swap_total_mb],
+    ['zram_used_mb', raw.zram_used_mb],
+    ['io_read_mb_s', raw.io_read_mb_s],
+    ['io_write_mb_s', raw.io_write_mb_s],
+    ['gpu_pct', raw.gpu_pct],
+    ['gpu_core_clock_mhz', raw.gpu_core_clock_mhz],
+    ['gpu_mem_clock_mhz', raw.gpu_mem_clock_mhz],
+    ['gpu_temp_c', raw.gpu_temp_c],
+    ['gpu_power_watts', raw.gpu_power_watts],
+    ['gpu_mem_used_mb', raw.gpu_mem_used_mb],
+    ['gpu_mem_total_mb', raw.gpu_mem_total_mb],
+    ['power_watts', raw.power_watts],
+    ['psi_cpu', raw.psi_cpu],
+    ['psi_mem', raw.psi_mem],
+    ['load_avg_1m_norm', raw.load_avg_1m_norm],
+    ['runnable_tasks', raw.runnable_tasks],
+    ['on_battery', raw.on_battery],
+    ['battery_percent', raw.battery_percent],
+    ['page_faults_per_sec', raw.page_faults_per_sec],
+    ['webview_host_cpu_sum', raw.webview_host_cpu_sum],
+    ['webview_host_mem_mb', raw.webview_host_mem_mb],
+  ].filter(([, value]) => value != null);
+  return {
+    exported_at: new Date().toISOString(),
+    available: true,
+    platform: raw.platform || null,
+    observed_metric_count: observedPairs.length,
+    observed_metric_keys: observedPairs.map(([key]) => key),
+    normalized: {
+      cpu: m.cpu ?? null,
+      mem: m.mem ?? null,
+      compression: m.compression ?? null,
+      io_bandwidth: m.io_bandwidth ?? null,
+      gpu: m.gpu ?? null,
+      sigma: m.sigma ?? null,
+      epsilon: Array.isArray(m.epsilon) ? m.epsilon.slice() : null,
+    },
+    raw: {
+      cpu_pct: raw.cpu_pct ?? null,
+      cpu_clock_mhz: raw.cpu_clock_mhz ?? null,
+      cpu_max_clock_mhz: raw.cpu_max_clock_mhz ?? null,
+      cpu_freq_ratio: raw.cpu_freq_ratio ?? null,
+      cpu_temp_c: raw.cpu_temp_c ?? null,
+      mem_used_mb: raw.mem_used_mb ?? null,
+      mem_total_mb: raw.mem_total_mb ?? null,
+      ram_clock_mhz: raw.ram_clock_mhz ?? null,
+      swap_used_mb: raw.swap_used_mb ?? null,
+      swap_total_mb: raw.swap_total_mb ?? null,
+      zram_used_mb: raw.zram_used_mb ?? null,
+      io_read_mb_s: raw.io_read_mb_s ?? null,
+      io_write_mb_s: raw.io_write_mb_s ?? null,
+      gpu_pct: raw.gpu_pct ?? null,
+      gpu_core_clock_mhz: raw.gpu_core_clock_mhz ?? null,
+      gpu_mem_clock_mhz: raw.gpu_mem_clock_mhz ?? null,
+      gpu_temp_c: raw.gpu_temp_c ?? null,
+      gpu_power_watts: raw.gpu_power_watts ?? null,
+      gpu_mem_used_mb: raw.gpu_mem_used_mb ?? null,
+      gpu_mem_total_mb: raw.gpu_mem_total_mb ?? null,
+      power_watts: raw.power_watts ?? null,
+      power_watts_source: raw.power_watts_source ?? null,
+      psi_cpu: raw.psi_cpu ?? null,
+      psi_mem: raw.psi_mem ?? null,
+      load_avg_1m_norm: raw.load_avg_1m_norm ?? null,
+      runnable_tasks: raw.runnable_tasks ?? null,
+      on_battery: raw.on_battery ?? null,
+      battery_percent: raw.battery_percent ?? null,
+      page_faults_per_sec: raw.page_faults_per_sec ?? null,
+      webview_host_cpu_sum: raw.webview_host_cpu_sum ?? null,
+      webview_host_mem_mb: raw.webview_host_mem_mb ?? null,
+    },
+  };
+}
+
 function benchmarkDiagPayload(extra = {}) {
   const target = selectedTargetSnapshot();
   return {
@@ -3015,6 +3110,7 @@ function collectStrictEvidenceExport() {
   const meter = collectEnergyMeterExport();
   const lastBench = state.kpiBench?.lastSummary || null;
   const live = state.lastMetrics || null;
+  const host = collectRawHostMetricsExport();
   const hasMeasuredEnergy = !!t?.total?.has_power_data;
   const hasRealBenchmark = !!(lastBench && lastBench.samples_off_ok > 0 && lastBench.samples_on_ok > 0);
   const allowedClaims = [
@@ -3045,6 +3141,7 @@ function collectStrictEvidenceExport() {
         gpu_pct: live?.raw?.gpu_pct ?? null,
         sigma: live?.sigma ?? null,
       },
+      raw_host_metrics: host.available ? host : null,
       measured_energy: hasMeasuredEnergy ? {
         power_source: t?.power_source || null,
         live_power_w: t?.live_power_w ?? null,
@@ -3100,6 +3197,7 @@ function collectEnergyPeriodReport(periodKey) {
     duration_h: w?.duration_h ?? null,
     avg_power_w: w?.avg_power_w ?? null,
     samples: w?.samples ?? null,
+    raw_host_metrics: collectRawHostMetricsExport(),
     external_power: collectEnergyMeterExport().external_power,
     strict_evidence: collectStrictEvidenceExport(),
     process_impact_report: collectProcessImpactExport(),
@@ -3116,6 +3214,7 @@ async function exportEnergyPeriodReport(periodKey) {
       period_label: labelMap[periodKey] || periodKey,
       report: collectEnergyPeriodReport(periodKey),
       telemetry_summary: state.telemetrySummary,
+      raw_host_metrics: collectRawHostMetricsExport(),
       strict_evidence: collectStrictEvidenceExport(),
       process_impact_report: collectProcessImpactExport(),
     }, null, 2),
@@ -3138,6 +3237,7 @@ function buildSessionReportText() {
     : 0;
   const meter = collectEnergyMeterExport();
   const proc = collectProcessImpactExport();
+  const host = collectRawHostMetricsExport();
   const lines = [];
 
   lines.push('SoulKernel - Rapport complet de session');
@@ -3162,6 +3262,16 @@ function buildSessionReportText() {
   lines.push('SoulRAM reboot requis: ' + (state.soulRamNeedsReboot ? 'oui' : 'non'));
   lines.push('Adaptive: ' + (state.adaptiveEnabled ? 'on' : 'off') + ' | auto-dome: ' + (state.adaptiveAutoDome ? 'on' : 'off'));
   lines.push('Audit JSONL: ' + (state.auditLogPath || 'N/A')); 
+  lines.push('Host observed metrics: ' + (host.available ? `${host.observed_metric_count} champs` : 'indisponibles'));
+  if (host.available) {
+    lines.push(
+      'Host observé: CPU=' + (host.raw.cpu_pct == null ? 'N/A' : Number(host.raw.cpu_pct).toFixed(1) + '%') +
+      ' | GPU=' + (host.raw.gpu_pct == null ? 'N/A' : Number(host.raw.gpu_pct).toFixed(1) + '%') +
+      ' | RAM=' + (host.raw.mem_used_mb == null || host.raw.mem_total_mb == null ? 'N/A' : `${(Number(host.raw.mem_used_mb) / 1024).toFixed(1)}/${(Number(host.raw.mem_total_mb) / 1024).toFixed(1)} GiB`) +
+      ' | I/O=' + (host.raw.io_read_mb_s == null || host.raw.io_write_mb_s == null ? 'N/A' : `${Number(host.raw.io_read_mb_s).toFixed(2)}/${Number(host.raw.io_write_mb_s).toFixed(2)} MB/s`) +
+      ' | Sigma=' + (host.normalized?.sigma == null ? 'N/A' : Number(host.normalized.sigma).toFixed(3))
+    );
+  }
 
   lines.push('');
   lines.push('Diagnostic export');
@@ -3306,6 +3416,7 @@ async function buildEvidencePackText() {
   const lines = [];
   const meter = collectEnergyMeterExport();
   const proc = collectProcessImpactExport();
+  const host = collectRawHostMetricsExport();
   lines.push('SoulKernel — dossier de preuve (méthode courte)');
   lines.push('Généré: ' + new Date().toISOString());
   lines.push('');
@@ -3331,7 +3442,28 @@ async function buildEvidencePackText() {
     lines.push('Fichier puissance: ' + (meter.external_power.power_file_path || 'N/A'));
   }
   lines.push('');
-  lines.push('=== Processus observes / attribution estimee ===');
+  lines.push('=== Métriques host observées ===');
+  if (!host.available) {
+    lines.push('Aucune métrique host live disponible au moment de l’export.');
+  } else {
+    lines.push('Plateforme: ' + (host.platform || 'N/A'));
+    lines.push('Nombre de champs observés: ' + host.observed_metric_count);
+    lines.push(
+      'CPU/GPU/RAM/I/O: ' +
+      (host.raw.cpu_pct == null ? 'N/A' : Number(host.raw.cpu_pct).toFixed(1) + '%') + ' / ' +
+      (host.raw.gpu_pct == null ? 'N/A' : Number(host.raw.gpu_pct).toFixed(1) + '%') + ' / ' +
+      (host.raw.mem_used_mb == null || host.raw.mem_total_mb == null ? 'N/A' : `${(Number(host.raw.mem_used_mb) / 1024).toFixed(1)}/${(Number(host.raw.mem_total_mb) / 1024).toFixed(1)} GiB`) + ' / ' +
+      (host.raw.io_read_mb_s == null || host.raw.io_write_mb_s == null ? 'N/A' : `${Number(host.raw.io_read_mb_s).toFixed(2)}/${Number(host.raw.io_write_mb_s).toFixed(2)} MB/s`)
+    );
+    lines.push(
+      'Host avancé: swap=' + (host.raw.swap_used_mb == null || host.raw.swap_total_mb == null ? 'N/A' : `${host.raw.swap_used_mb}/${host.raw.swap_total_mb} MB`) +
+      ' | zRAM=' + (host.raw.zram_used_mb == null ? 'N/A' : `${host.raw.zram_used_mb} MB`) +
+      ' | PSI=' + (host.raw.psi_cpu == null || host.raw.psi_mem == null ? 'N/A' : `${(Number(host.raw.psi_cpu) * 100).toFixed(1)}%/${(Number(host.raw.psi_mem) * 100).toFixed(1)}%`) +
+      ' | load=' + (host.raw.load_avg_1m_norm == null ? 'N/A' : Number(host.raw.load_avg_1m_norm).toFixed(2)) +
+      ' | runnable=' + (host.raw.runnable_tasks == null ? 'N/A' : String(host.raw.runnable_tasks))
+    );
+  }
+  lines.push('');
   lines.push('=== Backend memoire SoulRAM ===');
   lines.push('Plateforme: ' + (state.soulRamPlatform || '—'));
   lines.push('Backend: ' + (state.soulRamBackend || '—'));
@@ -3483,6 +3615,7 @@ document.getElementById('btnExportGains').addEventListener('click', async () => 
       audit_log_path: state.auditLogPath,
       kpi_bench_sessions: state.kpiBench.sessions,
       telemetry_summary: state.telemetrySummary,
+      raw_host_metrics: collectRawHostMetricsExport(),
       energy_meter_export: collectEnergyMeterExport(),
       strict_evidence: collectStrictEvidenceExport(),
       process_impact_report: collectProcessImpactExport(),
@@ -3635,6 +3768,7 @@ if (btnExportAB) {
           benchmark_history: payload,
           benchmark_top: payload?.top_sessions || [],
           telemetry_summary: state.telemetrySummary,
+          raw_host_metrics: collectRawHostMetricsExport(),
           energy_meter_export: collectEnergyMeterExport(),
           strict_evidence: collectStrictEvidenceExport(),
           process_impact_report: collectProcessImpactExport(),
