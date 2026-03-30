@@ -363,8 +363,10 @@ let state = {
   autoProcessTarget: true,
   lastProcessRefreshTs: null,
   lastProcessCount: 0,
-  processImpactReport: { processes: [], top_processes: [], summary: null },
+  processImpactReport: { processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], overhead_audit: null, summary: null },
   processList: [],
+  windowFocused: true,
+  lastUserInteractionTs: Date.now(),
   pendingAdvice: null,
   soulRamActive: false,
   soulRamPercent: 20,
@@ -439,7 +441,9 @@ const POLL_FAST_MS = 700;
 const POLL_MEDIUM_MS = 1000;
 const POLL_SLOW_MS = 1400;
 const POLL_HIDDEN_MS = 15000;
+const POLL_UI_IDLE_MS = 5000;
 const METRICS_AUDIT_MS = 10000;
+const UI_IDLE_SLEEP_AFTER_MS = 45000;
 let pollInFlight = false;
 let pollTimer = null;
 let clockIntervalId = null;
@@ -456,6 +460,7 @@ let lastRenderedMetricKey = null;
 
 function nextPollDelayMs() {
   if (document.hidden) return POLL_HIDDEN_MS;
+  if (shouldSleepWebview()) return POLL_UI_IDLE_MS;
   if (state.kpiBench.running) return POLL_MEDIUM_MS;
   if (state.domeActive || state.adaptiveEnabled) return POLL_FAST_MS;
   return POLL_SLOW_MS;
@@ -463,8 +468,23 @@ function nextPollDelayMs() {
 
 function nextProcessRefreshDelayMs() {
   if (document.hidden) return PROCESS_REFRESH_HIDDEN_MS;
+  if (shouldSleepWebview()) return 60000;
   if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return PROCESS_REFRESH_ACTIVE_MS;
   return PROCESS_REFRESH_IDLE_MS;
+}
+
+function markUiInteraction() {
+  const now = Date.now();
+  if (now - state.lastUserInteractionTs < 1500) return;
+  state.lastUserInteractionTs = now;
+}
+
+function shouldSleepWebview() {
+  if (document.hidden) return true;
+  if (!state.windowFocused) return true;
+  if (state.hudVisible || HUD_ONLY) return false;
+  if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return false;
+  return (Date.now() - state.lastUserInteractionTs) >= UI_IDLE_SLEEP_AFTER_MS;
 }
 
 function scheduleNextPoll() {
@@ -569,7 +589,7 @@ async function poll() {
     } else if (!state.domeActive) {
       state.domeRealLastTs = null;
     }
-    scheduleMetricRender(m);
+    if (!shouldSleepWebview()) scheduleMetricRender(m);
     await runAdaptiveController(m);
     pushTaskbarGauge(m.sigma);
     await ingestTelemetry(m);
@@ -1171,7 +1191,8 @@ function renderGreenItPanel(s) {
 async function refreshTelemetrySummary(force = false) {
   if (!hasTauri) return;
   const now = Date.now();
-  if (!force && (now - state.lastTelemetryRefreshTs < 10000)) return;
+  const minDelay = shouldSleepWebview() ? 30000 : 10000;
+  if (!force && (now - state.lastTelemetryRefreshTs < minDelay)) return;
   state.lastTelemetryRefreshTs = now;
   try {
     const s = await invoke('get_telemetry_summary');
@@ -1936,22 +1957,37 @@ function setProcessRefreshInfo() {
 function renderProcessImpactPanel() {
   const tbody = document.getElementById('processImpactRows');
   const summary = document.getElementById('processImpactSummary');
+  const overhead = document.getElementById('overheadAuditSummary');
   if (!tbody || !summary) return;
   const report = state.processImpactReport && typeof state.processImpactReport === 'object'
     ? state.processImpactReport
-    : { processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], summary: null };
+    : { processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], overhead_audit: null, summary: null };
   const rows = Array.isArray(report.top_process_rows) ? report.top_process_rows : [];
   const meta = report.summary && typeof report.summary === 'object' ? report.summary : null;
+  const audit = report.overhead_audit && typeof report.overhead_audit === 'object' ? report.overhead_audit : null;
   if (!rows.length) {
     summary.textContent = 'Aucune donnée processus collectée.';
-    tbody.innerHTML = '<tr><td colspan="10" class="process-impact-empty">Aucune donnée processus.</td></tr>';
+    if (overhead) overhead.textContent = 'Audit overhead SoulKernel/WebView indisponible.';
+    tbody.innerHTML = '<tr><td colspan="11" class="process-impact-empty">Aucune donnée processus.</td></tr>';
     return;
   }
   const selectedPid = state.targetPid;
   if (meta) {
-    summary.textContent = `${meta.process_count} processus | top ${meta.top_count} affichés | CPU observé ${meta.observed_cpu_count}/${meta.top_count} | RAM observée ${meta.observed_memory_count}/${meta.top_count}`;
+    summary.textContent = `${meta.process_count} processus | top ${meta.top_count} affichés | CPU observé ${meta.observed_cpu_count}/${meta.top_count} | GPU observé ${meta.observed_gpu_count}/${meta.top_count} | RAM observée ${meta.observed_memory_count}/${meta.top_count}`;
   } else {
     summary.textContent = `${rows.length} processus impact affichés`;
+  }
+  if (overhead) {
+    if (audit) {
+      const fmtW = (v) => v == null || !Number.isFinite(Number(v)) ? '—' : `${Number(v).toFixed(2)} W est.`;
+      const fmtMem = (kb) => Number.isFinite(Number(kb)) && Number(kb) > 0 ? `${(Number(kb) / 1024).toFixed(0)} MiB` : '—';
+      overhead.textContent =
+        `Overhead cumulé SoulKernel + WebView: ${Number(audit.combined_cpu_usage_pct || 0).toFixed(1)} % CPU · ${Number(audit.combined_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.combined_memory_kb)} · ${fmtW(audit.combined_estimated_power_w)} | ` +
+        `SoulKernel: ${Number(audit.soulkernel_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.soulkernel_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.soulkernel_memory_kb)} | ` +
+        `WebView: ${Number(audit.webview_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.webview_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.webview_memory_kb)} (${Number(audit.webview_process_count || 0)} proc)`;
+    } else {
+      overhead.textContent = 'Audit overhead SoulKernel/WebView en attente...';
+    }
   }
   tbody.innerHTML = rows.map(p => {
     const pills = [];
@@ -1970,6 +2006,7 @@ function renderProcessImpactPanel() {
       </td>
       <td>${escapeHtml(p.pid)}</td>
       <td>${escapeHtml(p.cpu_label)}</td>
+      <td>${escapeHtml(p.gpu_label)}</td>
       <td>${escapeHtml(p.ram_label)}<br><span class="process-impact-meta">${escapeHtml(p.ram_share_label)}</span></td>
       <td>${escapeHtml(p.io_label)}<br><span class="process-impact-meta">${escapeHtml(p.io_split_label)}</span></td>
       <td>${escapeHtml(p.power_label)}</td>
@@ -2013,6 +2050,10 @@ function stopProcessRefreshLoop() {
 
 async function refreshProcesses(options = {}) {
   const userInitiated = options.userInitiated === true;
+  if (!userInitiated && shouldSleepWebview()) {
+    startProcessRefreshLoop();
+    return;
+  }
   if (processRefreshInFlight) return;
   processRefreshInFlight = true;
   try {
@@ -2025,6 +2066,7 @@ async function refreshProcesses(options = {}) {
     const topProcesses = Array.isArray(rawReport?.top_processes) ? rawReport.top_processes : rawList.slice(0, 12);
     const topProcessRows = Array.isArray(rawReport?.top_process_rows) ? rawReport.top_process_rows : [];
     const groupedProcesses = Array.isArray(rawReport?.grouped_processes) ? rawReport.grouped_processes : [];
+    const overheadAudit = rawReport?.overhead_audit && typeof rawReport.overhead_audit === 'object' ? rawReport.overhead_audit : null;
     const summary = rawReport?.summary && typeof rawReport.summary === 'object' ? rawReport.summary : null;
     const reportRevision = summary?.report_revision || null;
     const uiRevision = summary?.ui_revision || reportRevision || null;
@@ -2032,10 +2074,11 @@ async function refreshProcesses(options = {}) {
     const uiChanged = userInitiated || uiRevision == null || uiRevision !== lastProcessUiRevision;
     if (reportChanged) {
       state.processList = rawList;
-      state.processImpactReport = { processes: rawList, top_processes: topProcesses, top_process_rows: topProcessRows, grouped_processes: groupedProcesses, summary };
+      state.processImpactReport = { processes: rawList, top_processes: topProcesses, top_process_rows: topProcessRows, grouped_processes: groupedProcesses, overhead_audit: overheadAudit, summary };
       lastProcessReportRevision = reportRevision;
     } else if (state.processImpactReport && typeof state.processImpactReport === 'object') {
       state.processImpactReport.summary = summary;
+      state.processImpactReport.overhead_audit = overheadAudit;
     }
     const sel = document.getElementById('targetProcess');
     const current = sel.value;
@@ -2854,7 +2897,7 @@ function selectedTargetSnapshot() {
 function collectProcessImpactExport() {
   const report = state.processImpactReport && typeof state.processImpactReport === 'object'
     ? state.processImpactReport
-    : { processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], summary: null };
+    : { processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], overhead_audit: null, summary: null };
   const list = Array.isArray(report.processes) ? report.processes : [];
   const target = selectedTargetSnapshot();
   const top = Array.isArray(report.top_processes) && report.top_processes.length
@@ -2869,8 +2912,9 @@ function collectProcessImpactExport() {
     summary: report.summary || null,
     grouped_processes: Array.isArray(report.grouped_processes) ? report.grouped_processes : [],
     top_process_rows: Array.isArray(report.top_process_rows) ? report.top_process_rows : [],
+    overhead_audit: report.overhead_audit || null,
     attribution_notice:
-      'CPU, RAM et I/O par processus sont observés. impact_score_pct_estimated et estimated_power_w restent des attributions estimées, pas une mesure énergétique directe par processus.',
+      'CPU, GPU, RAM et I/O par processus sont observés selon disponibilité plateforme. impact_score_pct_estimated et estimated_power_w restent des attributions estimées, pas une mesure énergétique directe par processus.',
     processes: list,
     top_contributors: top,
   };
@@ -4260,6 +4304,21 @@ function soulKernelDomCleanup() {
   } catch (_) {}
 }
 if (typeof window !== 'undefined') {
+  window.addEventListener('focus', () => {
+    state.windowFocused = true;
+    state.lastUserInteractionTs = Date.now();
+    scheduleNextPoll();
+    startProcessRefreshLoop();
+  });
+  window.addEventListener('blur', () => {
+    state.windowFocused = false;
+  });
+  ['pointerdown', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
+    window.addEventListener(evt, () => {
+      state.windowFocused = true;
+      state.lastUserInteractionTs = Date.now();
+    }, { passive: true });
+  });
   window.addEventListener('beforeunload', soulKernelDomCleanup);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -4272,6 +4331,8 @@ if (typeof window !== 'undefined') {
         lastRenderedMetricKey = null;
         scheduleMetricRender(state.lastMetrics);
       }
+      state.windowFocused = true;
+      state.lastUserInteractionTs = Date.now();
       refreshProcesses({ userInitiated: false });
       refreshTelemetrySummary(true);
       scheduleNextPoll();
@@ -4329,7 +4390,7 @@ function fallbackInvoke(cmd, args) {
     features: ['pas de métriques réelles'],
     has_cgroups_v2: false, has_zram: false, has_gpu_sysfs: false, is_root: false
   });
-  if (cmd === 'list_processes') return Promise.resolve({ processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], summary: null });
+  if (cmd === 'list_processes') return Promise.resolve({ processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], overhead_audit: null, summary: null });
   if (cmd === 'list_displays') return Promise.resolve([{ index: 0, name: 'Primary', width: 1920, height: 1080, x: 0, y: 0, scale_factor: 1.0, is_primary: true }]);
   if (cmd === 'activate_dome') return Promise.resolve({
     activated: false, pi: 0, dome_gain: 0, b_idle: 0,

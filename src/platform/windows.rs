@@ -14,6 +14,8 @@
 use crate::{formula::WorkloadProfile, metrics::ResourceState, platform::PlatformInfo};
 
 #[cfg(target_os = "windows")]
+use std::collections::HashMap;
+#[cfg(target_os = "windows")]
 use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "windows")]
 fn command_hidden(program: &str) -> std::process::Command {
@@ -403,6 +405,96 @@ impl WindowsRealtimeCounters {
         });
         Some(sum)
     }
+
+    fn counter_array_by_pid(counter: isize) -> Option<HashMap<u32, f64>> {
+        use windows::Win32::System::Performance::{
+            PdhGetFormattedCounterArrayW, PDH_CSTATUS_VALID_DATA, PDH_FMT_COUNTERVALUE_ITEM_W,
+            PDH_FMT_DOUBLE, PDH_MORE_DATA,
+        };
+
+        let mut buffer_size = 0u32;
+        let mut item_count = 0u32;
+        let st = unsafe {
+            PdhGetFormattedCounterArrayW(
+                counter,
+                PDH_FMT_DOUBLE,
+                &mut buffer_size,
+                &mut item_count,
+                None,
+            )
+        };
+        if st != PDH_MORE_DATA || buffer_size == 0 || item_count == 0 {
+            return None;
+        }
+
+        let mut buffer = vec![0u8; buffer_size as usize];
+        let ptr = buffer.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+        let st2 = unsafe {
+            PdhGetFormattedCounterArrayW(
+                counter,
+                PDH_FMT_DOUBLE,
+                &mut buffer_size,
+                &mut item_count,
+                Some(ptr),
+            )
+        };
+        if st2 != 0 {
+            return None;
+        }
+
+        let items = unsafe { std::slice::from_raw_parts(ptr, item_count as usize) };
+        let mut out = HashMap::<u32, f64>::new();
+        for item in items {
+            if item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA {
+                continue;
+            }
+            let name = unsafe {
+                let mut len = 0usize;
+                while !item.szName.is_null() && *item.szName.0.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(item.szName.0, len))
+            };
+            let lower = name.to_lowercase();
+            let Some(pid_pos) = lower.find("pid_") else {
+                continue;
+            };
+            let digits = lower[pid_pos + 4..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>();
+            let Ok(pid) = digits.parse::<u32>() else {
+                continue;
+            };
+            let value = unsafe { item.FmtValue.Anonymous.doubleValue };
+            if !value.is_finite() || value < 0.0 {
+                continue;
+            }
+            *out.entry(pid).or_insert(0.0) += value;
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    fn sample_gpu_process_map(&mut self) -> Option<HashMap<u32, f64>> {
+        use windows::Win32::System::Performance::PdhCollectQueryData;
+
+        let status = unsafe { PdhCollectQueryData(self.query) };
+        if status != 0 {
+            return None;
+        }
+        self.gpu_counter
+            .and_then(Self::counter_array_by_pid)
+            .map(|mut m| {
+                for value in m.values_mut() {
+                    *value = value.clamp(0.0, 100.0);
+                }
+                m
+            })
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -434,6 +526,24 @@ pub fn sample_realtime_metrics() -> (
 pub fn gpu_utilisation() -> Option<f64> {
     let (_, _, gpu_pct, _, _, _) = sample_realtime_metrics();
     gpu_pct
+}
+
+pub fn process_gpu_utilisation_by_pid() -> HashMap<u32, f64> {
+    #[cfg(target_os = "windows")]
+    {
+        let counters =
+            WINDOWS_COUNTERS.get_or_init(|| WindowsRealtimeCounters::new().map(Mutex::new));
+        if let Some(m) = counters {
+            if let Ok(mut g) = m.lock() {
+                return g.sample_gpu_process_map().unwrap_or_default();
+            }
+        }
+        HashMap::new()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        HashMap::new()
+    }
 }
 
 pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {

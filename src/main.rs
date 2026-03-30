@@ -70,6 +70,7 @@ pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
     pub cpu_usage: f64,
+    pub gpu_usage_pct: Option<f64>,
     pub parent_pid: Option<u32>,
     /// RSS approximative (KiB).
     pub memory_kb: u64,
@@ -93,6 +94,7 @@ pub struct ProcessImpactSummary {
     pub process_count: usize,
     pub top_count: usize,
     pub observed_cpu_count: usize,
+    pub observed_gpu_count: usize,
     pub observed_memory_count: usize,
     pub observed_io_count: usize,
     pub machine_power_w: Option<f64>,
@@ -107,6 +109,7 @@ pub struct ProcessImpactReport {
     pub top_processes: Vec<ProcessInfo>,
     pub top_process_rows: Vec<ProcessImpactUiRow>,
     pub grouped_processes: Vec<ProcessImpactGroup>,
+    pub overhead_audit: ProcessOverheadAudit,
     pub summary: ProcessImpactSummary,
 }
 
@@ -117,6 +120,7 @@ pub struct ProcessImpactUiRow {
     pub exe: Option<String>,
     pub cmd_preview: Option<String>,
     pub cpu_label: String,
+    pub gpu_label: String,
     pub ram_label: String,
     pub ram_share_label: String,
     pub io_label: String,
@@ -136,9 +140,28 @@ pub struct ProcessImpactGroup {
     pub key: String,
     pub process_count: usize,
     pub cpu_usage_pct: f64,
+    pub gpu_usage_pct: f64,
     pub memory_kb: u64,
     pub estimated_power_w: Option<f64>,
     pub impact_score_pct_estimated: Option<f64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProcessOverheadAudit {
+    pub soulkernel_process_count: usize,
+    pub soulkernel_cpu_usage_pct: f64,
+    pub soulkernel_gpu_usage_pct: f64,
+    pub soulkernel_memory_kb: u64,
+    pub soulkernel_estimated_power_w: Option<f64>,
+    pub webview_process_count: usize,
+    pub webview_cpu_usage_pct: f64,
+    pub webview_gpu_usage_pct: f64,
+    pub webview_memory_kb: u64,
+    pub webview_estimated_power_w: Option<f64>,
+    pub combined_cpu_usage_pct: f64,
+    pub combined_gpu_usage_pct: f64,
+    pub combined_memory_kb: u64,
+    pub combined_estimated_power_w: Option<f64>,
 }
 
 fn is_embedded_webview_name(name: &str) -> bool {
@@ -226,6 +249,10 @@ fn build_process_ui_row(info: &ProcessInfo) -> ProcessImpactUiRow {
         } else {
             "—".to_string()
         },
+        gpu_label: info
+            .gpu_usage_pct
+            .map(|v| format!("{v:.1} %"))
+            .unwrap_or_else(|| "—".to_string()),
         ram_label: if info.memory_kb > 0 {
             format!("{:.0} MiB", ram_mib)
         } else {
@@ -679,6 +706,10 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
 
     let machine_metrics = metrics::collect().ok();
     let machine_power_w = machine_metrics.as_ref().and_then(|m| m.raw.power_watts);
+    #[cfg(target_os = "windows")]
+    let process_gpu_map = crate::platform::windows::process_gpu_utilisation_by_pid();
+    #[cfg(not(target_os = "windows"))]
+    let process_gpu_map = std::collections::HashMap::<u32, f64>::new();
     let total_mem_kb = (sys.total_memory() / 1024).max(1);
     let self_pid = sysinfo::get_current_pid().ok().map(|p| p.as_u32());
     let cpu_sum = sys
@@ -694,12 +725,18 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             du.read_bytes.saturating_add(du.written_bytes) as f64
         })
         .sum::<f64>();
+    let gpu_sum = process_gpu_map
+        .values()
+        .copied()
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .sum::<f64>();
 
     let mut rows: Vec<(ProcessInfo, f64)> = sys
         .processes()
         .iter()
         .map(|(pid, p)| {
             let cpu_usage = p.cpu_usage() as f64;
+            let gpu_usage_pct = process_gpu_map.get(&pid.as_u32()).copied();
             let memory_kb = p.memory() / 1024;
             let memory_share_pct = Some((memory_kb as f64 / total_mem_kb as f64) * 100.0);
             let du = p.disk_usage();
@@ -714,16 +751,30 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             } else {
                 0.0
             };
-            let impact_raw = (0.70 * cpu_share_pct
-                + 0.20 * memory_share_pct.unwrap_or(0.0)
-                + 0.10 * io_share_pct)
-                .max(0.0);
+            let gpu_share_pct = if gpu_sum > 0.0 {
+                (gpu_usage_pct.unwrap_or(0.0).max(0.0) / gpu_sum) * 100.0
+            } else {
+                0.0
+            };
+            let impact_raw = if gpu_sum > 0.0 {
+                (0.55 * cpu_share_pct
+                    + 0.15 * memory_share_pct.unwrap_or(0.0)
+                    + 0.10 * io_share_pct
+                    + 0.20 * gpu_share_pct)
+                    .max(0.0)
+            } else {
+                (0.70 * cpu_share_pct
+                    + 0.20 * memory_share_pct.unwrap_or(0.0)
+                    + 0.10 * io_share_pct)
+                    .max(0.0)
+            };
             let name = p.name().to_string();
             (
                 ProcessInfo {
                     pid: pid.as_u32(),
                     name: name.clone(),
                     cpu_usage,
+                    gpu_usage_pct,
                     parent_pid: p.parent().map(|pp| pp.as_u32()),
                     memory_kb,
                     memory_share_pct,
@@ -760,7 +811,11 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             info.estimated_power_w = impact_pct
                 .zip(machine_power_w)
                 .map(|(pct, w)| (pct / 100.0) * w);
-            info.attribution_method = Some(if has_power {
+            info.attribution_method = Some(if gpu_sum > 0.0 && has_power {
+                "estimated_weighted_cpu_gpu_mem_io_over_measured_machine_power".to_string()
+            } else if gpu_sum > 0.0 {
+                "estimated_weighted_cpu_gpu_mem_io".to_string()
+            } else if has_power {
                 "estimated_weighted_cpu_mem_io_over_measured_machine_power".to_string()
             } else {
                 "estimated_weighted_cpu_mem_io".to_string()
@@ -791,12 +846,14 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             key,
             process_count: 0,
             cpu_usage_pct: 0.0,
+            gpu_usage_pct: 0.0,
             memory_kb: 0,
             estimated_power_w: Some(0.0),
             impact_score_pct_estimated: Some(0.0),
         });
         entry.process_count += 1;
         entry.cpu_usage_pct += info.cpu_usage.max(0.0);
+        entry.gpu_usage_pct += info.gpu_usage_pct.unwrap_or(0.0).max(0.0);
         entry.memory_kb = entry.memory_kb.saturating_add(info.memory_kb);
         entry.estimated_power_w = match (entry.estimated_power_w, info.estimated_power_w) {
             (Some(a), Some(b)) => Some(a + b),
@@ -822,6 +879,74 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     grouped_processes.truncate(12);
+    let soulkernel_processes = list
+        .iter()
+        .filter(|p| p.is_self_process)
+        .collect::<Vec<_>>();
+    let webview_processes = list
+        .iter()
+        .filter(|p| p.is_embedded_webview)
+        .collect::<Vec<_>>();
+    let sum_power = |items: &[&ProcessInfo]| -> Option<f64> {
+        let mut any = false;
+        let mut total = 0.0f64;
+        for item in items {
+            if let Some(v) = item.estimated_power_w {
+                any = true;
+                total += v;
+            }
+        }
+        if any {
+            Some(total)
+        } else {
+            None
+        }
+    };
+    let overhead_audit = ProcessOverheadAudit {
+        soulkernel_process_count: soulkernel_processes.len(),
+        soulkernel_cpu_usage_pct: soulkernel_processes
+            .iter()
+            .map(|p| p.cpu_usage.max(0.0))
+            .sum(),
+        soulkernel_gpu_usage_pct: soulkernel_processes
+            .iter()
+            .map(|p| p.gpu_usage_pct.unwrap_or(0.0).max(0.0))
+            .sum(),
+        soulkernel_memory_kb: soulkernel_processes.iter().map(|p| p.memory_kb).sum(),
+        soulkernel_estimated_power_w: sum_power(&soulkernel_processes),
+        webview_process_count: webview_processes.len(),
+        webview_cpu_usage_pct: webview_processes.iter().map(|p| p.cpu_usage.max(0.0)).sum(),
+        webview_gpu_usage_pct: webview_processes
+            .iter()
+            .map(|p| p.gpu_usage_pct.unwrap_or(0.0).max(0.0))
+            .sum(),
+        webview_memory_kb: webview_processes.iter().map(|p| p.memory_kb).sum(),
+        webview_estimated_power_w: sum_power(&webview_processes),
+        combined_cpu_usage_pct: soulkernel_processes
+            .iter()
+            .chain(webview_processes.iter())
+            .map(|p| p.cpu_usage.max(0.0))
+            .sum(),
+        combined_gpu_usage_pct: soulkernel_processes
+            .iter()
+            .chain(webview_processes.iter())
+            .map(|p| p.gpu_usage_pct.unwrap_or(0.0).max(0.0))
+            .sum(),
+        combined_memory_kb: soulkernel_processes
+            .iter()
+            .chain(webview_processes.iter())
+            .map(|p| p.memory_kb)
+            .sum(),
+        combined_estimated_power_w: match (
+            sum_power(&soulkernel_processes),
+            sum_power(&webview_processes),
+        ) {
+            (Some(a), Some(b)) => Some(a + b),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        },
+    };
     let summary = ProcessImpactSummary {
         process_count: list.len(),
         top_count: top_processes.len(),
@@ -829,13 +954,21 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             .iter()
             .filter(|p| p.cpu_usage.is_finite())
             .count(),
+        observed_gpu_count: top_processes
+            .iter()
+            .filter(|p| p.gpu_usage_pct.is_some())
+            .count(),
         observed_memory_count: top_processes.iter().filter(|p| p.memory_kb > 0).count(),
         observed_io_count: top_processes
             .iter()
             .filter(|p| p.disk_read_bytes.unwrap_or(0) > 0 || p.disk_written_bytes.unwrap_or(0) > 0)
             .count(),
         machine_power_w,
-        attribution_method: if has_power {
+        attribution_method: if gpu_sum > 0.0 && has_power {
+            "estimated_weighted_cpu_gpu_mem_io_over_measured_machine_power".to_string()
+        } else if gpu_sum > 0.0 {
+            "estimated_weighted_cpu_gpu_mem_io".to_string()
+        } else if has_power {
             "estimated_weighted_cpu_mem_io_over_measured_machine_power".to_string()
         } else {
             "estimated_weighted_cpu_mem_io".to_string()
@@ -849,6 +982,7 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
         top_processes,
         top_process_rows,
         grouped_processes,
+        overhead_audit,
         summary,
     })
 }
