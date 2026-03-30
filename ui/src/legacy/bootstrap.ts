@@ -3204,20 +3204,32 @@ function collectEnergyPeriodReport(periodKey) {
   };
 }
 
+function buildJsonExportContent(label, payload) {
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch (e) {
+    const message = `${label}: sérialisation JSON impossible: ${e}`;
+    log(message, 'err');
+    try { console.error(message, payload); } catch (_) {}
+    throw new Error(message);
+  }
+}
+
 async function exportEnergyPeriodReport(periodKey) {
   const labelMap = { hour: 'hourly', day: 'daily', week: 'weekly', month: 'monthly' };
+  const payload = {
+    product: 'SoulKernel',
+    report_type: 'energy_period',
+    period: periodKey,
+    period_label: labelMap[periodKey] || periodKey,
+    report: collectEnergyPeriodReport(periodKey),
+    telemetry_summary: state.telemetrySummary,
+    raw_host_metrics: collectRawHostMetricsExport(),
+    strict_evidence: collectStrictEvidenceExport(),
+    process_impact_report: collectProcessImpactExport(),
+  };
   const path = await invoke('export_gains_to_file', {
-    content: JSON.stringify({
-      product: 'SoulKernel',
-      report_type: 'energy_period',
-      period: periodKey,
-      period_label: labelMap[periodKey] || periodKey,
-      report: collectEnergyPeriodReport(periodKey),
-      telemetry_summary: state.telemetrySummary,
-      raw_host_metrics: collectRawHostMetricsExport(),
-      strict_evidence: collectStrictEvidenceExport(),
-      process_impact_report: collectProcessImpactExport(),
-    }, null, 2),
+    content: buildJsonExportContent(`export énergie ${periodKey}`, payload),
   });
   return path;
 }
@@ -3524,19 +3536,27 @@ if (btnCopyEvidence) {
   });
 }
 
-document.getElementById('btnCopyGains').addEventListener('click', () => {
-  const diag = benchmarkDiagPayload({
-    export_mode: 'clipboard',
-    has_snapshot_before: !!state.snapshotBefore,
-    last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
-    last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
+const btnCopyGains = document.getElementById('btnCopyGains');
+if (btnCopyGains) {
+  btnCopyGains.addEventListener('click', () => {
+    try {
+      const diag = benchmarkDiagPayload({
+        export_mode: 'clipboard',
+        has_snapshot_before: !!state.snapshotBefore,
+        last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
+        last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
+      });
+      log('EXPORT DIAG clipboard ' + JSON.stringify(diag), 'info');
+      const report = buildSessionReportText();
+      navigator.clipboard.writeText(report).then(() => {
+        log('Rapport complet copie dans le presse-papier', 'ok');
+      }).catch((e) => log('Copie echouee: ' + e, 'err'));
+    } catch (e) {
+      log('Préparation copie export échouée: ' + e, 'err');
+      try { console.error('btnCopyGains failed', e); } catch (_) {}
+    }
   });
-  log('EXPORT DIAG clipboard ' + JSON.stringify(diag), 'info');
-  const report = buildSessionReportText();
-  navigator.clipboard.writeText(report).then(() => {
-    log('Rapport complet copie dans le presse-papier', 'ok');
-  }).catch(() => log('Copie echouee', 'err'));
-});
+}
 
 const btnExportEnergyHour = document.getElementById('btnExportEnergyHour');
 if (btnExportEnergyHour) {
@@ -3587,56 +3607,64 @@ if (btnExportEnergyMonth) {
   });
 }
 
-document.getElementById('btnExportGains').addEventListener('click', async () => {
-  try {
-    let snapshotBefore = state.snapshotBefore;
-    if (state.domeActive && !snapshotBefore) {
-      try { snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (_) {}
-    }
-    const diag = benchmarkDiagPayload({
-      export_mode: 'file',
-      has_snapshot_before: !!snapshotBefore,
-      last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
-      last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
-    });
-    log('EXPORT DIAG file ' + JSON.stringify(diag), 'info');
-    const payload = {
-      exported_at: new Date().toISOString(),
-      product: 'SoulKernel',
-      version: '1.1.7',
-      dome_active: state.domeActive,
-      machine_activity: state.machineActivity || 'active',
-      dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
-      dome_actions_ok: state.domeActionsOk,
-      dome_actions_total: state.domeActionsTotal,
-      snapshot_before: snapshotBefore,
-      history: state.domeHistory,
-      adaptive: { enabled: state.adaptiveEnabled, auto_dome: state.adaptiveAutoDome },
-      audit_log_path: state.auditLogPath,
-      kpi_bench_sessions: state.kpiBench.sessions,
-      telemetry_summary: state.telemetrySummary,
-      raw_host_metrics: collectRawHostMetricsExport(),
-      energy_meter_export: collectEnergyMeterExport(),
-      strict_evidence: collectStrictEvidenceExport(),
-      process_impact_report: collectProcessImpactExport(),
-      diagnostic: diag,
-      session_summary: state.domeHistory.length ? {
-        count: state.domeHistory.length,
-        avg_dome_gain: state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length,
-      } : null,
-    };
+const btnExportGains = document.getElementById('btnExportGains');
+if (btnExportGains) {
+  btnExportGains.addEventListener('click', async () => {
     try {
-      payload.evidence_data_paths = await invoke('get_evidence_data_paths');
-    } catch (_) {
-      payload.evidence_data_paths = null;
+      log('Préparation export JSON session...', 'info');
+      let snapshotBefore = state.snapshotBefore;
+      if (state.domeActive && !snapshotBefore) {
+        try { snapshotBefore = await invoke('get_snapshot_before_dome') || null; } catch (e) { log('Snapshot before dome indisponible: ' + e, 'warn'); }
+      }
+      const diag = benchmarkDiagPayload({
+        export_mode: 'file',
+        has_snapshot_before: !!snapshotBefore,
+        last_benchmark_gain_median_pct: state.kpiBench.lastSummary?.gain_median_pct ?? null,
+        last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
+      });
+      log('EXPORT DIAG file ' + JSON.stringify(diag), 'info');
+      const payload = {
+        exported_at: new Date().toISOString(),
+        product: 'SoulKernel',
+        version: '1.1.7',
+        dome_active: state.domeActive,
+        machine_activity: state.machineActivity || 'active',
+        dome_real_integral: state.domeActive ? state.domeRealIntegral : null,
+        dome_actions_ok: state.domeActionsOk,
+        dome_actions_total: state.domeActionsTotal,
+        snapshot_before: snapshotBefore,
+        history: state.domeHistory,
+        adaptive: { enabled: state.adaptiveEnabled, auto_dome: state.adaptiveAutoDome },
+        audit_log_path: state.auditLogPath,
+        kpi_bench_sessions: state.kpiBench.sessions,
+        telemetry_summary: state.telemetrySummary,
+        raw_host_metrics: collectRawHostMetricsExport(),
+        energy_meter_export: collectEnergyMeterExport(),
+        strict_evidence: collectStrictEvidenceExport(),
+        process_impact_report: collectProcessImpactExport(),
+        diagnostic: diag,
+        session_summary: state.domeHistory.length ? {
+          count: state.domeHistory.length,
+          avg_dome_gain: state.domeHistory.reduce((s, e) => s + e.domeGain, 0) / state.domeHistory.length,
+        } : null,
+      };
+      try {
+        payload.evidence_data_paths = await invoke('get_evidence_data_paths');
+      } catch (e) {
+        payload.evidence_data_paths = null;
+        log('Chemins de preuve indisponibles pour cet export: ' + e, 'warn');
+      }
+      const content = buildJsonExportContent('export session', payload);
+      log('Boîte de dialogue d’export ouverte...', 'info');
+      const path = await invoke('export_gains_to_file', { content });
+      log('Export enregistré : ' + path, 'ok');
+    } catch (e) {
+      if (String(e).includes('Annulé')) return;
+      log('Export : ' + e, 'err');
+      try { console.error('btnExportGains failed', e); } catch (_) {}
     }
-    const path = await invoke('export_gains_to_file', { content: JSON.stringify(payload, null, 2) });
-    log('Export enregistré : ' + path, 'ok');
-  } catch (e) {
-    if (String(e).includes('Annulé')) return;
-    log('Export : ' + e, 'err');
-  }
-});
+  });
+}
 
 document.getElementById('btnRefreshProcesses').addEventListener('click', () => {
   refreshProcesses({ userInitiated: true });
@@ -3741,6 +3769,7 @@ const btnExportAB = document.getElementById('btnExportAB');
 if (btnExportAB) {
   btnExportAB.addEventListener('click', async () => {
     try {
+      log('Préparation export benchmark...', 'info');
       const command = (document.getElementById('kpiCommand')?.value || '').trim();
       const args = tokenizeArgs(document.getElementById('kpiArgs')?.value || '');
       const payload = await invoke('get_benchmark_history', {
@@ -3751,33 +3780,34 @@ if (btnExportAB) {
           workload: state.wl,
         },
       });
-      const path = await invoke('export_benchmark_to_file', {
-        content: JSON.stringify({
-          exported_at: new Date().toISOString(),
-          product: 'SoulKernel',
-          workload: state.wl,
-          command,
-          args,
-          current_params: {
-            kappa: state.kappa,
-            sigma_max: state.sigmaMax,
-            eta: state.eta,
-            policy_mode: state.policyMode,
-            target_pid: state.targetPid,
-          },
-          benchmark_history: payload,
-          benchmark_top: payload?.top_sessions || [],
-          telemetry_summary: state.telemetrySummary,
-          raw_host_metrics: collectRawHostMetricsExport(),
-          energy_meter_export: collectEnergyMeterExport(),
-          strict_evidence: collectStrictEvidenceExport(),
-          process_impact_report: collectProcessImpactExport(),
-        }, null, 2),
+      const content = buildJsonExportContent('export benchmark', {
+        exported_at: new Date().toISOString(),
+        product: 'SoulKernel',
+        workload: state.wl,
+        command,
+        args,
+        current_params: {
+          kappa: state.kappa,
+          sigma_max: state.sigmaMax,
+          eta: state.eta,
+          policy_mode: state.policyMode,
+          target_pid: state.targetPid,
+        },
+        benchmark_history: payload,
+        benchmark_top: payload?.top_sessions || [],
+        telemetry_summary: state.telemetrySummary,
+        raw_host_metrics: collectRawHostMetricsExport(),
+        energy_meter_export: collectEnergyMeterExport(),
+        strict_evidence: collectStrictEvidenceExport(),
+        process_impact_report: collectProcessImpactExport(),
       });
+      log('Boîte de dialogue export benchmark ouverte...', 'info');
+      const path = await invoke('export_benchmark_to_file', { content });
       log('Export benchmark enregistre : ' + path, 'ok');
     } catch (e) {
       if (String(e).includes('Annule')) return;
       log('Export benchmark: ' + e, 'err');
+      try { console.error('btnExportAB failed', e); } catch (_) {}
     }
   });
 }
