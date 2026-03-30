@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SoulKernel — Energy Dashboard</title>
+  <style>
+    :root {
+      --bg:#0b0d12;--surface:#11141c;--card:#161a25;--card2:#1c2130;
+      --border:#242938;--accent:#6c63ff;--accent2:#00d4aa;--accent3:#ff6b6b;
+      --accent4:#ffd166;--text:#dde3f0;--muted:#5a6480;
+      --green:#22c55e;--orange:#f97316;--blue:#60a5fa;--purple:#a78bfa;
+      --measured:#00d4aa;--estimated:#ffd166;--real:#22c55e;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{font-size:14px}
+    body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;overflow-x:hidden}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:var(--bg)}
+    ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+    header{background:linear-gradient(135deg,#12103a 0%,#0a1220 100%);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;position:sticky;top:0;z-index:200}
+    .logo{display:flex;align-items:center;gap:10px}
+    .logo-icon{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+    .logo h1{font-size:15px;font-weight:800;letter-spacing:-.3px}
+    .logo small{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block}
+    .hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .live-pill{display:none;align-items:center;gap:6px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.22);border-radius:7px;padding:6px 11px}
+    .live-pill.on{display:flex}
+    .live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 1.4s infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+    .live-w{font-size:13px;font-weight:800;color:var(--green)}
+    .live-s{font-size:9px;color:var(--muted)}
+    .ql{display:flex;gap:5px;align-items:center}
+    .badge{font-size:9px;font-weight:700;padding:3px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+    .b-real{background:rgba(34,197,94,.12);color:var(--real);border:1px solid rgba(34,197,94,.25)}
+    .b-measured{background:rgba(0,212,170,.12);color:var(--measured);border:1px solid rgba(0,212,170,.25)}
+    .b-estimated{background:rgba(255,209,102,.1);color:var(--estimated);border:1px solid rgba(255,209,102,.2)}
+    .upload-btn{background:linear-gradient(135deg,var(--accent),#7c3aed);color:#fff;border:none;padding:8px 16px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:opacity .2s,transform .15s}
+    .upload-btn:hover{opacity:.85;transform:translateY(-1px)}
+    #fileInput{display:none}
+    main{padding:20px 24px;max-width:1440px;margin:0 auto}
+    #emptyState{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh}
+    .drop-zone{border:2px dashed var(--border);border-radius:20px;padding:52px 64px;cursor:pointer;transition:all .22s;background:var(--surface);text-align:center;max-width:520px;width:100%}
+    .drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:rgba(108,99,255,.05)}
+    .dz-icon{font-size:48px;margin-bottom:12px}
+    .dz-title{font-size:19px;font-weight:800;margin-bottom:8px}
+    .dz-sub{color:var(--muted);font-size:12px;line-height:1.7}
+    .dz-fmts{margin-top:14px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+    .fmt{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:10px;color:var(--accent2);font-family:monospace}
+    #dashboard{display:none}
+    .chips-bar{display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+    .chips-label{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.8px;flex-shrink:0}
+    .chip{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;transition:all .15s}
+    .chip.active{border-color:var(--accent);background:rgba(108,99,255,.1);color:var(--accent)}
+    .chip-x{color:var(--muted);font-size:12px;cursor:pointer;line-height:1}
+    .chip-x:hover{color:var(--accent3)}
+    .vtabs{display:flex;gap:0;margin-bottom:18px;border-bottom:1px solid var(--border)}
+    .vtab{padding:9px 18px;font-size:11px;font-weight:700;cursor:pointer;border:none;background:transparent;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+    .vtab:hover{color:var(--text)}
+    .vtab.active{color:var(--accent);border-bottom-color:var(--accent)}
+    .vpanel{display:none}
+    .vpanel.active{display:block}
+    .stitle{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:0 0 14px;display:flex;align-items:center;gap:8px}
+    .stitle::after{content:'';flex:1;height:1px;background:var(--border)}
+    .ev-banner{display:grid;grid-template-columns:1fr 1px 1fr 1px 1fr;gap:0;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:18px}
+    .ev-block{padding:14px 16px}
+    .ev-sep{background:var(--border)}
+    .ev-h{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px}
+    .ev-h.real{color:var(--real)} .ev-h.meas{color:var(--measured)} .ev-h.est{color:var(--estimated)}
+    .ev-claim{font-size:10px;color:var(--muted);line-height:1.6;padding-left:9px;border-left:2px solid var(--border);margin-bottom:4px}
+    .status-bar{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:18px}
+    .si{display:flex;flex-direction:column;gap:2px}
+    .si-l{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+    .si-v{font-size:11px;font-weight:700}
+    .si-sep{width:1px;height:26px;background:var(--border);flex-shrink:0}
+    .kpi-grid,.lt-grid,.diff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:12px;margin-bottom:18px}
+    .kcard{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;overflow:hidden;transition:transform .15s,box-shadow .15s}
+    .kcard:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(0,0,0,.5)}
+    .kcard::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--kc,var(--accent));border-radius:12px 12px 0 0}
+    .k-ico{position:absolute;right:12px;top:12px;font-size:18px;opacity:.18}
+    .k-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;font-weight:700;margin-bottom:6px}
+    .k-val{font-size:24px;font-weight:900;line-height:1;letter-spacing:-1px;color:var(--kc,var(--text))}
+    .k-unit{font-size:11px;color:var(--muted);font-weight:400;margin-left:2px}
+    .k-sub{font-size:10px;color:var(--muted);margin-top:6px}
+    .k-q{font-size:8px;font-weight:700;padding:2px 5px;border-radius:3px;margin-top:5px;display:inline-block}
+    .css-charts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+    .chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+    .chart-card h3{font-size:11px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .bar-chart{display:flex;flex-direction:column;gap:6px}
+    .bc-row{display:flex;align-items:center;gap:8px}
+    .bc-lbl{font-size:10px;color:var(--muted);width:36px;text-align:right;flex-shrink:0}
+    .bc-track{flex:1;height:18px;background:var(--surface);border-radius:4px;overflow:hidden;position:relative}
+    .bc-fill{height:100%;border-radius:4px;transition:width .6s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:flex-end;padding-right:6px;min-width:2px}
+    .bc-val{font-size:9px;font-weight:700;color:#fff;white-space:nowrap}
+    .period-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:18px}
+    .pcard{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:15px;transition:border-color .15s}
+    .pcard.is-active-period{border-color:var(--accent)}
+    .pc-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .pc-ttl{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
+    .pc-act{font-size:8px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(34,197,94,.12);color:var(--green)}
+    .pc-rows{display:flex;flex-direction:column;gap:6px}
+    .pc-row{display:flex;justify-content:space-between;align-items:center;font-size:10px}
+    .pc-rl{color:var(--muted)} .pc-rv{font-weight:700}
+    .prog{height:3px;background:var(--border);border-radius:2px;margin-top:9px;overflow:hidden}
+    .prog-f{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .6s}
+    .prog-lbl{font-size:8px;color:var(--muted);margin-top:3px}
+    .os-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px}
+    .os-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:13px;position:relative;overflow:hidden}
+    .os-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--oc,var(--accent));border-radius:10px 10px 0 0}
+    .os-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:7px}
+    .os-val{font-size:20px;font-weight:900;line-height:1;color:var(--oc,var(--text))}
+    .os-unit{font-size:10px;color:var(--muted);font-weight:400;margin-left:2px}
+    .os-gauge{height:3px;background:var(--border);border-radius:2px;margin-top:8px;overflow:hidden}
+    .os-gauge-f{height:100%;border-radius:2px;background:var(--oc,var(--accent));transition:width .6s}
+    .proc-notice,.overhead-audit{background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.18);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--estimated);margin-bottom:12px;line-height:1.6}
+    .overhead-audit{background:rgba(96,165,250,.06);border-color:rgba(96,165,250,.18);color:var(--blue)}
+    .top-contrib{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-bottom:14px}
+    .tc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:13px;position:relative;overflow:hidden}
+    .tc::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--tc,var(--estimated))}
+    .tc-rank{position:absolute;top:8px;right:10px;font-size:16px;opacity:.12;font-weight:900}
+    .tc-name{font-size:12px;font-weight:800;margin-bottom:3px;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+    .tc-pid{font-size:9px;color:var(--muted);margin-bottom:8px}
+    .tc-row{display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px}
+    .tc-rl{color:var(--muted)} .tc-rv{font-weight:700}
+    .tc-est-note{margin-top:8px;font-size:8px;color:var(--estimated);background:rgba(255,209,102,.07);border-radius:3px;padding:3px 6px}
+    .self-tag{font-size:7px;background:rgba(108,99,255,.2);color:var(--accent);border-radius:3px;padding:1px 5px;font-weight:700}
+    .wv-tag{font-size:7px;background:rgba(96,165,250,.15);color:var(--blue);border-radius:3px;padding:1px 5px;font-weight:700}
+    .proc-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+    .proc-search,.proc-sort{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text);outline:none}
+    .proc-search{width:200px}
+    .proc-search:focus{border-color:var(--accent)}
+    .proc-sort{cursor:pointer}
+    .proc-cnt{font-size:10px;color:var(--muted)}
+    .tbl-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse;font-size:10px}
+    thead th{background:var(--surface);padding:9px 10px;text-align:left;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer}
+    tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
+    tbody tr:hover{background:var(--card2)}
+    tbody tr.self-row{background:rgba(108,99,255,.05)}
+    td{padding:8px 10px;vertical-align:middle}
+    .pname{font-weight:700;display:flex;align-items:center;gap:4px;white-space:nowrap}
+    .mini-bar{display:flex;align-items:center;gap:5px}
+    .mb{height:4px;border-radius:2px;min-width:2px}
+    .est-note{font-size:8px;color:var(--estimated);font-style:italic}
+    #compareEmpty{text-align:center;padding:60px;color:var(--muted);font-size:13px}
+    #toast{position:fixed;bottom:20px;right:20px;z-index:999;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:11px;opacity:0;transform:translateY(6px);transition:all .25s;pointer-events:none}
+    #toast.show{opacity:1;transform:translateY(0)}
+    #toast.ok{border-color:var(--green);color:var(--green)}
+    #toast.err{border-color:var(--accent3);color:var(--accent3)}
+    .ptabs{display:none;gap:3px;background:var(--surface);border-radius:6px;padding:3px;border:1px solid var(--border)}
+    .ptabs.on{display:flex}
+    .ptab{padding:4px 11px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;border:none;background:transparent;color:var(--muted);transition:all .15s;text-transform:uppercase;letter-spacing:.4px}
+    .ptab.active{background:var(--accent);color:#fff}
+    @media(max-width:760px){.css-charts,.ev-banner{grid-template-columns:1fr}}
+    @media(max-width:600px){header{padding:10px 14px}main{padding:14px}.ql{display:none}}
+  </style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <div><h1>SoulKernel</h1><small>Energy Dashboard</small></div>
+  </div>
+  <div class="hdr-right">
+    <div class="ql">
+      <span class="badge b-real">🔌 Réel</span>
+      <span class="badge b-measured">🔬 Mesuré</span>
+      <span class="badge b-estimated">〜 Estimé</span>
+    </div>
+    <div class="live-pill" id="livePill">
+      <div class="live-dot"></div>
+      <div><div class="live-w" id="liveW">— W</div><div class="live-s">Prise murale · Live</div></div>
+    </div>
+    <div class="ptabs" id="ptabs"></div>
+    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">➕ Rapport</button>
+    <input type="file" id="fileInput" accept=".json" multiple />
+  </div>
+</header>
+<main>
+  <div id="emptyState">
+    <div class="drop-zone" id="dropZone">
+      <div class="dz-icon">📊</div>
+      <div class="dz-title">Importer un rapport SoulKernel</div>
+      <div class="dz-sub">Glissez un fichier JSON ici ou cliquez pour parcourir<br>Plusieurs rapports supportés — comparaison automatique</div>
+      <div class="dz-fmts">
+        <span class="fmt">energy_period</span>
+        <span class="fmt">strict_evidence</span>
+        <span class="fmt">process_impact</span>
+        <span class="fmt">meross_wall</span>
+      </div>
+    </div>
+  </div>
+  <div id="dashboard">
+    <div class="chips-bar"><span class="chips-label">📁 Rapports</span><div id="chips" style="display:flex;gap:6px;flex-wrap:wrap"></div></div>
+    <div class="vtabs">
+      <button class="vtab active" data-p="pEnergy">⚡ Énergie</button>
+      <button class="vtab" data-p="pOS">🖥️ OS</button>
+      <button class="vtab" data-p="pProc">🔬 Processus</button>
+      <button class="vtab" data-p="pLife">♾️ Lifetime</button>
+      <button class="vtab" data-p="pCmp">🗂️ Comparer</button>
+    </div>
+    <div class="vpanel active" id="pEnergy">
+      <div class="ev-banner" id="evBanner"></div>
+      <div class="status-bar" id="statusBar"></div>
+      <div class="stitle" id="kpiTitle">⚡ Métriques clés</div>
+      <div class="kpi-grid" id="kpiGrid"></div>
+      <div class="stitle">📈 Énergie par période</div>
+      <div class="css-charts" id="energyCharts"></div>
+      <div class="stitle">🗓️ Détail périodes</div>
+      <div class="period-grid" id="periodGrid"></div>
+    </div>
+    <div class="vpanel" id="pOS">
+      <div class="stitle">🖥️ Métriques OS natives <span class="badge b-measured" style="margin-left:6px">🔬 Mesurées par le système</span></div>
+      <div class="os-grid" id="osGrid"></div>
+      <div class="stitle">🔢 Fenêtres énergétiques mesurées <span class="badge b-real" style="margin-left:6px">🔌 Réel</span></div>
+      <div class="css-charts" id="windowsChart" style="grid-template-columns:1fr"></div>
+      <div class="stitle">📊 Différentielles Dome <span class="badge b-estimated" style="margin-left:6px">〜 Différentielles — pas économies absolues</span></div>
+      <div class="kpi-grid" id="diffGrid"></div>
+    </div>
+    <div class="vpanel" id="pProc">
+      <div class="proc-notice" id="procNotice"></div>
+      <div class="overhead-audit" id="procOverheadAudit">Audit overhead en attente…</div>
+      <div class="stitle">🏆 Top contributeurs <span class="badge b-estimated" style="margin-left:6px">〜 Attribution estimée</span></div>
+      <div class="top-contrib" id="topContrib"></div>
+      <div class="stitle">📋 Groupes de processus</div>
+      <div class="top-contrib" id="groupedContrib"></div>
+      <div class="stitle">📋 Tous les processus</div>
+      <div class="proc-controls">
+        <input class="proc-search" id="procSearch" placeholder="🔍 Filtrer..." />
+        <select class="proc-sort" id="procSortSel">
+          <option value="power">↓ Puiss. estimée</option>
+          <option value="cpu">↓ CPU %</option>
+          <option value="gpu">↓ GPU %</option>
+          <option value="mem">↓ RAM</option>
+          <option value="impact">↓ Impact %</option>
+        </select>
+        <span class="proc-cnt" id="procCnt"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Processus</th>
+              <th>PID</th>
+              <th>CPU % <span class="badge b-measured" style="font-size:7px">🔬</span></th>
+              <th>GPU % <span class="badge b-measured" style="font-size:7px">🔬</span></th>
+              <th>RAM <span class="badge b-measured" style="font-size:7px">🔬</span></th>
+              <th>Puiss. est. <span class="badge b-estimated" style="font-size:7px">〜</span></th>
+              <th>Impact est. % <span class="badge b-estimated" style="font-size:7px">〜</span></th>
+              <th>Durée</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody id="procBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="vpanel" id="pLife">
+      <div class="stitle">♾️ Cumulé depuis premier lancement</div>
+      <div class="lt-grid" id="ltGrid"></div>
+    </div>
+    <div class="vpanel" id="pCmp">
+      <div id="compareCharts" style="display:none">
+        <div class="stitle">🗂️ Comparaison multi-rapports</div>
+        <div class="css-charts" id="cmpChartsWrap"></div>
+      </div>
+      <div id="compareEmpty">📂 Importez au moins 2 rapports pour comparer</div>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+<script>
+const S={reports:[],activeId:null,activePeriod:'week',procFilter:'',procSort:'power'};
+const $=id=>document.getElementById(id);
+const el=(tag,cls,html)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;};
+const fmt=(v,d=3)=>v==null||isNaN(v)?'—':Number(v).toFixed(d);
+const fmtP=v=>v==null?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%';
+const fmtH=h=>{if(!h||isNaN(h))return'—';const hh=Math.floor(h),mm=Math.round((h-hh)*60);return`${hh}h ${String(mm).padStart(2,'0')}m`;};
+const fmtS=s=>{if(!s&&s!==0)return'—';if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+Math.floor(s%60)+'s';return fmtH(s/3600);};
+const fmtMem=kb=>kb>1048576?(kb/1048576).toFixed(1)+' GiB':(kb/1024).toFixed(0)+' MiB';
+const genId=()=>Math.random().toString(36).slice(2,9);
+const PLBLS={hour:'1h',day:'24h',week:'7j',month:'30j',year:'1an',total:'Total'};
+const PCOLS=['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a78bfa','#34d399'];
+function toast(msg,type='ok'){const t=$('toast');t.textContent=msg;t.className=`show ${type}`;setTimeout(()=>t.className='',3200);}
+function getProcRoot(d){return d.process_impact_report||d.report?.process_impact_report||null;}
+function getProcList(root){return root?.processes||root?.all_processes||[];}
+function getTopRows(root){
+  if(Array.isArray(root?.top_process_rows)&&root.top_process_rows.length)return root.top_process_rows;
+  return (root?.top_contributors||[]).map(p=>({
+    pid:p.pid,name:p.name,exe:p.exe,cmd_preview:Array.isArray(p.cmd)?p.cmd.join(' '):null,
+    cpu_label:p.cpu_usage==null?'—':fmt(p.cpu_usage,1)+' %',
+    gpu_label:p.gpu_usage_pct==null?'—':fmt(p.gpu_usage_pct,1)+' %',
+    ram_label:(p.memory_kb?fmtMem(p.memory_kb):'—'),
+    ram_share_label:p.memory_share_pct==null?'—':fmt(p.memory_share_pct,1)+'%',
+    io_label:'—',io_split_label:'—',
+    power_label:p.estimated_power_w==null?'—':fmt(p.estimated_power_w,2)+' W',
+    impact_label:p.impact_score_pct_estimated==null?'—':fmt(p.impact_score_pct_estimated,2)+' %',
+    duration_label:p.run_time_s==null?'—':fmtS(p.run_time_s),
+    status_label:p.status||'—',
+    role:(p.is_self_process?'self':(p.is_embedded_webview?'webview':'other')),
+    attribution_method:p.attribution_method||'—',
+    is_self_process:!!p.is_self_process,is_embedded_webview:!!p.is_embedded_webview
+  }));
+}
+function getGrouped(root){
+  if(Array.isArray(root?.grouped_processes)&&root.grouped_processes.length)return root.grouped_processes;
+  return [];
+}
+function getSummary(root){return root?.summary||null;}
+function getOverhead(root){return root?.overhead_audit||null;}
+$('fileInput').addEventListener('change',e=>loadFiles(e.target.files));
+const dz=$('dropZone');
+dz.addEventListener('click',()=>$('fileInput').click());
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over');loadFiles(e.dataTransfer.files)});
+document.body.addEventListener('dragover',e=>e.preventDefault());
+document.body.addEventListener('drop',e=>{e.preventDefault();if(e.dataTransfer.files.length)loadFiles(e.dataTransfer.files)});
+function loadFiles(files){[...files].forEach(file=>{const r=new FileReader();r.onload=ev=>{try{const data=JSON.parse(ev.target.result);if(!data.telemetry_summary&&!data.report)throw new Error('Format non reconnu');const id=genId(),name=file.name.replace('.json','');S.reports.push({id,name,data});S.activeId=id;const p=data.report?.period||data.period;if(p)S.activePeriod=p;toast(`✅ "${name}" chargé`);render();}catch(err){toast(`❌ ${file.name}: ${err.message}`,'err')}};r.readAsText(file);});}
+function selReport(id){S.activeId=id;const d=S.reports.find(r=>r.id===id)?.data;if(d){const p=d.report?.period||d.period;if(p)S.activePeriod=p;}render();}
+function delReport(id){S.reports=S.reports.filter(r=>r.id!==id);if(S.activeId===id)S.activeId=S.reports[0]?.id||null;render();}
+document.querySelectorAll('.vtab').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.vtab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.vpanel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');$(btn.dataset.p).classList.add('active');});});
+function render(){if(!S.reports.length){$('emptyState').style.display='flex';$('dashboard').style.display='none';return;}$('emptyState').style.display='none';$('dashboard').style.display='block';const active=S.reports.find(r=>r.id===S.activeId);if(!active)return;const d=active.data;renderChips();renderPeriodTabs(d);renderEvBanner(d);renderStatus(d);renderKpis(d);renderEnergyCharts(d);renderPeriodCards(d);renderOS(d);renderWindowsChart(d);renderDiff(d);renderProcesses(d);renderLifetime(d);renderCompare();}
+function renderChips(){const c=$('chips');c.innerHTML='';S.reports.forEach(r=>{const d=el('div','chip'+(r.id===S.activeId?' active':''));d.innerHTML=`<span onclick="selReport('${r.id}')">📄 ${r.name}</span><span class="chip-x" onclick="delReport('${r.id}')">✕</span>`;c.appendChild(d);});}
+function renderPeriodTabs(d){const ts=d.telemetry_summary||{};const ps=Object.keys(PLBLS).filter(p=>ts[p]);const el2=$('ptabs');el2.className='ptabs on';el2.innerHTML='';ps.forEach(p=>{const b=document.createElement('button');b.className='ptab'+(p===S.activePeriod?' active':'');b.textContent=PLBLS[p];b.onclick=()=>{S.activePeriod=p;render();};el2.appendChild(b);});}
+function renderEvBanner(d){const se=d.strict_evidence||d.report?.strict_evidence;const eb=$('evBanner');if(!se){eb.style.display='none';return;}eb.style.display='';const al=se.allowed_claims||[];const fo=se.forbidden_claims||[];eb.innerHTML=`<div class="ev-block"><div class="ev-h real">🔌 Données réelles</div>${al.filter(c=>c.includes('nergétique')||c.includes('réelle')).map(c=>`<div class="ev-claim">${c}</div>`).join('')||'<div class="ev-claim">Puissance murale mesurée via prise connectée Meross.</div>'}</div><div class="ev-sep"></div><div class="ev-block"><div class="ev-h meas">🔬 OS mesuré</div>${al.filter(c=>c.includes('OS')||c.includes('CPU')||c.includes('GPU')).map(c=>`<div class="ev-claim">${c}</div>`).join('')||'<div class="ev-claim">CPU, RAM, GPU, I/O observés nativement.</div>'}</div><div class="ev-sep"></div><div class="ev-block"><div class="ev-h est">〜 Limites</div>${fo.slice(0,3).map(c=>`<div class="ev-claim">${c}</div>`).join('')||'<div class="ev-claim">Attribution par processus = estimation pondérée, pas mesure physique.</div>'}</div>`;}
+function renderStatus(d){const ext=d.report?.external_power||{};const ts_s=d.report?.exported_at?new Date(d.report.exported_at).toLocaleString('fr-FR'):'—';const lp=d.telemetry_summary?.live_power_w;if(lp!=null){$('livePill').classList.add('on');$('liveW').textContent=lp.toFixed(1)+' W';}else{$('livePill').classList.remove('on');}const on=ext.bridge_state==='ON';$('statusBar').innerHTML=`<div class="si"><div class="si-l">Source</div><div class="si-v">🔌 ${d.report?.power_source||'—'}</div></div><div class="si-sep"></div><div class="si"><div class="si-l">Prise</div><div class="si-v">${on?'🟢 ON':'🔴 OFF'}</div></div><div class="si-sep"></div><div class="si"><div class="si-l">Fraîcheur</div><div class="si-v">${ext.freshness||'—'}</div></div><div class="si-sep"></div><div class="si"><div class="si-l">Dernier W</div><div class="si-v"><span class="badge b-real">${ext.last_watts_label||'—'}</span></div></div><div class="si-sep"></div><div class="si"><div class="si-l">Lecture</div><div class="si-v">${ext.last_ts_label||'—'}</div></div><div class="si-sep"></div><div class="si"><div class="si-l">Export</div><div class="si-v">${ts_s}</div></div><div class="si-sep"></div><div class="si"><div class="si-l">Erreur</div><div class="si-v">${ext.last_error||'—'}</div></div>`;}
+function renderKpis(d){const ts=d.telemetry_summary||{};const per=ts[S.activePeriod]||ts.week||ts.total||{};$('kpiTitle').innerHTML=`⚡ Métriques clés — ${PLBLS[S.activePeriod]||S.activePeriod} <span class="badge b-real" style="margin-left:4px">🔌 Prise murale</span>`;const gc=v=>v>=0?'var(--green)':'var(--orange)';const kpis=[{lbl:'Énergie consommée',v:fmt(per.energy_kwh,4),u:'kWh',ic:'⚡',c:'#6c63ff',sub:`${fmtH(per.duration_h)} · ${(per.samples||0).toLocaleString('fr-FR')} éch.`,q:'real',ql:'🔌 Réel'},{lbl:'Puissance moyenne',v:fmt(per.avg_power_w,1),u:'W',ic:'🔋',c:'#22c55e',sub:`Live : ${fmt(ts.live_power_w,1)} W`,q:'real',ql:'🔌 Réel'},{lbl:'Coût calculé',v:fmt(per.cost,4),u:'€',ic:'💶',c:'#ffd166',sub:`${fmt(ts.pricing?.price_per_kwh,3)} €/kWh`,q:'measured',ql:'🔬 Calculé'},{lbl:'CO₂ calculé',v:fmt(per.co2_kg,5),u:'kg',ic:'🌿',c:'#00d4aa',sub:`${fmt(ts.pricing?.co2_kg_per_kwh,3)} kg/kWh`,q:'measured',ql:'🔬 Calculé'},{lbl:'Gain KPI Dome',v:fmtP(per.kpi_gain_median_pct),u:'',ic:'🧠',c:gc(per.kpi_gain_median_pct||0),sub:`Dome actif : ${fmt((per.dome_active_ratio||0)*100,1)} %`,q:'measured',ql:'🔬 Mesuré'},{lbl:'CPU·h différentiel',v:fmt(per.cpu_hours_differential??per.cpu_hours_saved,2),u:'h',ic:'💾',c:'#a78bfa',sub:`RAM diff : ${fmt(per.mem_gb_hours_differential??per.mem_gb_hours_saved,1)} GB·h`,q:'estimated',ql:'〜 Différentiel'},{lbl:'Dome actif',v:fmt((per.dome_active_ratio||0)*100,1),u:'%',ic:'🛡️',c:'#60a5fa',sub:`Clean passif : ${fmtH(per.passive_clean_h||0)}`,q:'measured',ql:'🔬 Mesuré'},{lbl:'Idle ratio',v:fmt((per.idle_ratio||0)*100,3),u:'%',ic:'🌙',c:'#94a3b8',sub:`Integral Dome : ${fmt(per.dome_gain_integral,0)}`,q:'measured',ql:'🔬 Mesuré'}];$('kpiGrid').innerHTML=kpis.map(k=>`<div class="kcard" style="--kc:${k.c}"><div class="k-ico">${k.ic}</div><div class="k-lbl">${k.lbl}</div><div class="k-val">${k.v}<span class="k-unit">${k.u}</span></div><div class="k-sub">${k.sub}</div><span class="k-q badge b-${k.q}">${k.ql}</span></div>`).join('');}
+function renderEnergyCharts(d){const ts=d.telemetry_summary||{};const ps=Object.keys(PLBLS).filter(p=>ts[p]);const wrap=$('energyCharts');wrap.innerHTML='';const makeBarChart=(title,key,unit,color,badge,bq)=>{const vals=ps.map(p=>ts[p]?.[key]||0);const mx=Math.max(...vals,0.0001);const card=el('div','chart-card');card.innerHTML=`<h3>${title} <span class="badge b-${bq}">${badge}</span></h3>`;const bc=el('div','bar-chart');ps.forEach((p,i)=>{const pct=Math.min(100,(vals[i]/mx)*100);const row=el('div','bc-row');row.innerHTML=`<div class="bc-lbl">${PLBLS[p]}</div><div class="bc-track"><div class="bc-fill" style="width:${pct}%;background:${color}"><span class="bc-val">${fmt(vals[i],4)} ${unit}</span></div></div>`;bc.appendChild(row);});card.appendChild(bc);wrap.appendChild(card);};makeBarChart('⚡ Énergie (kWh)','energy_kwh','kWh','#6c63ff','🔌 Réel','real');makeBarChart('🔥 Puissance moy. (W)','avg_power_w','W','#22c55e','🔌 Réel','real');makeBarChart('💶 Coût (€)','cost','€','#ffd166','🔬 Calculé','measured');makeBarChart('🌿 CO₂ (kg)','co2_kg','kg','#00d4aa','🔬 Calculé','measured');}
+function renderPeriodCards(d){const ts=d.telemetry_summary||{};const ps=Object.keys(PLBLS).filter(p=>ts[p]);const wrap=$('periodGrid');wrap.innerHTML='';ps.forEach(p=>{const s=ts[p];const isAct=p===S.activePeriod;const gc=s.kpi_gain_median_pct>=0?'var(--green)':'var(--orange)';const card=el('div','pcard'+(isAct?' is-active-period':''));card.innerHTML=`<div class="pc-hdr"><div class="pc-ttl">${PLBLS[p]||p}</div>${isAct?'<span class="pc-act">actif</span>':''}</div><div class="pc-rows"><div class="pc-row"><span class="pc-rl">⚡ Énergie</span><span class="pc-rv"><span class="badge b-real" style="font-size:7px">🔌</span> ${fmt(s.energy_kwh,4)} kWh</span></div><div class="pc-row"><span class="pc-rl">🔥 Puiss. moy.</span><span class="pc-rv">${fmt(s.avg_power_w,1)} W</span></div><div class="pc-row"><span class="pc-rl">💶 Coût</span><span class="pc-rv"><span class="badge b-measured" style="font-size:7px">🔬</span> ${fmt(s.cost,4)} €</span></div><div class="pc-row"><span class="pc-rl">🌿 CO₂</span><span class="pc-rv">${fmt(s.co2_kg,5)} kg</span></div><div class="pc-row"><span class="pc-rl">🧠 KPI</span><span class="pc-rv" style="color:${gc}">${fmtP(s.kpi_gain_median_pct)}</span></div><div class="pc-row"><span class="pc-rl">💾 CPU diff.</span><span class="pc-rv"><span class="badge b-estimated" style="font-size:7px">〜</span> ${fmt(s.cpu_hours_differential??s.cpu_hours_saved,2)} h</span></div><div class="pc-row"><span class="pc-rl">📊 Échantillons</span><span class="pc-rv">${(s.samples||0).toLocaleString('fr-FR')}</span></div></div><div class="prog"><div class="prog-f" style="width:${Math.min(100,(s.dome_active_ratio||0)*100).toFixed(1)}%"></div></div><div class="prog-lbl">Dome actif : ${((s.dome_active_ratio||0)*100).toFixed(1)} %</div>`;wrap.appendChild(card);});}
+function renderOS(d){const se=d.strict_evidence||d.report?.strict_evidence;const om=se?.assertions?.measured_os_metrics;const wrap=$('osGrid');wrap.innerHTML='';if(!om){wrap.innerHTML='<p style="color:var(--muted);font-size:12px;grid-column:1/-1">Pas de métriques OS dans ce rapport.</p>';return;}const memPct=(om.mem_used_mb/om.mem_total_mb)*100;const items=[{lbl:'CPU',v:fmt(om.cpu_pct,1),u:'%',c:'#6c63ff',g:om.cpu_pct},{lbl:'RAM utilisée',v:fmt(om.mem_used_mb/1024,1),u:'GiB',c:'#00d4aa',g:memPct},{lbl:'RAM totale',v:fmt(om.mem_total_mb/1024,1),u:'GiB',c:'#5a6480',g:memPct},{lbl:'GPU',v:fmt(om.gpu_pct,1),u:'%',c:'#a78bfa',g:om.gpu_pct},{lbl:'I/O Écriture',v:fmt(om.io_write_mb_s,3),u:'MB/s',c:'#ffd166',g:Math.min(om.io_write_mb_s*10,100)},{lbl:'I/O Lecture',v:fmt(om.io_read_mb_s,3),u:'MB/s',c:'#60a5fa',g:Math.min(om.io_read_mb_s*10,100)},{lbl:'Sigma',v:fmt(om.sigma,4),u:'',c:'#34d399',g:Math.min(om.sigma*100,100)}];items.forEach(m=>{const card=el('div','os-card');card.style.setProperty('--oc',m.c);card.innerHTML=`<div class="os-lbl">${m.lbl}</div><div class="os-val">${m.v}<span class="os-unit">${m.u}</span></div><div class="os-gauge"><div class="os-gauge-f" style="width:${Math.min(100,m.g||0).toFixed(1)}%"></div></div>`;wrap.appendChild(card);});}
+function renderWindowsChart(d){const se=d.strict_evidence||d.report?.strict_evidence;const pw=se?.assertions?.measured_energy?.period_windows;const wrap=$('windowsChart');wrap.innerHTML='';if(!pw)return;const items=[{lbl:'1h',v:pw.hour_kwh},{lbl:'24h',v:pw.day_kwh},{lbl:'7j',v:pw.week_kwh},{lbl:'30j',v:pw.month_kwh},{lbl:'1an',v:pw.year_kwh}];const mx=Math.max(...items.map(i=>i.v||0),0.0001);const card=el('div','chart-card');card.style.gridColumn='1/-1';card.innerHTML=`<h3>⚡ kWh par fenêtre temporelle <span class="badge b-real" style="margin-left:4px">🔌 Mesurés depuis prise murale</span></h3>`;const bc=el('div','bar-chart');items.forEach(it=>{const pct=Math.min(100,((it.v||0)/mx)*100);const row=el('div','bc-row');row.innerHTML=`<div class="bc-lbl">${it.lbl}</div><div class="bc-track"><div class="bc-fill" style="width:${pct}%;background:linear-gradient(90deg,#22c55e,#00d4aa)"><span class="bc-val">${fmt(it.v,4)} kWh</span></div></div>`;bc.appendChild(row);});card.appendChild(bc);wrap.appendChild(card);}
+function renderDiff(d){const se=d.strict_evidence||d.report?.strict_evidence;const diff=se?.assertions?.measured_differentials;const me=se?.assertions?.measured_energy;const wrap=$('diffGrid');wrap.innerHTML='';if(!diff&&!me){wrap.innerHTML='<p style="color:var(--muted);font-size:12px">Pas de différentielles dans ce rapport.</p>';return;}const items=[{lbl:'CPU·h différentiel',v:fmt(diff?.cpu_hours_differential,2),u:'h',c:'#a78bfa',sub:'Diff. observée — pas économies absolues'},{lbl:'RAM GB·h différentiel',v:fmt(diff?.mem_gb_hours_differential,1),u:'GB·h',c:'#00d4aa',sub:'Diff. observée'},{lbl:'CPU·h lifetime diff.',v:fmt(diff?.lifetime_cpu_hours_differential,2),u:'h',c:'#6c63ff',sub:'Cumulé depuis premier lancement'},{lbl:'RAM GB·h lifetime',v:fmt(diff?.lifetime_mem_gb_hours_differential,1),u:'GB·h',c:'#60a5fa',sub:'Cumulé lifetime'},{lbl:'Idle ratio',v:fmt((diff?.idle_ratio||0)*100,3),u:'%',c:'#94a3b8',sub:'Ratio mesuré'},{lbl:'kWh total mesuré',v:fmt(me?.total_energy_kwh,4),u:'kWh',c:'#22c55e',sub:'Énergie murale réelle cumulée'}];items.forEach(k=>{const card=el('div','kcard');card.style.setProperty('--kc',k.c);card.innerHTML=`<div class="k-lbl">${k.lbl}</div><div class="k-val">${k.v}<span class="k-unit">${k.u}</span></div><div class="k-sub">${k.sub}</div><span class="k-q badge b-estimated">〜 Différentiel</span>`;wrap.appendChild(card);});}
+let _allProcs=[];
+function renderProcesses(d){
+  const pir=getProcRoot(d);
+  $('procNotice').innerHTML=!pir?'Pas de données processus dans ce rapport.':`<strong>⚠️ Transparence</strong> — ${pir.attribution_notice||'CPU, GPU, RAM et I/O par processus sont observés selon disponibilité plateforme. Les watts et l’impact restent estimés.'}<br><strong>🔬 CPU, GPU, RAM, I/O</strong> = observés par l'OS. &nbsp;<span class="badge b-estimated">〜</span> <strong>estimated_power_w</strong> &amp; <strong>impact_score_pct_estimated</strong> = attribution pondérée sur puissance murale totale — <em>pas une mesure physique par processus.</em>`;
+  const overhead=getOverhead(pir);
+  $('procOverheadAudit').innerHTML=!overhead?'Audit overhead indisponible.':`<strong>Overhead cumulé SoulKernel + WebView</strong> — CPU: <strong>${fmt(overhead.combined_cpu_usage_pct,1)} %</strong> · GPU: <strong>${fmt(overhead.combined_gpu_usage_pct,1)} %</strong> · RAM: <strong>${fmtMem(overhead.combined_memory_kb||0)}</strong> · Puiss. est.: <strong>${fmt(overhead.combined_estimated_power_w,2)} W</strong><br>SoulKernel: ${fmt(overhead.soulkernel_cpu_usage_pct,1)} % CPU / ${fmt(overhead.soulkernel_gpu_usage_pct,1)} % GPU · WebView: ${fmt(overhead.webview_cpu_usage_pct,1)} % CPU / ${fmt(overhead.webview_gpu_usage_pct,1)} % GPU (${overhead.webview_process_count||0} proc)`;
+  if(!pir){$('topContrib').innerHTML='';$('groupedContrib').innerHTML='';$('procBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Aucune donnée</td></tr>';$('procCnt').textContent='';return;}
+  const tops=getTopRows(pir);
+  const tc=$('topContrib');tc.innerHTML='';const tcColors=['#ffd166','#a78bfa','#60a5fa','#34d399','#f97316'];
+  tops.slice(0,5).forEach((p,i)=>{const card=el('div','tc');card.style.setProperty('--tc',tcColors[i]||'#ffd166');card.innerHTML=`<div class="tc-rank">${i+1}</div><div class="tc-name">${p.name||'—'}${p.is_self_process?'<span class="self-tag">SELF</span>':''}${p.is_embedded_webview?'<span class="wv-tag">WebView</span>':''}</div><div class="tc-pid">PID ${p.pid||'—'}</div><div class="tc-row"><span class="tc-rl">CPU %</span><span class="tc-rv">${p.cpu_label||'—'}</span></div><div class="tc-row"><span class="tc-rl">GPU %</span><span class="tc-rv">${p.gpu_label||'—'}</span></div><div class="tc-row"><span class="tc-rl">RAM</span><span class="tc-rv">${p.ram_label||'—'}</span></div><div class="tc-row"><span class="tc-rl">Puiss. est.</span><span class="tc-rv">${p.power_label||'—'}</span></div><div class="tc-row"><span class="tc-rl">Impact est.</span><span class="tc-rv">${p.impact_label||'—'}</span></div><div class="tc-est-note">〜 estimated_power_w = attribution estimée, pas mesure physique</div>`;tc.appendChild(card);});
+  const groups=getGrouped(pir);const gc=$('groupedContrib');gc.innerHTML='';groups.slice(0,6).forEach((g,i)=>{const card=el('div','tc');card.style.setProperty('--tc',PCOLS[i%PCOLS.length]);card.innerHTML=`<div class="tc-rank">${g.process_count||0}</div><div class="tc-name">${g.key||'—'}</div><div class="tc-pid">${g.process_count||0} processus</div><div class="tc-row"><span class="tc-rl">CPU %</span><span class="tc-rv">${fmt(g.cpu_usage_pct,2)} %</span></div><div class="tc-row"><span class="tc-rl">GPU %</span><span class="tc-rv">${fmt(g.gpu_usage_pct,2)} %</span></div><div class="tc-row"><span class="tc-rl">RAM</span><span class="tc-rv">${g.memory_kb?fmtMem(g.memory_kb):'—'}</span></div><div class="tc-row"><span class="tc-rl">Puiss. est.</span><span class="tc-rv">${fmt(g.estimated_power_w,2)} W</span></div><div class="tc-row"><span class="tc-rl">Impact est.</span><span class="tc-rv">${fmt(g.impact_score_pct_estimated,2)} %</span></div>`;gc.appendChild(card);});
+  _allProcs=getProcList(pir);renderProcTable();
+}
+function renderProcTable(){
+  const filter=S.procFilter.toLowerCase();const sort=S.procSort;let procs=[..._allProcs].filter(p=>!filter||p.name?.toLowerCase().includes(filter)||(p.pid+'').includes(filter));
+  const _cpu=p=>p.cpu_usage??p.cpu_pct??0;const _gpu=p=>p.gpu_usage_pct??0;const _mem=p=>p.memory_kb??p.mem_rss_kb??0;
+  procs.sort((a,b)=>{if(sort==='cpu')return _cpu(b)-_cpu(a);if(sort==='gpu')return _gpu(b)-_gpu(a);if(sort==='mem')return _mem(b)-_mem(a);if(sort==='impact')return (b.impact_score_pct_estimated||0)-(a.impact_score_pct_estimated||0);return (b.estimated_power_w||0)-(a.estimated_power_w||0);});
+  const maxCpu=Math.max(...procs.map(_cpu),0.01);const maxGpu=Math.max(...procs.map(_gpu),0.01);const maxMem=Math.max(...procs.map(_mem),1);const maxPow=Math.max(...procs.map(p=>p.estimated_power_w||0),0.01);
+  $('procCnt').textContent=`${procs.length} processus`;
+  $('procBody').innerHTML=procs.map(p=>{const isSelf=p.is_self_process||p.is_self||p.name?.toLowerCase().includes('soulkernel');const isWV=p.is_embedded_webview||p.name?.toLowerCase().includes('webview')||p.name?.toLowerCase().includes('electron');const cpuVal=_cpu(p),gpuVal=_gpu(p),memVal=_mem(p);const cpuPct=Math.min(100,(cpuVal/maxCpu)*100),gpuPct=Math.min(100,(gpuVal/maxGpu)*100),memPct=Math.min(100,(memVal/maxMem)*100),powPct=Math.min(100,((p.estimated_power_w||0)/maxPow)*100);const runTime=p.run_time_s??p.runtime_s;const statusRaw=p.status||'';const isRun=statusRaw==='run'||statusRaw==='running';const isSleep=statusRaw==='sleep'||statusRaw==='sleeping';return `<tr class="${isSelf?'self-row':''}"><td><div class="pname">${p.name||'—'}${isSelf?'<span class="self-tag">SELF</span>':''}${isWV?'<span class="wv-tag">WV</span>':''}</div></td><td style="color:var(--muted)">${p.pid||'—'}</td><td><div class="mini-bar"><div class="mb" style="width:${cpuPct.toFixed(0)}px;max-width:60px;background:#6c63ff"></div><span>${fmt(cpuVal,2)} %</span></div></td><td><div class="mini-bar"><div class="mb" style="width:${gpuPct.toFixed(0)}px;max-width:60px;background:#a78bfa"></div><span>${fmt(gpuVal,2)} %</span></div></td><td><div class="mini-bar"><div class="mb" style="width:${memPct.toFixed(0)}px;max-width:60px;background:#00d4aa"></div><span>${memVal?fmtMem(memVal):'—'}</span></div></td><td><div class="mini-bar"><div class="mb" style="width:${powPct.toFixed(0)}px;max-width:60px;background:#ffd166"></div><span>${fmt(p.estimated_power_w,2)} W</span></div><div class="est-note">〜 estimé</div></td><td>${fmt(p.impact_score_pct_estimated,2)} %<div class="est-note">〜 estimé</div></td><td>${runTime!=null?fmtS(runTime):p.create_time?fmtS(Math.floor((Date.now()/1000)-p.create_time)):'—'}</td><td><span style="font-size:9px;color:${isRun?'var(--green)':isSleep?'var(--blue)':'var(--muted)'}">${statusRaw||'—'}</span></td></tr>`;}).join('');
+}
+$('procSearch').addEventListener('input',e=>{S.procFilter=e.target.value;renderProcTable();});
+$('procSortSel').addEventListener('change',e=>{S.procSort=e.target.value;renderProcTable();});
+function renderLifetime(d){const ltRaw=d.telemetry_summary?.lifetime||d.lifetime||d.report?.lifetime;const ltPer=d.telemetry_summary?.total;const wrap=$('ltGrid');wrap.innerHTML='';if(!ltRaw&&!ltPer){wrap.innerHTML='<p style="color:var(--muted);font-size:12px;grid-column:1/-1">Pas de données lifetime dans ce rapport.</p>';return;}const lt=ltRaw||{},ltp=ltPer||{};const items=[{lbl:'Énergie totale',v:fmt(lt.total_energy_kwh??ltp.energy_kwh,4),u:'kWh',c:'#6c63ff',ic:'⚡',q:'real',ql:'🔌 Réel'},{lbl:'Durée Dome',v:fmtH(lt.total_dome_hours??ltp.duration_h),u:'',c:'#22c55e',ic:'⏱️',q:'measured',ql:'🔬 Mesuré'},{lbl:'Puissance moy.',v:fmt(ltp.avg_power_w,1),u:'W',c:'#00d4aa',ic:'🔋',q:'real',ql:'🔌 Réel'},{lbl:'Coût total',v:fmt(lt.total_energy_cost_measured??ltp.cost,4),u:'€',c:'#ffd166',ic:'💶',q:'measured',ql:'🔬 Calculé'},{lbl:'CO₂ total',v:fmt(lt.total_co2_measured_kg??ltp.co2_kg,5),u:'kg',c:'#00d4aa',ic:'🌿',q:'measured',ql:'🔬 Calculé'},{lbl:'Échantillons',v:(lt.total_samples??ltp.samples??0).toLocaleString('fr-FR'),u:'',c:'#5a6480',ic:'📊',q:'real',ql:'🔌 Réel'},{lbl:'KPI Dome',v:fmtP(lt.avg_kpi_gain_pct??ltp.kpi_gain_median_pct),u:'',c:(lt.avg_kpi_gain_pct??ltp.kpi_gain_median_pct??0)>=0?'#22c55e':'#f97316',ic:'🧠',q:'measured',ql:'🔬 Mesuré'},{lbl:'Activations Dome',v:fmt(lt.total_dome_activations,0),u:'',c:'#60a5fa',ic:'🛡️',q:'measured',ql:'🔬 Mesuré'},{lbl:'CPU·h diff. total',v:fmt(lt.total_cpu_hours_differential??ltp.cpu_hours_differential,2),u:'h',c:'#a78bfa',ic:'💾',q:'estimated',ql:'〜 Estimé'},{lbl:'RAM GB·h diff.',v:fmt(lt.total_mem_gb_hours_differential??ltp.mem_gb_hours_differential,1),u:'GB·h',c:'#60a5fa',ic:'🧠',q:'estimated',ql:'〜 Estimé'},{lbl:'Idle total',v:fmtH(lt.total_idle_hours),u:'',c:'#94a3b8',ic:'🌙',q:'measured',ql:'🔬 Mesuré'},{lbl:'Dome gain integral',v:fmt(lt.total_dome_gain_integral??ltp.dome_gain_integral,0),u:'',c:'#34d399',ic:'📈',q:'measured',ql:'🔬 Mesuré'}];items.forEach(k=>{const card=el('div','kcard');card.style.setProperty('--kc',k.c);card.innerHTML=`<div class="k-ico">${k.ic}</div><div class="k-lbl">${k.lbl}</div><div class="k-val" style="font-size:18px">${k.v}<span class="k-unit">${k.u}</span></div><span class="k-q badge b-${k.q}" style="margin-top:8px">${k.ql}</span>`;wrap.appendChild(card);});}
+function renderCompare(){const n=S.reports.length;$('compareEmpty').style.display=n<2?'block':'none';$('compareCharts').style.display=n>=2?'block':'none';if(n<2)return;const wrap=$('cmpChartsWrap');wrap.innerHTML='';const metrics=[{key:'energy_kwh',lbl:'⚡ Énergie (kWh)',unit:'kWh',c:'#6c63ff'},{key:'avg_power_w',lbl:'🔥 Puissance moy. (W)',unit:'W',c:'#22c55e'},{key:'cost',lbl:'💶 Coût (€)',unit:'€',c:'#ffd166'},{key:'co2_kg',lbl:'🌿 CO₂ (kg)',unit:'kg',c:'#00d4aa'}];metrics.forEach(m=>{const card=el('div','chart-card');card.innerHTML=`<h3>${m.lbl}</h3>`;const bc=el('div','bar-chart');const vals=S.reports.map((r,i)=>{const ts=r.data.telemetry_summary||{};const per=ts[S.activePeriod]||ts.week||ts.total||{};return {name:r.name,v:per[m.key]||0,col:PCOLS[i%PCOLS.length]};});const mx=Math.max(...vals.map(v=>v.v),0.0001);vals.forEach(v=>{const pct=Math.min(100,(v.v/mx)*100);const row=el('div','bc-row');row.innerHTML=`<div class="bc-lbl" style="width:80px;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${v.name}">${v.name}</div><div class="bc-track"><div class="bc-fill" style="width:${pct}%;background:${v.col}"><span class="bc-val">${fmt(v.v,4)} ${m.unit}</span></div></div>`;bc.appendChild(row);});card.appendChild(bc);wrap.appendChild(card);});}
+render();
+</script>
+</body>
+</html>

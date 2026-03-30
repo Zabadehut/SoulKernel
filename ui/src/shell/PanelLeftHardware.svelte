@@ -3,6 +3,10 @@
   <div class="panel-title">
     <span class="pt-ico"><i data-lucide="activity"></i></span><span>HARDWARE r(t) · LIVE</span>
   </div>
+  <div class="target-hint compactable-copy" style="margin:-.35rem 0 .6rem;max-width:32rem">
+    Ici: <strong>machine globale</strong>. Les compteurs CPU/RAM/GPU/I/O ci-dessous décrivent l’hôte entier.
+    Le détail <strong>par processus</strong> est dans <strong>Impact processus</strong>.
+  </div>
 
   <div class="resource-item">
     <div class="res-header">
@@ -63,15 +67,15 @@
   <div class="resource-item">
     <div class="res-header">
       <span class="res-header-start">
-        <span class="res-metric-icon res-metric-icon--gpu" title="GPU — charge graphique r(t)"
+        <span class="res-metric-icon res-metric-icon--gpu" title="GPU global machine — charge graphique hôte r(t)"
           ><i data-lucide="monitor-play"></i></span
         >
-        <span class="res-name" style="color:#ff6b6b">G(t) · GPU</span>
+        <span class="res-name" style="color:#ff6b6b">G(t) · GPU global</span>
       </span>
       <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
     </div>
     <div class="bar-track"><div class="bar-fill bar-gpu" id="bGPU" style="width:0"></div></div>
-    <div class="res-label" id="lGPU">IOKit / sysfs / DXGI</div>
+    <div class="res-label" id="lGPU">IOKit / sysfs / DXGI · hôte global</div>
   </div>
 
   <details
@@ -101,7 +105,7 @@
         <div class="raw-cell"><div class="raw-label">Load avg 1m</div><div class="raw-val" id="rawLoadAvg">—</div></div>
         <div class="raw-cell"><div class="raw-label">Runnable</div><div class="raw-val" id="rawRunnable">—</div></div>
         <div class="raw-cell"><div class="raw-label">I/O R/W</div><div class="raw-val" id="rawIoRw">—</div></div>
-        <div class="raw-cell"><div class="raw-label">GPU %</div><div class="raw-val" id="rawGpuPct">—</div></div>
+        <div class="raw-cell"><div class="raw-label">GPU % global</div><div class="raw-val" id="rawGpuPct">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU core</div><div class="raw-val" id="rawGpuCoreClock">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU mem</div><div class="raw-val" id="rawGpuMemClock">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU temp</div><div class="raw-val" id="rawGpuTemp">—</div></div>

@@ -14,8 +14,6 @@
 use crate::{formula::WorkloadProfile, metrics::ResourceState, platform::PlatformInfo};
 
 #[cfg(target_os = "windows")]
-use std::collections::HashMap;
-#[cfg(target_os = "windows")]
 use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "windows")]
 fn command_hidden(program: &str) -> std::process::Command {
@@ -406,7 +404,7 @@ impl WindowsRealtimeCounters {
         Some(sum)
     }
 
-    fn counter_array_by_pid(counter: isize) -> Option<HashMap<u32, f64>> {
+    fn counter_array_by_pid(counter: isize) -> Option<std::collections::HashMap<u32, f64>> {
         use windows::Win32::System::Performance::{
             PdhGetFormattedCounterArrayW, PDH_CSTATUS_VALID_DATA, PDH_FMT_COUNTERVALUE_ITEM_W,
             PDH_FMT_DOUBLE, PDH_MORE_DATA,
@@ -443,7 +441,7 @@ impl WindowsRealtimeCounters {
         }
 
         let items = unsafe { std::slice::from_raw_parts(ptr, item_count as usize) };
-        let mut out = HashMap::<u32, f64>::new();
+        let mut out = std::collections::HashMap::<u32, f64>::new();
         for item in items {
             if item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA {
                 continue;
@@ -479,7 +477,7 @@ impl WindowsRealtimeCounters {
         }
     }
 
-    fn sample_gpu_process_map(&mut self) -> Option<HashMap<u32, f64>> {
+    fn sample_gpu_process_map(&mut self) -> Option<std::collections::HashMap<u32, f64>> {
         use windows::Win32::System::Performance::PdhCollectQueryData;
 
         let status = unsafe { PdhCollectQueryData(self.query) };
@@ -528,7 +526,7 @@ pub fn gpu_utilisation() -> Option<f64> {
     gpu_pct
 }
 
-pub fn process_gpu_utilisation_by_pid() -> HashMap<u32, f64> {
+pub fn process_gpu_utilisation_by_pid() -> std::collections::HashMap<u32, f64> {
     #[cfg(target_os = "windows")]
     {
         let counters =
@@ -538,11 +536,11 @@ pub fn process_gpu_utilisation_by_pid() -> HashMap<u32, f64> {
                 return g.sample_gpu_process_map().unwrap_or_default();
             }
         }
-        HashMap::new()
+        std::collections::HashMap::new()
     }
     #[cfg(not(target_os = "windows"))]
     {
-        HashMap::new()
+        std::collections::HashMap::new()
     }
 }
 

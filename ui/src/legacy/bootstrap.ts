@@ -3252,9 +3252,17 @@ function buildSessionReportText() {
   lines.push('Impact processus (observe + attribution estimee)');
   lines.push('Processus suivis: ' + proc.process_count);
   lines.push('Cible courante: ' + (proc.selected_target?.target_label || 'N/A'));
+  if (proc.overhead_audit) {
+    lines.push(
+      'Overhead SoulKernel+WebView: CPU=' + Number(proc.overhead_audit.combined_cpu_usage_pct || 0).toFixed(1) +
+      '% | GPU=' + Number(proc.overhead_audit.combined_gpu_usage_pct || 0).toFixed(1) +
+      '% | RAM=' + ((Number(proc.overhead_audit.combined_memory_kb || 0)) / 1024).toFixed(0) +
+      ' MiB | W est.=' + (proc.overhead_audit.combined_estimated_power_w == null ? 'N/A' : Number(proc.overhead_audit.combined_estimated_power_w).toFixed(2))
+    );
+  }
   proc.top_contributors.slice(0, 10).forEach(p => {
     lines.push(
-      `- ${p.name} PID=${p.pid} | CPU=${Number(p.cpu_usage || 0).toFixed(1)}% | RAM=${((Number(p.memory_kb || 0)) / 1024).toFixed(0)} MiB | I/O=${Number((p.disk_read_bytes || 0) + (p.disk_written_bytes || 0)).toFixed(0)} B | impact est.=${p.impact_score_pct_estimated == null ? 'N/A' : Number(p.impact_score_pct_estimated).toFixed(2) + '%'} | W est.=${p.estimated_power_w == null ? 'N/A' : Number(p.estimated_power_w).toFixed(2)}`
+      `- ${p.name} PID=${p.pid} | CPU=${Number(p.cpu_usage || 0).toFixed(1)}% | GPU=${p.gpu_usage_pct == null ? 'N/A' : Number(p.gpu_usage_pct).toFixed(1) + '%'} | RAM=${((Number(p.memory_kb || 0)) / 1024).toFixed(0)} MiB | I/O=${Number((p.disk_read_bytes || 0) + (p.disk_written_bytes || 0)).toFixed(0)} B | impact est.=${p.impact_score_pct_estimated == null ? 'N/A' : Number(p.impact_score_pct_estimated).toFixed(2) + '%'} | W est.=${p.estimated_power_w == null ? 'N/A' : Number(p.estimated_power_w).toFixed(2)}`
     );
   });
   const logs = collectVisibleLogLines();
@@ -3299,11 +3307,19 @@ async function buildEvidencePackText() {
   }
   lines.push('');
   lines.push('=== Processus observes / attribution estimee ===');
-  lines.push('Methode: CPU/RAM/I/O sont lus par processus; la part energetique par processus reste une estimation ponderee sur la puissance machine mesuree.');
+  lines.push('Methode: CPU/GPU/RAM/I/O sont lus par processus selon disponibilite plateforme; la part energetique par processus reste une estimation ponderee sur la puissance machine mesuree.');
   lines.push('Processus suivis: ' + proc.process_count);
+  if (proc.overhead_audit) {
+    lines.push(
+      'Overhead SoulKernel+WebView: CPU=' + Number(proc.overhead_audit.combined_cpu_usage_pct || 0).toFixed(1) +
+      '% | GPU=' + Number(proc.overhead_audit.combined_gpu_usage_pct || 0).toFixed(1) +
+      '% | RAM=' + ((Number(proc.overhead_audit.combined_memory_kb || 0)) / 1024).toFixed(0) +
+      ' MiB | W est.=' + (proc.overhead_audit.combined_estimated_power_w == null ? 'N/A' : Number(proc.overhead_audit.combined_estimated_power_w).toFixed(2))
+    );
+  }
   proc.top_contributors.slice(0, 12).forEach(p => {
     lines.push(
-      `• ${p.name} (PID ${p.pid}) | CPU ${Number(p.cpu_usage || 0).toFixed(1)}% | RAM ${((Number(p.memory_kb || 0)) / 1024).toFixed(0)} MiB | impact est. ${p.impact_score_pct_estimated == null ? 'N/A' : Number(p.impact_score_pct_estimated).toFixed(2) + '%'} | puissance est. ${p.estimated_power_w == null ? 'N/A' : Number(p.estimated_power_w).toFixed(2) + ' W'}`
+      `• ${p.name} (PID ${p.pid}) | CPU ${Number(p.cpu_usage || 0).toFixed(1)}% | GPU ${p.gpu_usage_pct == null ? 'N/A' : Number(p.gpu_usage_pct).toFixed(1) + '%'} | RAM ${((Number(p.memory_kb || 0)) / 1024).toFixed(0)} MiB | impact est. ${p.impact_score_pct_estimated == null ? 'N/A' : Number(p.impact_score_pct_estimated).toFixed(2) + '%'} | puissance est. ${p.estimated_power_w == null ? 'N/A' : Number(p.estimated_power_w).toFixed(2) + ' W'}`
     );
   });
   lines.push('');

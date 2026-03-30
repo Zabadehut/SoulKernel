@@ -8,9 +8,9 @@
         <span class="pt-ico"><i data-lucide="badge-check"></i></span><span>Ce que vous pouvez défendre devant un tiers</span>
       </div>
       <div class="advisor-text" style="color:var(--text)">
-        <strong>1 — Mesures natives</strong> : CPU, RAM, GPU, I/O, parfois W.<br />
+        <strong>1 — Mesures natives</strong> : CPU, RAM, GPU global machine, I/O, parfois W.<br />
         <strong>2 — Rejouable</strong> : Benchmark A/B sur votre commande KPI.<br />
-        <strong>3 — Auditable</strong> : export JSON, snapshots, chemins de trace.
+        <strong>3 — Auditable</strong> : export JSON, snapshots, chemins de trace, et détail processus observé/estimé.
       </div>
       <div class="gains-actions" style="margin-top:.4rem">
         <button type="button" class="ctrl-btn btn-primary" id="btnCopyEvidence" style="font-size:.62rem;padding:.28rem .5rem"
