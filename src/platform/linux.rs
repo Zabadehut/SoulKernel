@@ -1017,7 +1017,27 @@ pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {
     let pct = percent.clamp(5, 60) as u64;
     let mut actions = Vec::new();
 
-    actions.push(ensure_zram_module_loaded());
+    let ensure = ensure_zram_module_loaded();
+    let ensure_ok = ensure.1;
+    actions.push(ensure);
+    if !ensure_ok {
+        actions.push((
+            "SoulRAM Linux backend unavailable: zRAM device could not be provisioned".into(),
+            false,
+        ));
+        return actions;
+    }
+
+    let ensure_dev = ensure_zram_device_node();
+    let ensure_dev_ok = ensure_dev.1;
+    actions.push(ensure_dev);
+    if !ensure_dev_ok {
+        actions.push((
+            "SoulRAM Linux backend unavailable: /dev/zram0 is missing".into(),
+            false,
+        ));
+        return actions;
+    }
 
     let Some((total_b, _)) = raw_system_memory() else {
         actions.push(("Cannot read total RAM to size zRAM".into(), false));
@@ -1025,14 +1045,34 @@ pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {
     };
 
     let target_b = (total_b.saturating_mul(pct) / 100).max(256 * 1024 * 1024);
-    actions.push(reset_zram_dev());
-    actions.push(write_zram_disksize(target_b));
-    actions.push(run_cmd("mkswap", &["/dev/zram0"], "mkswap /dev/zram0"));
-    actions.push(run_cmd(
-        "swapon",
-        &["-p", "100", "/dev/zram0"],
-        "swapon /dev/zram0",
-    ));
+    let reset = reset_zram_dev();
+    let reset_ok = reset.1;
+    actions.push(reset);
+    if !reset_ok {
+        return actions;
+    }
+
+    let disksize = write_zram_disksize(target_b);
+    let disksize_ok = disksize.1;
+    actions.push(disksize);
+    if !disksize_ok {
+        return actions;
+    }
+
+    let mkswap = run_cmd("mkswap", &["/dev/zram0"], "mkswap /dev/zram0");
+    let mkswap_ok = mkswap.1;
+    actions.push(mkswap);
+    if !mkswap_ok {
+        return actions;
+    }
+
+    let swapon = run_cmd("swapon", &["-p", "100", "/dev/zram0"], "swapon /dev/zram0");
+    let swapon_ok = swapon.1;
+    actions.push(swapon);
+    if !swapon_ok {
+        return actions;
+    }
+
     actions.push((
         format!(
             "SoulRAM active -> zRAM {} MB ({}%)",
@@ -1074,6 +1114,47 @@ fn ensure_zram_module_loaded() -> (String, bool) {
     }
 
     ("zRAM unavailable (need root/kernel support)".into(), false)
+}
+
+fn ensure_zram_device_node() -> (String, bool) {
+    if Path::new("/dev/zram0").exists() {
+        return ("/dev/zram0 ready".into(), true);
+    }
+
+    let Some(devnums) = std::fs::read_to_string("/sys/class/block/zram0/dev")
+        .ok()
+        .map(|s| s.trim().to_string())
+    else {
+        return (
+            "zRAM sysfs present but device numbers unavailable".into(),
+            false,
+        );
+    };
+
+    let mut parts = devnums.split(':');
+    let major = parts.next().unwrap_or_default().trim();
+    let minor = parts.next().unwrap_or_default().trim();
+    if major.is_empty() || minor.is_empty() {
+        return ("zRAM sysfs dev numbers malformed".into(), false);
+    }
+
+    if libc_getuid() != 0 {
+        return (
+            "zRAM device node missing (/dev/zram0) and root is required to create it".into(),
+            false,
+        );
+    }
+
+    let created = std::process::Command::new("mknod")
+        .args(["/dev/zram0", "b", major, minor])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if created && Path::new("/dev/zram0").exists() {
+        return ("zRAM device node created".into(), true);
+    }
+
+    ("zRAM device node creation failed".into(), false)
 }
 
 fn write_zram_disksize(size_b: u64) -> (String, bool) {

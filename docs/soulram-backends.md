@@ -25,6 +25,14 @@ SoulRAM designe une intention produit unique: reduire la pression memoire sans p
 2. Ajouter un mode de secours `zswap/quota` quand zRAM n'est pas disponible ou deja gere par la distribution.
 3. Relier PSI memoire, zRAM/zswap et cgroup v2 pour des decisions plus fines par charge.
 
+Provisionnement recommande:
+
+```bash
+sudo ./scripts/install-linux-soulram.sh
+```
+
+Voir aussi [linux-soulram-install.md](./linux-soulram-install.md).
+
 ### Windows
 
 1. Stabiliser l'audit `Memory Compression + WorkingSet Trim`.
