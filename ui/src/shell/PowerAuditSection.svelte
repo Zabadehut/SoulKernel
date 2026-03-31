@@ -2,7 +2,7 @@
   <div class="audit-mode-bar">
     <div class="audit-mode-copy">
       <div class="audit-mode-title">Mode de lecture</div>
-      <div class="audit-mode-sub">Audit brut pour la preuve, vue énergétique pour lire la puissance par couches.</div>
+      <div class="audit-mode-sub">Audit brut pour la preuve, vue énergétique pour lire usage observé, watts directs et parts estimées sans les confondre.</div>
     </div>
     <div class="view-switch audit-mode-switch">
       <button type="button" class="view-btn active" id="btnAuditShowRaw">
@@ -49,7 +49,7 @@
         <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem">
           <span class="pt-ico" style="color:var(--cpu)"><i data-lucide="server-cog"></i></span><span>Machine & OS</span>
         </div>
-        <div class="target-hint">Métriques natives observées de la machine entière et des sous-systèmes internes.</div>
+        <div class="target-hint">Métriques natives observées de la machine entière. Les W n’apparaissent que si la plateforme ou le matériel les expose réellement.</div>
         <div class="audit-grid-two" id="auditHostSubsystems"></div>
       </div>
 
@@ -57,7 +57,7 @@
         <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem">
           <span class="pt-ico" style="color:var(--gpu)"><i data-lucide="usb"></i></span><span>Sources externes & périphériques</span>
         </div>
-        <div class="target-hint">Source externe active ou absente, fraîcheur, bridge/config, et capteurs dérivés visibles à l’instant T.</div>
+        <div class="target-hint">Source externe active ou absente, fraîcheur, bridge/config, et niveau de preuve de la puissance disponible à l’instant T.</div>
         <div class="audit-grid-two" id="auditExternalSources"></div>
       </div>
     </div>
@@ -67,7 +67,7 @@
         <div class="advisor-title" style="display:flex;align-items:center;gap:.35rem">
           <span class="pt-ico" style="color:var(--mem)"><i data-lucide="cpu"></i></span><span>Processus & groupes</span>
         </div>
-        <div class="target-hint">Observé d’abord, estimé en second. Les groupes agrègent les familles réellement présentes sur la machine.</div>
+        <div class="target-hint">Observé d’abord, estimé en second. CPU/GPU/RAM/I/O sont lus nativement quand disponibles, les W par processus restent une attribution.</div>
         <div class="audit-list" id="auditProcessGroups"></div>
         <div class="audit-list" id="auditTopProcesses" style="margin-top:.55rem"></div>
       </div>

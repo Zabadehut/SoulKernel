@@ -2538,10 +2538,11 @@ function renderMetrics(m) {
   setBar('GPU', m.gpu, opt(m.raw.gpu_pct, v => v.toFixed(1)+'%'));
 
   // labels
-  document.getElementById('lCPU').textContent = `α_C=${WORKLOADS[state.wl][0]} · cpu=${m.raw.cpu_pct.toFixed(1)}%`;
-  document.getElementById('lMEM').textContent = `${(m.raw.mem_used_mb/1024).toFixed(1)}/${(m.raw.mem_total_mb/1024).toFixed(1)} GB`;
+  document.getElementById('lCPU').textContent = `α_C=${WORKLOADS[state.wl][0]} · ${formatEvidenceLabel('cpu')} · cpu=${m.raw.cpu_pct.toFixed(1)}%`;
+  document.getElementById('lMEM').textContent = `${formatEvidenceLabel('mem')} · ${(m.raw.mem_used_mb/1024).toFixed(1)}/${(m.raw.mem_total_mb/1024).toFixed(1)} GB`;
   document.getElementById('lIO').textContent  = (m.raw.io_read_mb_s != null && m.raw.io_write_mb_s != null)
-    ? `R:${m.raw.io_read_mb_s.toFixed(0)} W:${m.raw.io_write_mb_s.toFixed(0)} MB/s` : na;
+    ? `${formatEvidenceLabel('io')} · R:${m.raw.io_read_mb_s.toFixed(0)} W:${m.raw.io_write_mb_s.toFixed(0)} MB/s` : na;
+  document.getElementById('lGPU').textContent = `${formatEvidenceLabel('gpu', m.raw)} · ${m.raw.gpu_power_source || m.raw.platform || 'hôte global'}`;
 
   // sigma
   const sigmaFill = document.getElementById('sigmaFill');
@@ -2593,11 +2594,11 @@ function renderMetrics(m) {
   set('rawGpuCoreClock', opt(m.raw.gpu_core_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawGpuMemClock', opt(m.raw.gpu_mem_clock_mhz, v => v.toFixed(0)+' MHz'));
   set('rawGpuTemp',  opt(m.raw.gpu_temp_c, v => v.toFixed(1)+' C'));
-  set('rawGpuPower', opt(m.raw.gpu_power_watts, v => v.toFixed(1)+' W'));
+  set('rawGpuPower', opt(m.raw.gpu_power_watts, v => v.toFixed(1)+' W · '+formatEvidenceLabel('gpu_power', m.raw)));
   set('rawGpuVram',  (m.raw.gpu_mem_used_mb != null && m.raw.gpu_mem_total_mb != null)
     ? `${Number(m.raw.gpu_mem_used_mb)} / ${Number(m.raw.gpu_mem_total_mb)} MiB`
     : na);
-  set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W'));
+  set('rawPowerW',   opt(m.raw.power_watts, v => v.toFixed(1)+' W · '+formatEvidenceLabel('machine_power', m.raw)));
   set('rawWebviewCpu', (m.raw.webview_host_cpu_sum != null && m.raw.webview_host_cpu_sum !== undefined)
     ? (Number(m.raw.webview_host_cpu_sum).toFixed(1) + ' Σ%')
     : na);
@@ -3237,10 +3238,33 @@ function formatAuditHours(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)} h`;
 }
 
+function formatEvidenceLabel(kind, raw = null) {
+  if (kind === 'gpu_power') {
+    const confidence = String(raw?.gpu_power_confidence || '').trim().toLowerCase();
+    if (confidence === 'direct_measured') return 'W directs mesurés';
+    if (confidence === 'derived_measured') return 'W plateforme mesurés';
+    if (confidence === 'reconciled_estimated') return 'W réconciliés estimés';
+    if (confidence === 'activity_only') return 'usage observé';
+    return 'source inconnue';
+  }
+  if (kind === 'machine_power') {
+    return raw?.power_watts != null ? 'W machine mesurés' : 'W machine indisponibles';
+  }
+  if (kind === 'cpu') return 'usage observé';
+  if (kind === 'mem') return 'occupation observée';
+  if (kind === 'io') return 'activité observée';
+  if (kind === 'gpu') {
+    if (raw?.gpu_power_watts != null) return formatEvidenceLabel('gpu_power', raw);
+    if (raw?.gpu_pct != null) return 'usage observé';
+    return 'indisponible';
+  }
+  return 'observé';
+}
+
 function formatGpuAuditSource(raw) {
   const parts = [];
   if (raw && raw.gpu_power_source) parts.push(String(raw.gpu_power_source));
-  if (raw && raw.gpu_power_confidence) parts.push(String(raw.gpu_power_confidence));
+  if (raw && raw.gpu_power_confidence) parts.push(formatEvidenceLabel('gpu_power', raw));
   return parts.length ? parts.join(' · ') : '';
 }
 
@@ -3573,12 +3597,12 @@ function renderPowerAuditSection() {
       {
         title: 'CPU',
         strong: `${formatAuditPct(raw.cpu_pct)} · ${raw.cpu_clock_mhz != null ? `${Number(raw.cpu_clock_mhz).toFixed(0)} MHz` : 'clock —'}`,
-        meta: `Temp ${raw.cpu_temp_c != null ? `${Number(raw.cpu_temp_c).toFixed(1)} C` : '—'} · max ${raw.cpu_max_clock_mhz != null ? `${Number(raw.cpu_max_clock_mhz).toFixed(0)} MHz` : '—'}`,
+        meta: `${formatEvidenceLabel('cpu')} · Temp ${raw.cpu_temp_c != null ? `${Number(raw.cpu_temp_c).toFixed(1)} C` : '—'} · max ${raw.cpu_max_clock_mhz != null ? `${Number(raw.cpu_max_clock_mhz).toFixed(0)} MHz` : '—'}`,
       },
       {
         title: 'RAM / swap',
         strong: `${raw.mem_used_mb != null && raw.mem_total_mb != null ? `${(Number(raw.mem_used_mb) / 1024).toFixed(1)} / ${(Number(raw.mem_total_mb) / 1024).toFixed(1)} GiB` : '—'}`,
-        meta: `Swap ${raw.swap_used_mb != null && raw.swap_total_mb != null ? `${Number(raw.swap_used_mb).toFixed(0)} / ${Number(raw.swap_total_mb).toFixed(0)} MiB` : '—'} · zRAM ${formatAuditMiB(raw.zram_used_mb)}`,
+        meta: `${formatEvidenceLabel('mem')} · Swap ${raw.swap_used_mb != null && raw.swap_total_mb != null ? `${Number(raw.swap_used_mb).toFixed(0)} / ${Number(raw.swap_total_mb).toFixed(0)} MiB` : '—'} · zRAM ${formatAuditMiB(raw.zram_used_mb)}`,
       },
       {
         title: 'GPU global',
@@ -3588,7 +3612,7 @@ function renderPowerAuditSection() {
       {
         title: 'I/O & pression',
         strong: `${raw.io_read_mb_s != null || raw.io_write_mb_s != null ? `R ${Number(raw.io_read_mb_s || 0).toFixed(2)} / W ${Number(raw.io_write_mb_s || 0).toFixed(2)} MB/s` : '—'}`,
-        meta: `PSI CPU ${formatAuditPct(raw.psi_cpu != null ? Number(raw.psi_cpu) * 100 : null)} · PSI MEM ${formatAuditPct(raw.psi_mem != null ? Number(raw.psi_mem) * 100 : null)}`,
+        meta: `${formatEvidenceLabel('io')} · PSI CPU ${formatAuditPct(raw.psi_cpu != null ? Number(raw.psi_cpu) * 100 : null)} · PSI MEM ${formatAuditPct(raw.psi_mem != null ? Number(raw.psi_mem) * 100 : null)}`,
       },
       {
         title: 'Charge OS',
@@ -3598,7 +3622,7 @@ function renderPowerAuditSection() {
       {
         title: 'WebView host',
         strong: `${formatAuditPct(raw.webview_host_cpu_sum)} · ${formatAuditMiB(raw.webview_host_mem_mb)}`,
-        meta: `Mesure host agrégée des processus WebView exposés par la plateforme`,
+        meta: `Agrégat observé des processus WebView exposés par la plateforme`,
       },
     ];
     hostEl.innerHTML = cards.map((item) => (

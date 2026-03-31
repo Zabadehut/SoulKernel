@@ -5,7 +5,8 @@
   </div>
   <div class="target-hint compactable-copy" style="margin:-.35rem 0 .6rem;max-width:32rem">
     Ici: <strong>machine globale</strong>. Les compteurs CPU/RAM/GPU/I/O ci-dessous décrivent l’hôte entier.
-    Le détail <strong>par processus</strong> est dans <strong>Impact processus</strong>.
+    <strong>% / GiB / MB/s</strong> = usage observé. Les <strong>W</strong> ne sont affichés que si une source
+    plateforme ou matérielle fiable existe. Le détail <strong>par processus</strong> est dans <strong>Impact processus</strong>.
   </div>
 
   <div class="resource-item">
@@ -19,7 +20,7 @@
       <span class="res-val" style="color:var(--cpu)" id="vCPU">—</span>
     </div>
     <div class="bar-track"><div class="bar-fill bar-cpu" id="bCPU" style="width:0"></div></div>
-    <div class="res-label" id="lCPU">α<sub>C</sub> — polling…</div>
+    <div class="res-label" id="lCPU">usage observé · polling…</div>
   </div>
 
   <div class="resource-item">
@@ -33,7 +34,7 @@
       <span class="res-val" style="color:var(--mem)" id="vMEM">—</span>
     </div>
     <div class="bar-track"><div class="bar-fill bar-mem" id="bMEM" style="width:0"></div></div>
-    <div class="res-label" id="lMEM">polling…</div>
+    <div class="res-label" id="lMEM">occupation observée · polling…</div>
   </div>
 
   <div class="resource-item">
@@ -61,7 +62,7 @@
       <span class="res-val" style="color:var(--gpu)" id="vIO">—</span>
     </div>
     <div class="bar-track"><div class="bar-fill bar-io" id="bIO" style="width:0"></div></div>
-    <div class="res-label" id="lIO">polling…</div>
+    <div class="res-label" id="lIO">activité observée · polling…</div>
   </div>
 
   <div class="resource-item">
@@ -75,7 +76,7 @@
       <span class="res-val" style="color:#ff6b6b" id="vGPU">—</span>
     </div>
     <div class="bar-track"><div class="bar-fill bar-gpu" id="bGPU" style="width:0"></div></div>
-    <div class="res-label" id="lGPU">IOKit / sysfs / DXGI · hôte global</div>
+    <div class="res-label" id="lGPU">charge observée · W directs seulement si disponibles</div>
   </div>
 
   <details
@@ -111,7 +112,7 @@
         <div class="raw-cell"><div class="raw-label">GPU temp</div><div class="raw-val" id="rawGpuTemp">—</div></div>
         <div class="raw-cell"><div class="raw-label">GPU power</div><div class="raw-val" id="rawGpuPower">—</div></div>
         <div class="raw-cell"><div class="raw-label">VRAM used/total</div><div class="raw-val" id="rawGpuVram">—</div></div>
-        <div class="raw-cell"><div class="raw-label">Power (W)</div><div class="raw-val" id="rawPowerW">—</div></div>
+        <div class="raw-cell"><div class="raw-label">Power machine</div><div class="raw-val" id="rawPowerW">—</div></div>
         <div class="raw-cell"><div class="raw-label">Opt real (A/B)</div><div class="raw-val" id="rawOptReal">—</div></div>
         <div class="raw-cell"><div class="raw-label">RAM·GB·H (tel.)</div><div class="raw-val" id="rawMemGbHTel">—</div></div>
         <div class="raw-cell"><div class="raw-label">Energy total</div><div class="raw-val" id="rawEnergyTotal">—</div></div>
