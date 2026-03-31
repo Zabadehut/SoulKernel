@@ -35,6 +35,26 @@ use hud::{
     HudOverlayData, HudRuntimeState, SharedHud, SharedHudData, SharedHudHealth, SharedHudTx,
 };
 
+#[derive(Clone, serde::Serialize)]
+pub struct DeviceInventoryItem {
+    pub kind: String,
+    pub name: String,
+    pub detail: Option<String>,
+    pub status: Option<String>,
+    pub evidence: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct DeviceInventoryReport {
+    pub platform: String,
+    pub displays: Vec<DeviceInventoryItem>,
+    pub gpus: Vec<DeviceInventoryItem>,
+    pub storage: Vec<DeviceInventoryItem>,
+    pub network: Vec<DeviceInventoryItem>,
+    pub power: Vec<DeviceInventoryItem>,
+    pub platform_features: Vec<String>,
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 pub struct SoulKernelState {
@@ -1189,6 +1209,148 @@ fn platform_info() -> platform::PlatformInfo {
 }
 
 #[tauri::command]
+fn get_device_inventory(app: AppHandle) -> Result<DeviceInventoryReport, String> {
+    let platform = platform::info();
+    let raw = metrics::collect().ok().map(|m| m.raw);
+
+    let app2 = app.clone();
+    let displays = hud::dispatch_on_main_thread(&app, move || hud::list_displays_internal(&app2))
+        .unwrap_or_else(|_| Ok(Vec::new()))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|display| DeviceInventoryItem {
+            kind: "display".to_string(),
+            name: display.name,
+            detail: Some(format!(
+                "{}x{} · scale {:.2} · pos {}:{}",
+                display.width, display.height, display.scale_factor, display.x, display.y
+            )),
+            status: Some(if display.is_primary {
+                "primary".to_string()
+            } else {
+                "active".to_string()
+            }),
+            evidence: "platform_detected".to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    let gpus = raw
+        .as_ref()
+        .map(|raw| {
+            if !raw.gpu_devices.is_empty() {
+                raw.gpu_devices
+                    .iter()
+                    .map(|gpu| DeviceInventoryItem {
+                        kind: "gpu".to_string(),
+                        name: gpu
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| format!("GPU {}", gpu.index)),
+                        detail: Some(format!(
+                            "{} · util {} · power {}",
+                            gpu.vendor.clone().unwrap_or_else(|| "vendor —".to_string()),
+                            gpu.utilization_pct
+                                .map(|v| format!("{v:.1} %"))
+                                .unwrap_or_else(|| "—".to_string()),
+                            gpu.power_watts
+                                .map(|v| format!("{v:.1} W"))
+                                .unwrap_or_else(|| "—".to_string())
+                        )),
+                        status: gpu.kind.clone(),
+                        evidence: gpu
+                            .confidence
+                            .clone()
+                            .unwrap_or_else(|| "observed_usage".to_string()),
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let storage = disks
+        .list()
+        .iter()
+        .map(|disk| DeviceInventoryItem {
+            kind: "storage".to_string(),
+            name: disk.name().to_string_lossy().to_string(),
+            detail: Some(format!(
+                "{} · {} / {} GiB",
+                String::from_utf8_lossy(disk.file_system()),
+                ((disk.total_space().saturating_sub(disk.available_space())) as f64
+                    / 1024.0
+                    / 1024.0
+                    / 1024.0)
+                    .round(),
+                (disk.total_space() as f64 / 1024.0 / 1024.0 / 1024.0).round()
+            )),
+            status: Some(format!("{:?}", disk.kind()).to_lowercase()),
+            evidence: "platform_detected".to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let network = networks
+        .iter()
+        .map(|(name, data)| DeviceInventoryItem {
+            kind: "network".to_string(),
+            name: name.to_string(),
+            detail: Some(format!(
+                "rx {} B · tx {} B",
+                data.received(),
+                data.transmitted()
+            )),
+            status: Some("detected".to_string()),
+            evidence: "platform_detected".to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut power = Vec::new();
+    if let Some(raw) = raw.as_ref() {
+        if let Some(source) = raw.power_watts_source.clone() {
+            power.push(DeviceInventoryItem {
+                kind: "power_source".to_string(),
+                name: source,
+                detail: raw
+                    .power_watts
+                    .map(|v| format!("{v:.2} W machine"))
+                    .or_else(|| Some("W machine indisponibles".to_string())),
+                status: Some("active".to_string()),
+                evidence: "platform_measured".to_string(),
+            });
+        }
+        if let Some(on_battery) = raw.on_battery {
+            power.push(DeviceInventoryItem {
+                kind: "power_mode".to_string(),
+                name: if on_battery {
+                    "battery".to_string()
+                } else {
+                    "ac".to_string()
+                },
+                detail: raw
+                    .battery_percent
+                    .map(|v| format!("{v:.0} %"))
+                    .or_else(|| Some("niveau inconnu".to_string())),
+                status: Some("detected".to_string()),
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+
+    Ok(DeviceInventoryReport {
+        platform: platform.os,
+        displays,
+        gpus,
+        storage,
+        network,
+        power,
+        platform_features: platform.features,
+    })
+}
+
+#[tauri::command]
 fn list_workload_scenes() -> Vec<workload_catalog::WorkloadSceneDto> {
     workload_catalog::list_scenes_for_ui()
 }
@@ -2162,6 +2324,7 @@ fn main() {
             activate_dome,
             rollback_dome,
             platform_info,
+            get_device_inventory,
             list_workload_scenes,
             get_snapshot_before_dome,
             export_gains_to_file,

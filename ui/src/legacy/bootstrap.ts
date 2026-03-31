@@ -410,6 +410,7 @@ let state = {
   auditLogPath: null,
   naLabel: 'N/A',
   telemetrySummary: null,
+  deviceInventory: null,
   lastTelemetryIngestTs: 0,
   lastTelemetryRefreshTs: 0,
   viewMode: 'detailed',
@@ -2771,6 +2772,11 @@ async function loadPlatformInfo() {
   const badge = document.getElementById('platformBadge');
   try {
     const info = await invoke('platform_info');
+    try {
+      state.deviceInventory = await invoke('get_device_inventory');
+    } catch (_) {
+      state.deviceInventory = null;
+    }
     if (!badge) return;
     if (hasTauri) {
       badge.textContent = info.os + ' · ' + info.kernel;
@@ -2790,7 +2796,9 @@ async function loadPlatformInfo() {
       });
     }
     log(`Platform: ${info.os} · cgroups-v2:${info.has_cgroups_v2} · zRAM:${info.has_zram} · root:${info.is_root}`, 'ok');
+    if (isPowerAuditViewVisible()) renderPowerAuditSection();
   } catch(e) {
+    state.deviceInventory = null;
     if (badge) {
       badge.textContent = hasTauri ? 'Connected' : 'Hors Tauri — lancez l\'app native';
       badge.title = hasTauri ? '' : 'Ouvrez via cargo tauri dev pour les métriques réelles.';
@@ -3053,6 +3061,7 @@ function collectRawHostMetricsExport() {
       exported_at: new Date().toISOString(),
       available: false,
       platform: null,
+      device_inventory: state.deviceInventory || null,
       observed_metric_count: 0,
       observed_metric_keys: [],
       normalized: null,
@@ -3098,6 +3107,7 @@ function collectRawHostMetricsExport() {
     exported_at: new Date().toISOString(),
     available: true,
     platform: raw.platform || null,
+    device_inventory: state.deviceInventory || null,
     observed_metric_count: observedPairs.length,
     observed_metric_keys: observedPairs.map(([key]) => key),
     normalized: {
@@ -3643,6 +3653,28 @@ function renderPowerAuditSection() {
     externalEl.innerHTML = items.map((item) => (
       `<div class="audit-item"><div class="audit-item-title">${escapeHtml(item.title)}</div><div class="audit-item-meta audit-item-strong">${escapeHtml(item.strong)}</div><div class="audit-item-meta">${escapeHtml(item.meta)}</div></div>`
     )).join('');
+  }
+
+  const detectedDevicesEl = document.getElementById('auditDetectedDevices');
+  if (detectedDevicesEl) {
+    const inv = state.deviceInventory || {};
+    const sections = [
+      ...(Array.isArray(inv.power) ? inv.power : []),
+      ...(Array.isArray(inv.displays) ? inv.displays : []),
+      ...(Array.isArray(inv.gpus) ? inv.gpus : []),
+      ...(Array.isArray(inv.storage) ? inv.storage : []),
+      ...(Array.isArray(inv.network) ? inv.network : []),
+    ];
+    if (!sections.length) {
+      detectedDevicesEl.innerHTML = '<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Aucun périphérique ou composant supplémentaire détecté à ce niveau.</div></div>';
+    } else {
+      detectedDevicesEl.innerHTML = [
+        `<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Écrans, GPU, stockage, réseau et contexte énergie réellement exposés par la plateforme. Pas de watts inventés par périphérique.</div></div>`,
+        ...sections.slice(0, 16).map((item) => (
+          `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'device')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'device')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')}</div></div>`
+        )),
+      ].join('');
+    }
   }
 
   const groupsEl = document.getElementById('auditProcessGroups');
@@ -5201,6 +5233,15 @@ function fallbackInvoke(cmd, args) {
     os: 'Hors Tauri', kernel: 'lancez l\'app native',
     features: ['pas de métriques réelles'],
     has_cgroups_v2: false, has_zram: false, has_gpu_sysfs: false, is_root: false
+  });
+  if (cmd === 'get_device_inventory') return Promise.resolve({
+    platform: 'web',
+    displays: [],
+    gpus: [],
+    storage: [],
+    network: [],
+    power: [],
+    platform_features: ['pas de backend natif'],
   });
   if (cmd === 'list_processes') return Promise.resolve({ processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], overhead_audit: null, summary: null });
   if (cmd === 'list_displays') return Promise.resolve([{ index: 0, name: 'Primary', width: 1920, height: 1080, x: 0, y: 0, scale_factor: 1.0, is_primary: true }]);

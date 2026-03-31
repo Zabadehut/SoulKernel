@@ -59,6 +59,7 @@
         </div>
         <div class="target-hint">Source externe active ou absente, fraîcheur, bridge/config, et niveau de preuve de la puissance disponible à l’instant T.</div>
         <div class="audit-grid-two" id="auditExternalSources"></div>
+        <div class="audit-list" id="auditDetectedDevices" style="margin-top:.55rem"></div>
       </div>
     </div>
 
