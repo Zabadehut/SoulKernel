@@ -448,6 +448,10 @@ const POLL_HIDDEN_MS = 15000;
 const POLL_UI_IDLE_MS = 5000;
 const METRICS_AUDIT_MS = 10000;
 const UI_IDLE_SLEEP_AFTER_MS = 45000;
+const MAIN_UI_RENDER_ACTIVE_MS = 2500;
+const MAIN_UI_RENDER_IDLE_MS = 8000;
+const TELEMETRY_REFRESH_ACTIVE_MS = 30000;
+const TELEMETRY_REFRESH_IDLE_MS = 60000;
 let pollInFlight = false;
 let pollTimer = null;
 let clockIntervalId = null;
@@ -459,6 +463,7 @@ let pendingUiMetric = null;
 let uiFrameScheduled = false;
 let lastMetricsAuditTs = 0;
 let lastRenderedMetricKey = null;
+let lastMainUiRenderTs = 0;
 
 // Polling loop (adaptive + low-overhead)
 
@@ -512,6 +517,16 @@ function isProcessImpactPanelVisible() {
   return shouldKeepMainUiHot() && isElementActuallyVisible(document.querySelector('.process-impact-card'));
 }
 
+function isProofPanelVisible() {
+  return shouldKeepMainUiHot() && isElementActuallyVisible(document.getElementById('proofPanel'));
+}
+
+function nextMainUiRenderDelayMs() {
+  if (!shouldKeepMainUiHot()) return MAIN_UI_RENDER_IDLE_MS;
+  if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return MAIN_UI_RENDER_ACTIVE_MS;
+  return MAIN_UI_RENDER_IDLE_MS;
+}
+
 function scheduleNextPoll() {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = setTimeout(poll, nextPollDelayMs());
@@ -551,10 +566,14 @@ function scheduleMetricRender(m) {
     lastRenderedMetricKey = renderKey;
     const keepMainUiHot = shouldKeepMainUiHot();
     if (keepMainUiHot) {
-      renderMetrics(mm);
-      renderFormula(mm);
-      renderTuningAdvice(mm);
-      if (state.domeActive || state.snapshotBefore) renderProofPanel();
+      const now = Date.now();
+      if ((now - lastMainUiRenderTs) >= nextMainUiRenderDelayMs()) {
+        lastMainUiRenderTs = now;
+        renderMetrics(mm);
+        renderFormula(mm);
+        renderTuningAdvice(mm);
+        if ((state.domeActive || state.snapshotBefore) && isProofPanelVisible()) renderProofPanel();
+      }
     }
     if (state.hudVisible || HUD_ONLY) renderCompactHud(mm);
   });
@@ -1231,12 +1250,13 @@ function renderGreenItPanel(s) {
 async function refreshTelemetrySummary(force = false) {
   if (!hasTauri) return;
   const now = Date.now();
-  const minDelay = shouldSleepWebview() ? 30000 : 10000;
+  const minDelay = shouldKeepMainUiHot() ? TELEMETRY_REFRESH_ACTIVE_MS : TELEMETRY_REFRESH_IDLE_MS;
   if (!force && (now - state.lastTelemetryRefreshTs < minDelay)) return;
   state.lastTelemetryRefreshTs = now;
   try {
     const s = await invoke('get_telemetry_summary');
-    renderTelemetrySummary(s);
+    if (force || shouldKeepMainUiHot() || state.hudVisible || HUD_ONLY) renderTelemetrySummary(s);
+    else state.telemetrySummary = s;
   } catch (_) {}
 }
 
@@ -4558,6 +4578,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('focus', () => {
     state.windowFocused = true;
     state.lastUserInteractionTs = Date.now();
+    lastMainUiRenderTs = 0;
     scheduleNextPoll();
     startProcessRefreshLoop();
   });
@@ -4579,6 +4600,7 @@ if (typeof window !== 'undefined') {
       startClockLoop();
       startProcessRefreshLoop();
       if (state.lastMetrics) {
+        lastMainUiRenderTs = 0;
         lastRenderedMetricKey = null;
         scheduleMetricRender(state.lastMetrics);
       }
