@@ -1113,6 +1113,38 @@ function renderTelemetrySummary(s) {
   const ccy = s.pricing?.currency || 'EUR';
   const f = v => (v == null ? 'N/A' : Number(v).toFixed(3));
   const fmtEnergy = (w, key) => (w?.has_power_data ? `${f(w?.[key])}` : 'N/A');
+  const powerSource = String(s.power_source || '').trim();
+  const sourceModeEl = document.getElementById('greenItSourceMode');
+  const sourceHintEl = document.getElementById('greenItSourceHint');
+  const sourcePresentation = (() => {
+    if (powerSource === 'meross_wall') {
+      return {
+        badge: 'PRISE (mur)',
+        mode: 'Source énergie active : prise murale réelle',
+        hint: 'Référence secteur active. Les W / kWh / € / CO2 proviennent de la mesure murale quand la donnée reste fraîche.',
+        color: 'var(--io)',
+      };
+    }
+    if (powerSource === 'rapl' || powerSource === 'windows_meter' || powerSource === 'battery') {
+      const label = powerSource === 'windows_meter'
+        ? 'INTERNE (Windows)'
+        : powerSource === 'battery'
+          ? 'INTERNE (batterie)'
+          : 'INTERNE (machine)';
+      return {
+        badge: label,
+        mode: 'Source énergie active : télémétrie interne machine',
+        hint: 'Prise externe absente ou inactive : SoulKernel continue avec la source interne disponible sur cet OS.',
+        color: 'var(--cpu)',
+      };
+    }
+    return {
+      badge: powerSource || 'DIFFÉRENTIEL',
+      mode: 'Source énergie active : mode différentiel / watts absents',
+      hint: 'Aucune source watts exploitable actuellement. L’orchestration continue avec CPU / RAM / GPU / I/O observés et les différentiels mesurés.',
+      color: 'var(--gpu)',
+    };
+  })();
   const gain = s.total?.kpi_gain_median_pct;
   set('rawOptReal', gain == null ? 'N/A' : gain.toFixed(2) + '%');
   const mgb = s.total?.mem_gb_hours_differential;
@@ -1130,10 +1162,16 @@ function renderTelemetrySummary(s) {
 
   const status = document.getElementById('energyPricingStatus');
   if (status) {
-    const sensor = s.total?.has_power_data ? 'capteur puissance: detecte' : 'capteur puissance: indisponible';
+    const sensor = s.total?.has_power_data ? sourcePresentation.mode : 'Source énergie active : mode différentiel / watts absents';
     status.textContent = 'Tarif actif: ' + f(s.pricing?.price_per_kwh) + ' ' + ccy + '/kWh | CO2: ' + f(s.pricing?.co2_kg_per_kwh) + ' kg/kWh | ' + sensor;
-    status.style.color = s.total?.has_power_data ? 'var(--io)' : 'var(--gpu)';
+    status.style.color = sourcePresentation.color;
   }
+  set('greenItSource', sourcePresentation.badge);
+  if (sourceModeEl) {
+    sourceModeEl.textContent = sourcePresentation.mode;
+    sourceModeEl.style.color = sourcePresentation.color;
+  }
+  if (sourceHintEl) sourceHintEl.textContent = sourcePresentation.hint;
 
   // ── GREEN IT panel ──────────────────────────────────────────────────────
   renderGreenItPanel(s);
@@ -1179,15 +1217,6 @@ function renderGreenItPanel(s) {
   const f3 = v => (v == null ? '0' : Number(v).toFixed(3));
 
   // Source badge
-  const srcMap = {
-    rapl: 'RAPL',
-    battery: 'BATTERIE',
-    cpu_differential: 'CPU DELTA',
-    meross_wall: 'PRISE (mur)',
-    windows_meter: 'WINDOWS',
-  };
-  set('greenItSource', srcMap[s.power_source] || s.power_source || '--');
-
   // Main stats
   set('greenCpuH', f2(lt.total_cpu_hours_differential));
   set('greenMemGh', f2(lt.total_mem_gb_hours_differential ?? 0));

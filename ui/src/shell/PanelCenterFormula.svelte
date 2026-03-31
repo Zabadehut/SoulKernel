@@ -87,6 +87,10 @@
       <span class="pt-ico" style="color:var(--io)"><i data-lucide="leaf"></i></span><span>GREEN IT · IMPACT</span
       ><span class="green-it-source" id="greenItSource">—</span>
     </div>
+    <div class="green-it-hint compactable-copy" style="margin:.15rem 0 .45rem;font-size:.74rem;line-height:1.35;max-width:42rem">
+      <strong id="greenItSourceMode">Source énergie active : —</strong>
+      <span id="greenItSourceHint" style="display:block;margin-top:.15rem;color:var(--muted)">SoulKernel continue proprement même sans prise externe.</span>
+    </div>
     <div class="green-it-grid">
       <div class="green-it-stat">
         <div class="green-it-val" id="greenCpuH">0</div>
