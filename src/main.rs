@@ -1459,7 +1459,7 @@ fn get_device_inventory(app: AppHandle) -> Result<DeviceInventoryReport, String>
             name: disk.name().to_string_lossy().to_string(),
             detail: Some(format!(
                 "{} · {} / {} GiB",
-                String::from_utf8_lossy(disk.file_system()),
+                disk.file_system().to_string_lossy(),
                 ((disk.total_space().saturating_sub(disk.available_space())) as f64
                     / 1024.0
                     / 1024.0
