@@ -526,6 +526,36 @@ pub fn gpu_utilisation() -> Option<f64> {
     gpu_pct
 }
 
+pub fn gpu_devices(gpu_pct_fallback: Option<f64>) -> Vec<crate::metrics::GpuDeviceMetrics> {
+    let mut devices = query_nvidia_gpu_metrics();
+    if devices.is_empty() {
+        devices = query_windows_gpu_inventory();
+        if let Some(first) = devices.get_mut(0) {
+            first.utilization_pct = gpu_pct_fallback;
+            first.source = gpu_pct_fallback.map(|_| "pdh_gpu_engine".to_string());
+            first.confidence = gpu_pct_fallback.map(|_| "activity_only".to_string());
+        }
+    }
+    if devices.is_empty() && gpu_pct_fallback.is_some() {
+        devices.push(crate::metrics::GpuDeviceMetrics {
+            index: 0,
+            name: Some("Windows GPU".to_string()),
+            vendor: None,
+            kind: Some("unknown".to_string()),
+            utilization_pct: gpu_pct_fallback,
+            power_watts: None,
+            memory_used_mb: None,
+            memory_total_mb: None,
+            core_clock_mhz: None,
+            mem_clock_mhz: None,
+            temperature_c: None,
+            source: Some("pdh_gpu_engine".to_string()),
+            confidence: Some("activity_only".to_string()),
+        });
+    }
+    devices
+}
+
 pub fn process_gpu_utilisation_by_pid() -> std::collections::HashMap<u32, f64> {
     #[cfg(target_os = "windows")]
     {
@@ -574,6 +604,154 @@ fn query_windows_numeric_lines(program: &str, args: &[&str]) -> Option<Vec<f64>>
     {
         let _ = (program, args);
         None
+    }
+}
+
+fn query_windows_gpu_inventory() -> Vec<crate::metrics::GpuDeviceMetrics> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = command_hidden("wmic")
+            .args([
+                "path",
+                "win32_VideoController",
+                "get",
+                "Name,AdapterCompatibility",
+                "/format:csv",
+            ])
+            .output()
+            .ok();
+        let Some(out) = out else {
+            return Vec::new();
+        };
+        if !out.status.success() {
+            return Vec::new();
+        }
+        let Ok(txt) = String::from_utf8(out.stdout) else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        for (idx, line) in txt.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("Node,") {
+                continue;
+            }
+            let cols: Vec<&str> = line.split(',').collect();
+            if cols.len() < 3 {
+                continue;
+            }
+            let vendor = normalize_windows_gpu_vendor(cols[1]);
+            let name = cols[2].trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            rows.push(crate::metrics::GpuDeviceMetrics {
+                index: idx as u32,
+                name: Some(name),
+                vendor,
+                kind: Some("unknown".to_string()),
+                utilization_pct: None,
+                power_watts: None,
+                memory_used_mb: None,
+                memory_total_mb: None,
+                core_clock_mhz: None,
+                mem_clock_mhz: None,
+                temperature_c: None,
+                source: None,
+                confidence: None,
+            });
+        }
+        rows
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
+fn query_nvidia_gpu_metrics() -> Vec<crate::metrics::GpuDeviceMetrics> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = command_hidden("nvidia-smi")
+            .args([
+                "--query-gpu=name,utilization.gpu,power.draw,memory.used,memory.total,temperature.gpu,clocks.current.graphics,clocks.current.memory",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+            .ok();
+        let Some(out) = out else {
+            return Vec::new();
+        };
+        if !out.status.success() {
+            return Vec::new();
+        }
+        let Ok(txt) = String::from_utf8(out.stdout) else {
+            return Vec::new();
+        };
+        txt.lines()
+            .enumerate()
+            .filter_map(|(idx, line)| parse_nvidia_smi_gpu_line(idx as u32, line))
+            .collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
+fn parse_nvidia_smi_gpu_line(index: u32, line: &str) -> Option<crate::metrics::GpuDeviceMetrics> {
+    let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+    if cols.is_empty() {
+        return None;
+    }
+    let parse_f64 = |v: Option<&&str>| v.and_then(|s| s.parse::<f64>().ok());
+    let parse_u64 = |v: Option<&&str>| v.and_then(|s| s.parse::<u64>().ok());
+    let name = cols
+        .first()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    let power_watts = parse_f64(cols.get(2));
+    let utilization_pct = parse_f64(cols.get(1));
+    Some(crate::metrics::GpuDeviceMetrics {
+        index,
+        name,
+        vendor: Some("nvidia".to_string()),
+        kind: Some("discrete".to_string()),
+        utilization_pct,
+        power_watts,
+        memory_used_mb: parse_u64(cols.get(3)),
+        memory_total_mb: parse_u64(cols.get(4)),
+        temperature_c: parse_f64(cols.get(5)),
+        core_clock_mhz: parse_f64(cols.get(6)),
+        mem_clock_mhz: parse_f64(cols.get(7)),
+        source: Some("nvml".to_string()),
+        confidence: Some(
+            if power_watts.is_some() {
+                "direct_measured"
+            } else if utilization_pct.is_some() {
+                "activity_only"
+            } else {
+                "unavailable"
+            }
+            .to_string(),
+        ),
+    })
+}
+
+fn normalize_windows_gpu_vendor(value: &str) -> Option<String> {
+    let lower = value.trim().to_ascii_lowercase();
+    if lower.contains("nvidia") {
+        Some("nvidia".to_string())
+    } else if lower.contains("advanced micro devices")
+        || lower.contains("amd")
+        || lower.contains("radeon")
+    {
+        Some("amd".to_string())
+    } else if lower.contains("intel") {
+        Some("intel".to_string())
+    } else if lower.is_empty() {
+        None
+    } else {
+        Some(lower)
     }
 }
 // ─── Win32 write primitives ───────────────────────────────────────────────────

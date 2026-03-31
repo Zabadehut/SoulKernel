@@ -3071,8 +3071,11 @@ function collectRawHostMetricsExport() {
     ['gpu_mem_clock_mhz', raw.gpu_mem_clock_mhz],
     ['gpu_temp_c', raw.gpu_temp_c],
     ['gpu_power_watts', raw.gpu_power_watts],
+    ['gpu_power_source', raw.gpu_power_source],
+    ['gpu_power_confidence', raw.gpu_power_confidence],
     ['gpu_mem_used_mb', raw.gpu_mem_used_mb],
     ['gpu_mem_total_mb', raw.gpu_mem_total_mb],
+    ['gpu_devices', Array.isArray(raw.gpu_devices) && raw.gpu_devices.length ? raw.gpu_devices : null],
     ['power_watts', raw.power_watts],
     ['psi_cpu', raw.psi_cpu],
     ['psi_mem', raw.psi_mem],
@@ -3118,8 +3121,11 @@ function collectRawHostMetricsExport() {
       gpu_mem_clock_mhz: raw.gpu_mem_clock_mhz ?? null,
       gpu_temp_c: raw.gpu_temp_c ?? null,
       gpu_power_watts: raw.gpu_power_watts ?? null,
+      gpu_power_source: raw.gpu_power_source ?? null,
+      gpu_power_confidence: raw.gpu_power_confidence ?? null,
       gpu_mem_used_mb: raw.gpu_mem_used_mb ?? null,
       gpu_mem_total_mb: raw.gpu_mem_total_mb ?? null,
+      gpu_devices: Array.isArray(raw.gpu_devices) ? raw.gpu_devices : [],
       power_watts: raw.power_watts ?? null,
       power_watts_source: raw.power_watts_source ?? null,
       psi_cpu: raw.psi_cpu ?? null,
@@ -3225,6 +3231,13 @@ function formatAuditHours(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)} h`;
 }
 
+function formatGpuAuditSource(raw) {
+  const parts = [];
+  if (raw && raw.gpu_power_source) parts.push(String(raw.gpu_power_source));
+  if (raw && raw.gpu_power_confidence) parts.push(String(raw.gpu_power_confidence));
+  return parts.length ? parts.join(' · ') : '';
+}
+
 function renderPowerAuditSection() {
   const view = document.getElementById('powerAuditView');
   if (!view) return;
@@ -3293,7 +3306,7 @@ function renderPowerAuditSection() {
       {
         title: 'GPU global',
         strong: `${formatAuditPct(raw.gpu_pct)} · ${raw.gpu_power_watts != null ? `${Number(raw.gpu_power_watts).toFixed(1)} W` : 'W —'}`,
-        meta: `Core ${raw.gpu_core_clock_mhz != null ? `${Number(raw.gpu_core_clock_mhz).toFixed(0)} MHz` : '—'} · VRAM ${raw.gpu_mem_used_mb != null && raw.gpu_mem_total_mb != null ? `${Number(raw.gpu_mem_used_mb)} / ${Number(raw.gpu_mem_total_mb)} MiB` : '—'}`,
+        meta: `Core ${raw.gpu_core_clock_mhz != null ? `${Number(raw.gpu_core_clock_mhz).toFixed(0)} MHz` : '—'} · VRAM ${raw.gpu_mem_used_mb != null && raw.gpu_mem_total_mb != null ? `${Number(raw.gpu_mem_used_mb)} / ${Number(raw.gpu_mem_total_mb)} MiB` : '—'}${formatGpuAuditSource(raw) ? ` · ${formatGpuAuditSource(raw)}` : ''}`,
       },
       {
         title: 'I/O & pression',
@@ -4869,7 +4882,7 @@ function fallbackInvoke(cmd, args) {
         cpu_max_clock_mhz: null, cpu_freq_ratio: null, cpu_temp_c: null,
         swap_used_mb: 0, swap_total_mb: 0,
         zram_used_mb: null, io_read_mb_s: null, io_write_mb_s: null,
-        gpu_pct: null, gpu_core_clock_mhz: null, gpu_mem_clock_mhz: null, gpu_temp_c: null, gpu_power_watts: null, gpu_mem_used_mb: null, gpu_mem_total_mb: null,
+        gpu_pct: null, gpu_core_clock_mhz: null, gpu_mem_clock_mhz: null, gpu_temp_c: null, gpu_power_watts: null, gpu_power_source: null, gpu_power_confidence: null, gpu_mem_used_mb: null, gpu_mem_total_mb: null, gpu_devices: [],
         power_watts: null, psi_cpu: null, psi_mem: null, load_avg_1m_norm: null, runnable_tasks: null,
         platform: 'Hors Tauri — lancez cargo tauri dev',
       }

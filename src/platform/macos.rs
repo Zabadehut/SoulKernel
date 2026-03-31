@@ -174,6 +174,27 @@ pub fn gpu_utilisation() -> Option<f64> {
     None
 }
 
+pub fn gpu_devices() -> Vec<crate::metrics::GpuDeviceMetrics> {
+    let utilization_pct = gpu_utilisation();
+    let source = utilization_pct.map(|_| "system_profiler".to_string());
+    let confidence = utilization_pct.map(|_| "activity_only".to_string());
+    vec![crate::metrics::GpuDeviceMetrics {
+        index: 0,
+        name: read_macos_gpu_name(),
+        vendor: read_macos_gpu_vendor(),
+        kind: Some(read_macos_gpu_kind()),
+        utilization_pct,
+        power_watts: None,
+        memory_used_mb: None,
+        memory_total_mb: None,
+        core_clock_mhz: None,
+        mem_clock_mhz: None,
+        temperature_c: None,
+        source,
+        confidence,
+    }]
+}
+
 pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {
     let ram_clock_mhz = std::process::Command::new("system_profiler")
         .arg("SPMemoryDataType")
@@ -198,6 +219,50 @@ fn parse_macos_memory_speed(txt: &str) -> Option<f64> {
         }
     }
     None
+}
+
+fn read_macos_gpu_name() -> Option<String> {
+    let out = std::process::Command::new("system_profiler")
+        .arg("SPDisplaysDataType")
+        .output()
+        .ok()?;
+    let txt = String::from_utf8(out.stdout).ok()?;
+    for line in txt.lines() {
+        let l = line.trim();
+        if let Some(rhs) = l
+            .strip_prefix("Chipset Model:")
+            .or_else(|| l.strip_prefix("Model:"))
+        {
+            let value = rhs.trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn read_macos_gpu_vendor() -> Option<String> {
+    let name = read_macos_gpu_name()?.to_ascii_lowercase();
+    if name.contains("apple") {
+        Some("apple".to_string())
+    } else if name.contains("amd") || name.contains("radeon") {
+        Some("amd".to_string())
+    } else if name.contains("nvidia") || name.contains("geforce") {
+        Some("nvidia".to_string())
+    } else if name.contains("intel") {
+        Some("intel".to_string())
+    } else {
+        None
+    }
+}
+
+fn read_macos_gpu_kind() -> String {
+    if std::env::consts::ARCH == "aarch64" {
+        "integrated".to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 // ─── macOS primitives ─────────────────────────────────────────────────────────

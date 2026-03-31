@@ -155,6 +155,54 @@ pub fn gpu_utilisation() -> Option<f64> {
     None
 }
 
+pub fn gpu_devices() -> Vec<crate::metrics::GpuDeviceMetrics> {
+    let mut out = Vec::new();
+    for (idx, card) in drm_card_paths().into_iter().enumerate() {
+        let device = card.join("device");
+        let utilization_pct = {
+            let path = device.join("gpu_busy_percent");
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .filter(|v| (0.0..=100.0).contains(v))
+        };
+        let source = if read_gpu_power_watts_for_device(&device).is_some() {
+            Some("sysfs".to_string())
+        } else if utilization_pct.is_some() {
+            Some("sysfs_activity".to_string())
+        } else {
+            None
+        };
+        let confidence = if source.as_deref() == Some("sysfs") {
+            Some("direct_measured".to_string())
+        } else if utilization_pct.is_some() {
+            Some("activity_only".to_string())
+        } else {
+            None
+        };
+        out.push(crate::metrics::GpuDeviceMetrics {
+            index: idx as u32,
+            name: read_linux_gpu_name(&device),
+            vendor: read_linux_gpu_vendor(&device),
+            kind: Some("unknown".to_string()),
+            utilization_pct,
+            power_watts: read_gpu_power_watts_for_device(&device),
+            memory_used_mb: read_gpu_mem_info_mb_for_device(&device, "mem_info_vram_used"),
+            memory_total_mb: read_gpu_mem_info_mb_for_device(&device, "mem_info_vram_total"),
+            core_clock_mhz: read_gpu_clock_mhz(&[
+                card.join("device/pp_dpm_sclk"),
+                card.join("gt_cur_freq_mhz"),
+                card.join("gt/gt0/freq0/cur_freq"),
+            ]),
+            mem_clock_mhz: read_gpu_clock_mhz(&[card.join("device/pp_dpm_mclk")]),
+            temperature_c: read_gpu_temperature_c_for_device(&device),
+            source,
+            confidence,
+        });
+    }
+    out
+}
+
 pub fn sample_hardware_clocks() -> (Option<f64>, Option<f64>, Option<f64>) {
     let ram_clock_mhz = None;
     let mut core_paths = Vec::new();
@@ -305,7 +353,7 @@ fn read_cpu_temperature_c() -> Option<f64> {
 
 fn read_gpu_temperature_c() -> Option<f64> {
     for device in drm_card_device_paths() {
-        if let Some(v) = read_hwmon_number_scaled(&device.join("hwmon"), "temp1_input", 1000.0) {
+        if let Some(v) = read_gpu_temperature_c_for_device(&device) {
             return Some(v);
         }
     }
@@ -314,11 +362,7 @@ fn read_gpu_temperature_c() -> Option<f64> {
 
 fn read_gpu_power_watts() -> Option<f64> {
     for device in drm_card_device_paths() {
-        if let Some(v) =
-            read_hwmon_number_scaled(&device.join("hwmon"), "power1_average", 1_000_000.0).or_else(
-                || read_hwmon_number_scaled(&device.join("hwmon"), "power1_input", 1_000_000.0),
-            )
-        {
+        if let Some(v) = read_gpu_power_watts_for_device(&device) {
             return Some(v);
         }
     }
@@ -327,18 +371,63 @@ fn read_gpu_power_watts() -> Option<f64> {
 
 fn read_gpu_mem_info_mb(name: &str) -> Option<u64> {
     for device in drm_card_device_paths() {
-        let path = device.join(name);
-        let Ok(raw) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let Ok(bytes) = raw.trim().parse::<u64>() else {
-            continue;
-        };
-        if bytes > 0 {
-            return Some(bytes / 1024 / 1024);
+        if let Some(v) = read_gpu_mem_info_mb_for_device(&device, name) {
+            return Some(v);
         }
     }
     None
+}
+
+fn read_gpu_temperature_c_for_device(device: &Path) -> Option<f64> {
+    read_hwmon_number_scaled(&device.join("hwmon"), "temp1_input", 1000.0)
+}
+
+fn read_gpu_power_watts_for_device(device: &Path) -> Option<f64> {
+    read_hwmon_number_scaled(&device.join("hwmon"), "power1_average", 1_000_000.0)
+        .or_else(|| read_hwmon_number_scaled(&device.join("hwmon"), "power1_input", 1_000_000.0))
+}
+
+fn read_gpu_mem_info_mb_for_device(device: &Path, name: &str) -> Option<u64> {
+    let path = device.join(name);
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    let Ok(bytes) = raw.trim().parse::<u64>() else {
+        return None;
+    };
+    if bytes > 0 {
+        Some(bytes / 1024 / 1024)
+    } else {
+        None
+    }
+}
+
+fn read_linux_gpu_name(device: &Path) -> Option<String> {
+    let path = device.join("product_name");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let uevent = std::fs::read_to_string(device.join("uevent")).ok()?;
+            uevent
+                .lines()
+                .find_map(|line| line.strip_prefix("DRIVER=").map(|v| v.trim().to_string()))
+                .filter(|s| !s.is_empty())
+        })
+}
+
+fn read_linux_gpu_vendor(device: &Path) -> Option<String> {
+    let vendor_id = std::fs::read_to_string(device.join("vendor")).ok()?;
+    match vendor_id.trim() {
+        "0x10de" => Some("nvidia".to_string()),
+        "0x1002" => Some("amd".to_string()),
+        "0x1022" => Some("amd".to_string()),
+        "0x8086" => Some("intel".to_string()),
+        "0x1af4" => Some("virtio".to_string()),
+        other if !other.is_empty() => Some(other.to_string()),
+        _ => None,
+    }
 }
 
 fn read_load_avg_norm(logical_cores: f64) -> Option<f64> {

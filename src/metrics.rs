@@ -10,6 +10,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use sysinfo::{get_current_pid, Pid, System};
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GpuDeviceMetrics {
+    pub index: u32,
+    pub name: Option<String>,
+    pub vendor: Option<String>,
+    pub kind: Option<String>,
+    pub utilization_pct: Option<f64>,
+    pub power_watts: Option<f64>,
+    pub memory_used_mb: Option<u64>,
+    pub memory_total_mb: Option<u64>,
+    pub core_clock_mhz: Option<f64>,
+    pub mem_clock_mhz: Option<f64>,
+    pub temperature_c: Option<f64>,
+    pub source: Option<String>,
+    pub confidence: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceState {
     /// C(t) - CPU utilisation [0,1]
@@ -62,10 +79,19 @@ pub struct RawMetrics {
     pub gpu_temp_c: Option<f64>,
     /// GPU board/package power in Watts when available.
     pub gpu_power_watts: Option<f64>,
+    /// Source du watt GPU agrégé (`nvml`, `sysfs`, `reconciled_estimate`, etc.).
+    #[serde(default)]
+    pub gpu_power_source: Option<String>,
+    /// Niveau de confiance du watt GPU (`direct_measured`, `derived_measured`, `reconciled_estimated`, `activity_only`).
+    #[serde(default)]
+    pub gpu_power_confidence: Option<String>,
     /// VRAM used in MiB when available.
     pub gpu_mem_used_mb: Option<u64>,
     /// VRAM total in MiB when available.
     pub gpu_mem_total_mb: Option<u64>,
+    /// Détail multi-GPU observé sur la machine quand disponible.
+    #[serde(default)]
+    pub gpu_devices: Vec<GpuDeviceMetrics>,
     /// System power draw from host power meter (Watts). None = unavailable.
     pub power_watts: Option<f64>,
     /// Origine de `power_watts` quand connue : ex. `meross_wall`, `rapl`, `windows_meter`.
@@ -145,6 +171,136 @@ fn webview_host_aggregate(sys: &System) -> (Option<f64>, Option<u64>) {
         (None, None)
     } else {
         (Some(cpu_sum), Some(mem_sum / 1024 / 1024))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct AggregatedGpuMetrics {
+    gpu_pct: Option<f64>,
+    gpu_power_watts: Option<f64>,
+    gpu_power_source: Option<String>,
+    gpu_power_confidence: Option<String>,
+    gpu_core_clock_mhz: Option<f64>,
+    gpu_mem_clock_mhz: Option<f64>,
+    gpu_temp_c: Option<f64>,
+    gpu_mem_used_mb: Option<u64>,
+    gpu_mem_total_mb: Option<u64>,
+    gpu_devices: Vec<GpuDeviceMetrics>,
+}
+
+fn aggregate_gpu_devices(devices: Vec<GpuDeviceMetrics>) -> AggregatedGpuMetrics {
+    let gpu_pct_values: Vec<f64> = devices
+        .iter()
+        .filter_map(|d| d.utilization_pct)
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .collect();
+    let power_values: Vec<f64> = devices
+        .iter()
+        .filter_map(|d| d.power_watts)
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .collect();
+    let gpu_pct = if gpu_pct_values.is_empty() {
+        None
+    } else {
+        Some(gpu_pct_values.iter().sum::<f64>() / gpu_pct_values.len() as f64)
+    };
+    let gpu_power_watts = if power_values.is_empty() {
+        None
+    } else {
+        Some(power_values.iter().sum::<f64>())
+    };
+    let gpu_power_source = devices.iter().find_map(|d| d.source.clone());
+    let gpu_power_confidence = if gpu_power_watts.is_some() {
+        devices.iter().find_map(|d| d.confidence.clone())
+    } else if gpu_pct.is_some() {
+        Some("activity_only".to_string())
+    } else {
+        None
+    };
+    let gpu_core_clock_mhz = devices
+        .iter()
+        .filter_map(|d| d.core_clock_mhz)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .reduce(f64::max);
+    let gpu_mem_clock_mhz = devices
+        .iter()
+        .filter_map(|d| d.mem_clock_mhz)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .reduce(f64::max);
+    let gpu_temp_c = devices
+        .iter()
+        .filter_map(|d| d.temperature_c)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .reduce(f64::max);
+    let gpu_mem_used_mb = {
+        let total = devices.iter().filter_map(|d| d.memory_used_mb).sum::<u64>();
+        if total > 0 {
+            Some(total)
+        } else {
+            None
+        }
+    };
+    let gpu_mem_total_mb = {
+        let total = devices
+            .iter()
+            .filter_map(|d| d.memory_total_mb)
+            .sum::<u64>();
+        if total > 0 {
+            Some(total)
+        } else {
+            None
+        }
+    };
+
+    AggregatedGpuMetrics {
+        gpu_pct,
+        gpu_power_watts,
+        gpu_power_source,
+        gpu_power_confidence,
+        gpu_core_clock_mhz,
+        gpu_mem_clock_mhz,
+        gpu_temp_c,
+        gpu_mem_used_mb,
+        gpu_mem_total_mb,
+        gpu_devices: devices,
+    }
+}
+
+fn estimate_reconciled_gpu_power_watts(
+    machine_power_watts: Option<f64>,
+    gpu_pct: Option<f64>,
+    cpu_pct: f64,
+    io_read_mb_s: Option<f64>,
+    io_write_mb_s: Option<f64>,
+    mem_used: u64,
+    mem_total: u64,
+    on_battery: Option<bool>,
+) -> Option<f64> {
+    let machine_power = machine_power_watts?;
+    let gpu_norm = (gpu_pct? / 100.0).clamp(0.0, 1.0);
+    if gpu_norm <= 0.01 || !machine_power.is_finite() || machine_power <= 0.0 {
+        return None;
+    }
+    let cpu_norm = (cpu_pct / 100.0).clamp(0.0, 1.0);
+    let io_norm =
+        ((io_read_mb_s.unwrap_or(0.0) + io_write_mb_s.unwrap_or(0.0)) / 1500.0).clamp(0.0, 1.0);
+    let mem_norm = if mem_total > 0 {
+        (mem_used as f64 / mem_total as f64).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let idle_floor = if on_battery == Some(true) { 8.0 } else { 15.0 };
+    let active_power = (machine_power - idle_floor).max(0.0);
+    if active_power <= 0.0 {
+        return None;
+    }
+    let gpu_weight =
+        gpu_norm / (gpu_norm + 0.8 * cpu_norm + 0.25 * io_norm + 0.15 * mem_norm + 0.10);
+    let estimate = (active_power * gpu_weight).clamp(0.0, machine_power * 0.85);
+    if estimate > 0.0 {
+        Some(estimate)
+    } else {
+        None
     }
 }
 
@@ -268,29 +424,30 @@ pub fn collect() -> Result<ResourceState> {
         .unwrap_or((None, None));
     #[cfg(not(target_os = "windows"))]
     let (on_battery, battery_percent): (Option<bool>, Option<f64>) = (None, None);
-
     #[cfg(target_os = "linux")]
-    let gpu_pct = crate::platform::linux::gpu_utilisation();
+    let gpu_pct: Option<f64> = None;
     #[cfg(target_os = "macos")]
-    let gpu_pct = crate::platform::macos::gpu_utilisation();
+    let gpu_pct: Option<f64> = None;
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     let gpu_pct: Option<f64> = None;
 
     #[cfg(target_os = "windows")]
-    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz) =
-        crate::platform::windows::sample_hardware_clocks();
+    let mut gpu_agg = aggregate_gpu_devices(crate::platform::windows::gpu_devices(gpu_pct));
     #[cfg(target_os = "linux")]
-    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz) =
-        crate::platform::linux::sample_hardware_clocks();
+    let mut gpu_agg = aggregate_gpu_devices(crate::platform::linux::gpu_devices());
     #[cfg(target_os = "macos")]
-    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz) =
-        crate::platform::macos::sample_hardware_clocks();
+    let mut gpu_agg = aggregate_gpu_devices(crate::platform::macos::gpu_devices());
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    let (ram_clock_mhz, gpu_core_clock_mhz, gpu_mem_clock_mhz): (
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-    ) = (None, None, None);
+    let mut gpu_agg = AggregatedGpuMetrics::default();
+
+    #[cfg(target_os = "windows")]
+    let (ram_clock_mhz, _, _) = crate::platform::windows::sample_hardware_clocks();
+    #[cfg(target_os = "linux")]
+    let (ram_clock_mhz, _, _) = crate::platform::linux::sample_hardware_clocks();
+    #[cfg(target_os = "macos")]
+    let (ram_clock_mhz, _, _) = crate::platform::macos::sample_hardware_clocks();
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    let (ram_clock_mhz, _, _): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
 
     #[cfg(target_os = "linux")]
     let advanced = crate::platform::linux::sample_advanced_metrics(logical_cores);
@@ -312,10 +469,10 @@ pub fn collect() -> Result<ResourceState> {
         cpu_temp_c,
         load_avg_1m_norm,
         runnable_tasks,
-        gpu_temp_c,
-        gpu_power_watts,
-        gpu_mem_used_mb,
-        gpu_mem_total_mb,
+        _gpu_temp_c,
+        _gpu_power_watts,
+        _gpu_mem_used_mb,
+        _gpu_mem_total_mb,
     ) = (
         advanced.cpu_max_clock_mhz,
         advanced.cpu_temp_c,
@@ -332,11 +489,47 @@ pub fn collect() -> Result<ResourceState> {
         cpu_temp_c,
         load_avg_1m_norm,
         runnable_tasks,
-        gpu_temp_c,
-        gpu_power_watts,
-        gpu_mem_used_mb,
-        gpu_mem_total_mb,
+        _gpu_temp_c,
+        _gpu_power_watts,
+        _gpu_mem_used_mb,
+        _gpu_mem_total_mb,
     ) = advanced;
+
+    if gpu_agg.gpu_power_watts.is_none() {
+        gpu_agg.gpu_power_watts = estimate_reconciled_gpu_power_watts(
+            power_watts,
+            gpu_agg.gpu_pct.or(gpu_pct),
+            cpu_pct,
+            io_read_mb_s,
+            io_write_mb_s,
+            mem_used,
+            mem_total,
+            on_battery,
+        );
+        if gpu_agg.gpu_power_watts.is_some() {
+            gpu_agg.gpu_power_source = Some("reconciled_estimate".to_string());
+            gpu_agg.gpu_power_confidence = Some("reconciled_estimated".to_string());
+            if let Some(first) = gpu_agg.gpu_devices.get_mut(0) {
+                first.power_watts = gpu_agg.gpu_power_watts;
+                first.source = gpu_agg.gpu_power_source.clone();
+                first.confidence = gpu_agg.gpu_power_confidence.clone();
+            }
+        }
+    }
+
+    if gpu_agg.gpu_pct.is_none() {
+        gpu_agg.gpu_pct = gpu_pct;
+    }
+
+    let gpu_pct = gpu_agg.gpu_pct;
+    let gpu_core_clock_mhz = gpu_agg.gpu_core_clock_mhz;
+    let gpu_mem_clock_mhz = gpu_agg.gpu_mem_clock_mhz;
+    let gpu_temp_c = gpu_agg.gpu_temp_c;
+    let gpu_power_watts = gpu_agg.gpu_power_watts;
+    let gpu_power_source = gpu_agg.gpu_power_source.clone();
+    let gpu_power_confidence = gpu_agg.gpu_power_confidence.clone();
+    let gpu_mem_used_mb = gpu_agg.gpu_mem_used_mb;
+    let gpu_mem_total_mb = gpu_agg.gpu_mem_total_mb;
 
     let cpu_freq_ratio = cpu_clock_mhz.zip(cpu_max_clock_mhz).and_then(|(cur, max)| {
         if max > 0.0 && cur.is_finite() && max.is_finite() {
@@ -427,8 +620,11 @@ pub fn collect() -> Result<ResourceState> {
             gpu_mem_clock_mhz,
             gpu_temp_c,
             gpu_power_watts,
+            gpu_power_source,
+            gpu_power_confidence,
             gpu_mem_used_mb,
             gpu_mem_total_mb,
+            gpu_devices: gpu_agg.gpu_devices,
             power_watts,
             power_watts_source,
             psi_cpu,
