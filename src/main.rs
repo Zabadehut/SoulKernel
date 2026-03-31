@@ -165,6 +165,18 @@ pub struct ProcessOverheadAudit {
     pub combined_gpu_usage_pct: f64,
     pub combined_memory_kb: u64,
     pub combined_estimated_power_w: Option<f64>,
+    pub webview_runtime_buckets: Vec<WebviewRuntimeBucketAudit>,
+}
+
+#[derive(serde::Serialize)]
+pub struct WebviewRuntimeBucketAudit {
+    pub key: String,
+    pub label: String,
+    pub process_count: usize,
+    pub cpu_usage_pct: f64,
+    pub gpu_usage_pct: f64,
+    pub memory_kb: u64,
+    pub estimated_power_w: Option<f64>,
 }
 
 fn is_embedded_webview_name(name: &str) -> bool {
@@ -231,6 +243,45 @@ fn process_group_key(info: &ProcessInfo) -> String {
         }
     }
     info.name.trim().to_lowercase()
+}
+
+fn classify_webview_runtime_bucket(info: &ProcessInfo) -> (&'static str, String) {
+    let name = info.name.to_lowercase();
+    let cmd = info.cmd.join(" ").to_lowercase();
+    if name.contains("crashpad") || cmd.contains("crashpad") {
+        return ("crashpad", "Crashpad".to_string());
+    }
+    if name.contains("gpu") || cmd.contains("--type=gpu-process") {
+        return ("gpu", "GPU process".to_string());
+    }
+    if name.contains("manager") || cmd.contains("--type=browser") {
+        return ("manager", "Manager".to_string());
+    }
+    if cmd.contains("--type=utility") || name.contains("utility") {
+        if cmd.contains("network.mojom.networkservice")
+            || cmd.contains("--utility-sub-type=network")
+            || name.contains("network service")
+        {
+            return ("utility_network", "Utility: Network".to_string());
+        }
+        if cmd.contains("storage.mojom.storageservice")
+            || cmd.contains("--utility-sub-type=storage")
+            || name.contains("storage service")
+        {
+            return ("utility_storage", "Utility: Storage".to_string());
+        }
+        if cmd.contains("audio")
+            || cmd.contains("--utility-sub-type=audio")
+            || name.contains("audio service")
+        {
+            return ("utility_audio", "Utility: Audio".to_string());
+        }
+        return ("utility_other", "Utility: Other".to_string());
+    }
+    if cmd.contains("--type=renderer") || name.contains("webview2") || name.contains("webcontent") {
+        return ("renderer", "Renderer".to_string());
+    }
+    ("other", "Other WebView".to_string())
 }
 
 fn build_process_ui_row(info: &ProcessInfo) -> ProcessImpactUiRow {
@@ -890,6 +941,40 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
         .iter()
         .filter(|p| p.is_embedded_webview)
         .collect::<Vec<_>>();
+    let mut webview_runtime_buckets_map =
+        std::collections::BTreeMap::<String, WebviewRuntimeBucketAudit>::new();
+    for info in &webview_processes {
+        let (key, label) = classify_webview_runtime_bucket(info);
+        let entry = webview_runtime_buckets_map
+            .entry(key.to_string())
+            .or_insert(WebviewRuntimeBucketAudit {
+                key: key.to_string(),
+                label,
+                process_count: 0,
+                cpu_usage_pct: 0.0,
+                gpu_usage_pct: 0.0,
+                memory_kb: 0,
+                estimated_power_w: Some(0.0),
+            });
+        entry.process_count += 1;
+        entry.cpu_usage_pct += info.cpu_usage.max(0.0);
+        entry.gpu_usage_pct += info.gpu_usage_pct.unwrap_or(0.0).max(0.0);
+        entry.memory_kb = entry.memory_kb.saturating_add(info.memory_kb);
+        entry.estimated_power_w = match (entry.estimated_power_w, info.estimated_power_w) {
+            (Some(a), Some(b)) => Some(a + b),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+    }
+    let mut webview_runtime_buckets = webview_runtime_buckets_map
+        .into_values()
+        .collect::<Vec<_>>();
+    webview_runtime_buckets.sort_by(|a, b| {
+        b.cpu_usage_pct
+            .partial_cmp(&a.cpu_usage_pct)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let sum_power = |items: &[&ProcessInfo]| -> Option<f64> {
         let mut any = false;
         let mut total = 0.0f64;
@@ -949,6 +1034,7 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
             (None, Some(b)) => Some(b),
             (None, None) => None,
         },
+        webview_runtime_buckets,
     };
     let summary = ProcessImpactSummary {
         process_count: list.len(),

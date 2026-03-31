@@ -2020,10 +2020,17 @@ function renderProcessImpactPanel() {
   if (overhead) {
     if (audit) {
       const fmtMem = (kb) => Number.isFinite(Number(kb)) && Number(kb) > 0 ? `${(Number(kb) / 1024).toFixed(0)} MiB` : '—';
-      overhead.textContent =
-        `Overhead cumulé SoulKernel + WebView: ${Number(audit.combined_cpu_usage_pct || 0).toFixed(1)} % CPU · ${Number(audit.combined_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.combined_memory_kb)} | ` +
-        `SoulKernel: ${Number(audit.soulkernel_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.soulkernel_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.soulkernel_memory_kb)} | ` +
-        `WebView: ${Number(audit.webview_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.webview_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.webview_memory_kb)} (${Number(audit.webview_process_count || 0)} proc)`;
+      const runtimeBuckets = Array.isArray(audit.webview_runtime_buckets) ? audit.webview_runtime_buckets : [];
+      const bucketHtml = runtimeBuckets.slice(0, 6).map((bucket) => {
+        const label = escapeHtml(String(bucket.label || bucket.key || 'WebView'));
+        const count = Number(bucket.process_count || 0);
+        return `<div class="process-impact-meta">${label}: ${Number(bucket.cpu_usage_pct || 0).toFixed(1)} % CPU · ${Number(bucket.gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(bucket.memory_kb)} · ${count} proc</div>`;
+      }).join('');
+      overhead.innerHTML =
+        `<div>Overhead cumulé SoulKernel + WebView: ${Number(audit.combined_cpu_usage_pct || 0).toFixed(1)} % CPU · ${Number(audit.combined_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.combined_memory_kb)}</div>` +
+        `<div class="process-impact-meta">SoulKernel: ${Number(audit.soulkernel_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.soulkernel_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.soulkernel_memory_kb)}</div>` +
+        `<div class="process-impact-meta">WebView: ${Number(audit.webview_cpu_usage_pct || 0).toFixed(1)} % CPU / ${Number(audit.webview_gpu_usage_pct || 0).toFixed(1)} % GPU · ${fmtMem(audit.webview_memory_kb)} (${Number(audit.webview_process_count || 0)} proc)</div>` +
+        (bucketHtml ? `<div class="process-impact-meta" style="margin-top:.2rem">Détail runtime WebView:</div>${bucketHtml}` : '');
     } else {
       overhead.textContent = 'Audit overhead SoulKernel/WebView en attente...';
     }
