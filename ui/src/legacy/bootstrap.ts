@@ -3673,6 +3673,12 @@ function renderPowerAuditSection() {
         ...sections.slice(0, 16).map((item) => (
           `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'device')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'device')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')}</div></div>`
         )),
+        ...(Array.isArray(inv.connected_endpoints) && inv.connected_endpoints.length ? [
+          `<div class="audit-item"><div class="audit-item-title">Ports & endpoints</div><div class="audit-item-meta">USB, sorties écran, audio et bus externes détectés par la plateforme.</div></div>`,
+          ...inv.connected_endpoints.slice(0, 20).map((item) => (
+            `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'endpoint')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'endpoint')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')}</div></div>`
+          )),
+        ] : []),
       ].join('');
     }
   }
@@ -5241,6 +5247,7 @@ function fallbackInvoke(cmd, args) {
     storage: [],
     network: [],
     power: [],
+    connected_endpoints: [],
     platform_features: ['pas de backend natif'],
   });
   if (cmd === 'list_processes') return Promise.resolve({ processes: [], top_processes: [], top_process_rows: [], grouped_processes: [], overhead_audit: null, summary: null });

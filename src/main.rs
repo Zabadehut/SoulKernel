@@ -52,7 +52,188 @@ pub struct DeviceInventoryReport {
     pub storage: Vec<DeviceInventoryItem>,
     pub network: Vec<DeviceInventoryItem>,
     pub power: Vec<DeviceInventoryItem>,
+    pub connected_endpoints: Vec<DeviceInventoryItem>,
     pub platform_features: Vec<String>,
+}
+
+#[cfg(target_os = "linux")]
+fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
+    let mut items = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.contains('-') {
+                continue;
+            }
+            let status = std::fs::read_to_string(entry.path().join("status"))
+                .ok()
+                .map(|s| s.trim().to_string());
+            let modes = std::fs::read_to_string(entry.path().join("modes"))
+                .ok()
+                .map(|s| s.lines().take(2).collect::<Vec<_>>().join(", "));
+            items.push(DeviceInventoryItem {
+                kind: "display_output".to_string(),
+                name,
+                detail: modes.filter(|s| !s.is_empty()),
+                status,
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let product = std::fs::read_to_string(path.join("product"))
+                .ok()
+                .map(|s| s.trim().to_string());
+            if product.as_deref().unwrap_or("").is_empty() {
+                continue;
+            }
+            let manufacturer = std::fs::read_to_string(path.join("manufacturer"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let speed = std::fs::read_to_string(path.join("speed"))
+                .ok()
+                .map(|s| format!("{} Mb/s", s.trim()))
+                .filter(|s| !s.starts_with("0"));
+            let vendor_id = std::fs::read_to_string(path.join("idVendor"))
+                .ok()
+                .map(|s| s.trim().to_string());
+            let product_id = std::fs::read_to_string(path.join("idProduct"))
+                .ok()
+                .map(|s| s.trim().to_string());
+            let mut detail_parts = Vec::new();
+            if let Some(v) = manufacturer {
+                detail_parts.push(v);
+            }
+            if let Some(v) = speed {
+                detail_parts.push(v);
+            }
+            if let (Some(v), Some(p)) = (vendor_id, product_id) {
+                detail_parts.push(format!("{v}:{p}"));
+            }
+            items.push(DeviceInventoryItem {
+                kind: "usb_device".to_string(),
+                name: product.unwrap_or_else(|| "USB device".to_string()),
+                detail: (!detail_parts.is_empty()).then(|| detail_parts.join(" · ")),
+                status: Some("connected".to_string()),
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+
+    if let Ok(cards) = std::fs::read_to_string("/proc/asound/cards") {
+        for line in cards.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || !trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            items.push(DeviceInventoryItem {
+                kind: "audio_endpoint".to_string(),
+                name: trimmed.to_string(),
+                detail: Some("ALSA card".to_string()),
+                status: Some("detected".to_string()),
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+
+    items
+}
+
+#[cfg(target_os = "windows")]
+fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
+    let mut items = Vec::new();
+    let out = std::process::Command::new("wmic")
+        .args([
+            "path",
+            "Win32_PnPEntity",
+            "where",
+            "PNPClass='USB' or PNPClass='Monitor' or PNPClass='MEDIA'",
+            "get",
+            "Name,PNPClass,Status",
+            "/format:csv",
+        ])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+
+    for line in out.lines().skip(1) {
+        let cols: Vec<&str> = line.split(',').collect();
+        if cols.len() < 4 {
+            continue;
+        }
+        let class = cols[2].trim();
+        let name = cols[1].trim();
+        let status = cols[3].trim();
+        if name.is_empty() || class.is_empty() {
+            continue;
+        }
+        let kind = match class {
+            "USB" => "usb_device",
+            "Monitor" => "display_output",
+            "MEDIA" => "audio_endpoint",
+            _ => "endpoint",
+        };
+        items.push(DeviceInventoryItem {
+            kind: kind.to_string(),
+            name: name.to_string(),
+            detail: Some(format!("class {class}")),
+            status: Some(status.to_string()),
+            evidence: "platform_detected".to_string(),
+        });
+    }
+
+    items
+}
+
+#[cfg(target_os = "macos")]
+fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
+    let mut items = Vec::new();
+    let sections = [
+        ("SPUSBDataType", "usb_device"),
+        ("SPAudioDataType", "audio_endpoint"),
+        ("SPThunderboltDataType", "external_bus"),
+    ];
+    for (section, kind) in sections {
+        let out = std::process::Command::new("system_profiler")
+            .arg(section)
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default();
+        for line in out.lines() {
+            let raw = line.trim_end();
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || !trimmed.ends_with(':') {
+                continue;
+            }
+            if trimmed.contains("Data Type") || trimmed.contains("Bus:") {
+                continue;
+            }
+            let name = trimmed.trim_end_matches(':').trim();
+            if name.is_empty() {
+                continue;
+            }
+            items.push(DeviceInventoryItem {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                detail: Some(section.to_string()),
+                status: Some("detected".to_string()),
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+    items
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
+    Vec::new()
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -1338,6 +1519,7 @@ fn get_device_inventory(app: AppHandle) -> Result<DeviceInventoryReport, String>
             });
         }
     }
+    let connected_endpoints = collect_connected_endpoints();
 
     Ok(DeviceInventoryReport {
         platform: platform.os,
@@ -1346,6 +1528,7 @@ fn get_device_inventory(app: AppHandle) -> Result<DeviceInventoryReport, String>
         storage,
         network,
         power,
+        connected_endpoints,
         platform_features: platform.features,
     })
 }
