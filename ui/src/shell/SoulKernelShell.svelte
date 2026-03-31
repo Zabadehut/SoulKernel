@@ -11,6 +11,7 @@
   import PanelBottomBar from './PanelBottomBar.svelte';
   import BenchmarkSection from './BenchmarkSection.svelte';
   import ExternalPowerSection from './ExternalPowerSection.svelte';
+  import PowerAuditSection from './PowerAuditSection.svelte';
 </script>
 
 <NoTauriBanner />
@@ -37,3 +38,4 @@
 
 <BenchmarkSection />
 <ExternalPowerSection />
+<PowerAuditSection />

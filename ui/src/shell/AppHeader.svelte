@@ -36,6 +36,9 @@
       <button type="button" class="view-btn" id="btnViewExternal"
         ><span class="view-ico"><i data-lucide="plug-zap"></i></span> Prise externe</button
       >
+      <button type="button" class="view-btn" id="btnViewAudit"
+        ><span class="view-ico"><i data-lucide="radar"></i></span> Audit puissance</button
+      >
       <button type="button" class="view-btn" id="btnHudToggle"
         ><span class="view-ico"><i data-lucide="panel-top"></i></span> HUD OFF</button
       >

@@ -321,8 +321,21 @@ input[type=range].io-range::-webkit-slider-thumb{background:var(--io);}
 .bench-top-title{font-size:.58rem;color:var(--cpu);letter-spacing:.06em}
 .bench-top-meta{font-size:.56rem;color:var(--text);line-height:1.45;margin-top:.18rem}
 .external-view{display:none;padding:0 14px 18px}
+.audit-view{display:none;padding:0 14px 18px}
 .external-shell{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .external-column{display:flex;flex-direction:column;gap:12px}
+.audit-shell{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.audit-column{display:flex;flex-direction:column;gap:12px}
+.audit-panel{min-width:0}
+.audit-kpi-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.45rem;margin-top:.55rem}
+.audit-grid-two{display:grid;grid-template-columns:1fr 1fr;gap:.45rem;margin-top:.45rem}
+.audit-list{display:flex;flex-direction:column;gap:.45rem;margin-top:.45rem}
+.audit-item{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:.5rem .6rem}
+.audit-item-title{font-size:.58rem;color:var(--text);font-weight:600;line-height:1.35}
+.audit-item-meta{font-size:.54rem;color:var(--muted);line-height:1.45;margin-top:.2rem}
+.audit-item-strong{color:var(--io)}
+.audit-item-row{display:flex;justify-content:space-between;gap:.6rem;align-items:flex-start}
+.audit-item-row .audit-item-meta:last-child{text-align:right}
 .external-inline-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
 .external-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:.45rem;margin-top:.2rem}
 .external-pre{font-family:ui-monospace,monospace;font-size:.58rem;line-height:1.45;color:var(--text);margin:.35rem 0 0;padding:.5rem .6rem;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.22);border-radius:8px;border:1px solid var(--s3)}
@@ -335,11 +348,15 @@ body.view-benchmark main{display:none}
 body.view-benchmark .benchmark-view{display:block}
 body.view-external main{display:none}
 body.view-external .external-view{display:block}
+body.view-audit main{display:none}
+body.view-audit .audit-view{display:block}
 @media (max-width:900px){
   .benchmark-shell{grid-template-columns:1fr}
   .external-shell{grid-template-columns:1fr}
+  .audit-shell{grid-template-columns:1fr}
   .external-inline-grid{grid-template-columns:1fr}
   .external-status-grid{grid-template-columns:1fr}
+  .audit-kpi-grid,.audit-grid-two{grid-template-columns:1fr}
 }
 .compact-hud.visible{display:block}
 

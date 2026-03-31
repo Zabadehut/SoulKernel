@@ -477,6 +477,7 @@ function nextPollDelayMs() {
 
 function nextProcessRefreshDelayMs() {
   if (document.hidden) return PROCESS_REFRESH_HIDDEN_MS;
+  if (isPowerAuditViewVisible()) return PROCESS_REFRESH_ACTIVE_MS;
   if (!isProcessImpactPanelVisible()) return PROCESS_REFRESH_BACKGROUND_MS;
   if (shouldSleepWebview()) return 60000;
   if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return PROCESS_REFRESH_ACTIVE_MS;
@@ -509,12 +510,16 @@ function isElementActuallyVisible(el) {
 function shouldKeepMainUiHot() {
   if (HUD_ONLY) return false;
   if (document.hidden) return false;
-  if (state.viewMode === 'benchmark' || state.viewMode === 'external') return false;
+  if (state.viewMode === 'benchmark' || state.viewMode === 'external' || state.viewMode === 'audit') return false;
   return state.windowFocused;
 }
 
 function isProcessImpactPanelVisible() {
   return shouldKeepMainUiHot() && isElementActuallyVisible(document.querySelector('.process-impact-card'));
+}
+
+function isPowerAuditViewVisible() {
+  return !document.hidden && state.viewMode === 'audit' && isElementActuallyVisible(document.getElementById('powerAuditView'));
 }
 
 function isProofPanelVisible() {
@@ -564,9 +569,9 @@ function scheduleMetricRender(m) {
     ]);
     if (renderKey === lastRenderedMetricKey) return;
     lastRenderedMetricKey = renderKey;
+    const now = Date.now();
     const keepMainUiHot = shouldKeepMainUiHot();
     if (keepMainUiHot) {
-      const now = Date.now();
       if ((now - lastMainUiRenderTs) >= nextMainUiRenderDelayMs()) {
         lastMainUiRenderTs = now;
         renderMetrics(mm);
@@ -574,6 +579,9 @@ function scheduleMetricRender(m) {
         renderTuningAdvice(mm);
         if ((state.domeActive || state.snapshotBefore) && isProofPanelVisible()) renderProofPanel();
       }
+    } else if (isPowerAuditViewVisible() && (now - lastMainUiRenderTs) >= nextMainUiRenderDelayMs()) {
+      lastMainUiRenderTs = now;
+      renderPowerAuditSection();
     }
     if (state.hudVisible || HUD_ONLY) renderCompactHud(mm);
   });
@@ -1176,6 +1184,7 @@ function renderTelemetrySummary(s) {
   // ── GREEN IT panel ──────────────────────────────────────────────────────
   renderGreenItPanel(s);
   renderSoulRamFromTelemetry(s);
+  if (isPowerAuditViewVisible()) renderPowerAuditSection();
 }
 
 function renderSoulRamFromTelemetry(s) {
@@ -1378,6 +1387,7 @@ function renderExternalPowerStatus(status) {
     const pythonBin = String(status.pythonBin || status.defaultPythonHint || 'python3').trim() || 'python3';
     bridge.textContent = `${pythonBin} scripts/meross_mss315_bridge.py --out "${outPath}"`;
   }
+  if (isPowerAuditViewVisible()) renderPowerAuditSection();
 }
 
 function renderExternalBridgeStatus(status) {
@@ -1446,6 +1456,7 @@ function renderExternalBridgeStatus(status) {
     info.textContent = 'Bridge Meross actif' + (status.pid ? ' (PID ' + status.pid + ')' : '') + ' · ' + sourceLabel + '.';
     info.style.color = 'var(--io)';
   }
+  if (isPowerAuditViewVisible()) renderPowerAuditSection();
 }
 
 async function loadExternalPowerConfig() {
@@ -2146,7 +2157,8 @@ function stopProcessRefreshLoop() {
 async function refreshProcesses(options = {}) {
   const userInitiated = options.userInitiated === true;
   const panelVisible = isProcessImpactPanelVisible();
-  if (!userInitiated && !panelVisible && !state.autoProcessTarget) {
+  const auditVisible = isPowerAuditViewVisible();
+  if (!userInitiated && !panelVisible && !auditVisible && !state.autoProcessTarget) {
     startProcessRefreshLoop();
     return;
   }
@@ -2231,6 +2243,7 @@ async function refreshProcesses(options = {}) {
       renderProcessImpactPanel();
       lastProcessUiRevision = uiRevision;
     }
+    if (isPowerAuditViewVisible()) renderPowerAuditSection();
   } catch (e) {
     if (userInitiated) log(`list_processes: ${e}`, 'err');
   } finally {
@@ -2313,7 +2326,7 @@ function loadRuntimeSettings() {
     if (typeof cfg.kpiCommand === 'string') { const el = document.getElementById('kpiCommand'); if (el) el.value = cfg.kpiCommand; }
     if (typeof cfg.kpiArgs === 'string') { const el = document.getElementById('kpiArgs'); if (el) el.value = cfg.kpiArgs; }
     if (typeof cfg.kpiRuns === 'number') { const el = document.getElementById('kpiRuns'); if (el) el.value = String(Math.max(5, Math.min(20, Math.floor(cfg.kpiRuns)))); }
-    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed' || cfg.viewMode === 'benchmark' || cfg.viewMode === 'external') state.viewMode = cfg.viewMode;
+    if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed' || cfg.viewMode === 'benchmark' || cfg.viewMode === 'external' || cfg.viewMode === 'audit') state.viewMode = cfg.viewMode;
     if (typeof cfg.hudVisible === 'boolean') state.hudVisible = cfg.hudVisible;
     if (typeof cfg.hudInteractive === 'boolean') state.hudInteractive = cfg.hudInteractive;
     if (cfg.hudPreset === 'mini' || cfg.hudPreset === 'compact' || cfg.hudPreset === 'detailed') state.hudPreset = cfg.hudPreset;
@@ -2595,6 +2608,7 @@ function renderMetrics(m) {
   }
   updateSystemStatus(m);
   updateMetricsStrip(m);
+  if (isPowerAuditViewVisible()) renderPowerAuditSection();
 }
 
 /** Barre σ / π / mini r(t) sous le header */
@@ -3189,6 +3203,172 @@ function collectEnergyMeterExport() {
     lifetime,
     external_power: external,
   };
+}
+
+function formatAuditWatts(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)} W`;
+}
+
+function formatAuditPct(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(1)} %`;
+}
+
+function formatAuditMiBFromKb(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${(Number(value) / 1024).toFixed(0)} MiB`;
+}
+
+function formatAuditMiB(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(0)} MiB`;
+}
+
+function formatAuditHours(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)} h`;
+}
+
+function renderPowerAuditSection() {
+  const view = document.getElementById('powerAuditView');
+  if (!view) return;
+  const meter = collectEnergyMeterExport();
+  const host = collectRawHostMetricsExport();
+  const proc = collectProcessImpactExport();
+  const raw = host.raw || {};
+  const topContributors = Array.isArray(proc.top_contributors) ? proc.top_contributors : [];
+  const grouped = Array.isArray(proc.grouped_processes) ? proc.grouped_processes : [];
+  const audit = proc.overhead_audit && typeof proc.overhead_audit === 'object' ? proc.overhead_audit : null;
+  const wallPower = meter.is_external_wall_source ? meter.live_power_w : null;
+  const hostPower = raw.power_watts ?? meter.live_power_w ?? null;
+  const explainedPower = topContributors.reduce((sum, item) => sum + Number(item?.estimated_power_w || 0), 0);
+  const referencePower = wallPower ?? hostPower ?? null;
+  const explainedShare = referencePower && referencePower > 0 ? (explainedPower / referencePower) * 100 : null;
+  const unattributed = referencePower && referencePower > 0 ? Math.max(0, referencePower - explainedPower) : null;
+  const sourceTag = String(meter.power_source || '').trim();
+  const external = meter.external_power || {};
+  const sourcePresentation = (() => {
+    if (meter.is_external_wall_source) {
+      return {
+        headline: `Puissance validée au mur: ${formatAuditWatts(wallPower)}`,
+        confidence: 'Murale réelle',
+        summary: `La source externe active alimente le total machine. SoulKernel réconcilie ensuite ce total avec la machine, les groupes de processus et la part non expliquée.`,
+        sourceLabel: external.source_tag || sourceTag || 'source_externe',
+      };
+    }
+    if (sourceTag) {
+      return {
+        headline: `Puissance machine interne: ${formatAuditWatts(hostPower)}`,
+        confidence: 'Interne machine',
+        summary: `Aucune source externe active ou fraîche. L’audit reste exploitable via les capteurs internes OS, avec réconciliation partielle des consommateurs.`,
+        sourceLabel: sourceTag,
+      };
+    }
+    return {
+      headline: 'Audit sans watts directs',
+      confidence: 'Différentiel',
+      summary: `Aucune source watts disponible à cet instant. L’onglet reste utile pour les métriques observées, mais la réconciliation énergétique reste partielle.`,
+      sourceLabel: 'differential_only',
+    };
+  })();
+  set('auditPowerHeadline', sourcePresentation.headline);
+  set('auditPowerConfidence', sourcePresentation.confidence);
+  set('auditPowerSummary', sourcePresentation.summary);
+  set('auditWallPower', formatAuditWatts(wallPower));
+  set('auditPowerSource', sourcePresentation.sourceLabel);
+  set('auditHostPower', formatAuditWatts(hostPower));
+  set('auditExplainedShare', explainedShare == null ? '—' : `${explainedShare.toFixed(1)} %`);
+  set('auditTopPower', topContributors.length ? formatAuditWatts(explainedPower) : '—');
+  set('auditUnattributed', formatAuditWatts(unattributed));
+
+  const hostEl = document.getElementById('auditHostSubsystems');
+  if (hostEl) {
+    const cards = [
+      {
+        title: 'CPU',
+        strong: `${formatAuditPct(raw.cpu_pct)} · ${raw.cpu_clock_mhz != null ? `${Number(raw.cpu_clock_mhz).toFixed(0)} MHz` : 'clock —'}`,
+        meta: `Temp ${raw.cpu_temp_c != null ? `${Number(raw.cpu_temp_c).toFixed(1)} C` : '—'} · max ${raw.cpu_max_clock_mhz != null ? `${Number(raw.cpu_max_clock_mhz).toFixed(0)} MHz` : '—'}`,
+      },
+      {
+        title: 'RAM / swap',
+        strong: `${raw.mem_used_mb != null && raw.mem_total_mb != null ? `${(Number(raw.mem_used_mb) / 1024).toFixed(1)} / ${(Number(raw.mem_total_mb) / 1024).toFixed(1)} GiB` : '—'}`,
+        meta: `Swap ${raw.swap_used_mb != null && raw.swap_total_mb != null ? `${Number(raw.swap_used_mb).toFixed(0)} / ${Number(raw.swap_total_mb).toFixed(0)} MiB` : '—'} · zRAM ${formatAuditMiB(raw.zram_used_mb)}`,
+      },
+      {
+        title: 'GPU global',
+        strong: `${formatAuditPct(raw.gpu_pct)} · ${raw.gpu_power_watts != null ? `${Number(raw.gpu_power_watts).toFixed(1)} W` : 'W —'}`,
+        meta: `Core ${raw.gpu_core_clock_mhz != null ? `${Number(raw.gpu_core_clock_mhz).toFixed(0)} MHz` : '—'} · VRAM ${raw.gpu_mem_used_mb != null && raw.gpu_mem_total_mb != null ? `${Number(raw.gpu_mem_used_mb)} / ${Number(raw.gpu_mem_total_mb)} MiB` : '—'}`,
+      },
+      {
+        title: 'I/O & pression',
+        strong: `${raw.io_read_mb_s != null || raw.io_write_mb_s != null ? `R ${Number(raw.io_read_mb_s || 0).toFixed(2)} / W ${Number(raw.io_write_mb_s || 0).toFixed(2)} MB/s` : '—'}`,
+        meta: `PSI CPU ${formatAuditPct(raw.psi_cpu != null ? Number(raw.psi_cpu) * 100 : null)} · PSI MEM ${formatAuditPct(raw.psi_mem != null ? Number(raw.psi_mem) * 100 : null)}`,
+      },
+      {
+        title: 'Charge OS',
+        strong: `${raw.load_avg_1m_norm != null ? `${Number(raw.load_avg_1m_norm).toFixed(2)} x/core` : '—'}`,
+        meta: `Runnable ${raw.runnable_tasks != null ? Number(raw.runnable_tasks) : '—'} · page faults ${raw.page_faults_per_sec != null ? Number(raw.page_faults_per_sec).toFixed(1) + '/s' : '—'}`,
+      },
+      {
+        title: 'WebView host',
+        strong: `${formatAuditPct(raw.webview_host_cpu_sum)} · ${formatAuditMiB(raw.webview_host_mem_mb)}`,
+        meta: `Mesure host agrégée des processus WebView exposés par la plateforme`,
+      },
+    ];
+    hostEl.innerHTML = cards.map((item) => (
+      `<div class="audit-item"><div class="audit-item-title">${escapeHtml(item.title)}</div><div class="audit-item-meta audit-item-strong">${escapeHtml(item.strong)}</div><div class="audit-item-meta">${escapeHtml(item.meta)}</div></div>`
+    )).join('');
+  }
+
+  const externalEl = document.getElementById('auditExternalSources');
+  if (externalEl) {
+    const items = [
+      { title: 'Source externe', strong: external.source_tag || 'absente', meta: `Fraîcheur ${external.freshness || '—'} · bridge ${external.bridge_state || '—'}` },
+      { title: 'Dernière mesure externe', strong: external.last_watts_label || '—', meta: `Timestamp ${external.last_ts_label || '—'}` },
+      { title: 'Runtime / provider', strong: external.runtime || '—', meta: `Cache ${external.cache_path || '—'}` },
+      { title: 'Fichier / config', strong: external.power_file_path || '—', meta: `Config ${external.config_path || '—'}` },
+      { title: 'Erreur source externe', strong: external.last_error || 'aucune', meta: `Présence fichier ${external.file_presence || '—'}` },
+      { title: 'Confiance audit', strong: sourcePresentation.confidence, meta: sourcePresentation.summary },
+    ];
+    externalEl.innerHTML = items.map((item) => (
+      `<div class="audit-item"><div class="audit-item-title">${escapeHtml(item.title)}</div><div class="audit-item-meta audit-item-strong">${escapeHtml(item.strong)}</div><div class="audit-item-meta">${escapeHtml(item.meta)}</div></div>`
+    )).join('');
+  }
+
+  const groupsEl = document.getElementById('auditProcessGroups');
+  if (groupsEl) {
+    if (!grouped.length) {
+      groupsEl.innerHTML = '<div class="audit-item"><div class="audit-item-title">Groupes</div><div class="audit-item-meta">Aucun groupe de processus disponible pour l’instant.</div></div>';
+    } else {
+      groupsEl.innerHTML = grouped.slice(0, 8).map((group) => (
+        `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(group.key || 'groupe')}</div><div class="audit-item-meta">${Number(group.process_count || 0)} proc</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(group.estimated_power_w)}</span><br>${group.impact_score_pct_estimated == null ? '—' : Number(group.impact_score_pct_estimated).toFixed(1) + ' %'}</div></div><div class="audit-item-meta">CPU ${formatAuditPct(group.cpu_usage_pct)} · GPU ${formatAuditPct(group.gpu_usage_pct)} · RAM ${formatAuditMiBFromKb(group.memory_kb)}</div></div>`
+      )).join('');
+    }
+  }
+
+  const topEl = document.getElementById('auditTopProcesses');
+  if (topEl) {
+    if (!topContributors.length) {
+      topEl.innerHTML = '<div class="audit-item"><div class="audit-item-title">Top processus</div><div class="audit-item-meta">Aucun processus disponible pour l’instant.</div></div>';
+    } else {
+      topEl.innerHTML = topContributors.slice(0, 8).map((item) => (
+        `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || 'processus')} (PID ${escapeHtml(item.pid || '—')})</div><div class="audit-item-meta">${item.is_self_process ? 'SELF · ' : ''}${item.is_embedded_webview ? 'WV · ' : ''}${escapeHtml(item.attribution_method || '—')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${item.impact_score_pct_estimated == null ? '—' : Number(item.impact_score_pct_estimated).toFixed(1) + ' %'}</div></div><div class="audit-item-meta">CPU ${formatAuditPct(item.cpu_usage)} · GPU ${formatAuditPct(item.gpu_usage_pct)} · RAM ${formatAuditMiBFromKb(item.memory_kb)} · durée ${formatAuditHours(item.run_time_s != null ? Number(item.run_time_s) / 3600 : null)}</div></div>`
+      )).join('');
+    }
+  }
+
+  const overheadEl = document.getElementById('auditOverheadBreakdown');
+  if (overheadEl) {
+    const runtimeBuckets = Array.isArray(audit?.webview_runtime_buckets) ? audit.webview_runtime_buckets : [];
+    const lines = [];
+    if (audit) {
+      lines.push(`<div class="audit-item"><div class="audit-item-title">Total SoulKernel + WebView</div><div class="audit-item-meta audit-item-strong">CPU ${formatAuditPct(audit.combined_cpu_usage_pct)} · GPU ${formatAuditPct(audit.combined_gpu_usage_pct)} · RAM ${formatAuditMiBFromKb(audit.combined_memory_kb)} · ${formatAuditWatts(audit.combined_estimated_power_w)}</div></div>`);
+      lines.push(`<div class="audit-item"><div class="audit-item-title">Hôte SoulKernel</div><div class="audit-item-meta">CPU ${formatAuditPct(audit.soulkernel_cpu_usage_pct)} · GPU ${formatAuditPct(audit.soulkernel_gpu_usage_pct)} · RAM ${formatAuditMiBFromKb(audit.soulkernel_memory_kb)} · ${Number(audit.soulkernel_process_count || 0)} proc</div></div>`);
+      lines.push(`<div class="audit-item"><div class="audit-item-title">Runtime WebView</div><div class="audit-item-meta">CPU ${formatAuditPct(audit.webview_cpu_usage_pct)} · GPU ${formatAuditPct(audit.webview_gpu_usage_pct)} · RAM ${formatAuditMiBFromKb(audit.webview_memory_kb)} · ${Number(audit.webview_process_count || 0)} proc</div></div>`);
+      runtimeBuckets.forEach((bucket) => {
+        lines.push(`<div class="audit-item"><div class="audit-item-title">${escapeHtml(bucket.label || bucket.key || 'WebView')}</div><div class="audit-item-meta">CPU ${formatAuditPct(bucket.cpu_usage_pct)} · GPU ${formatAuditPct(bucket.gpu_usage_pct)} · RAM ${formatAuditMiBFromKb(bucket.memory_kb)} · ${Number(bucket.process_count || 0)} proc</div></div>`);
+      });
+    } else {
+      lines.push('<div class="audit-item"><div class="audit-item-title">Overhead</div><div class="audit-item-meta">Audit overhead indisponible pour l’instant.</div></div>');
+    }
+    overheadEl.innerHTML = lines.join('');
+  }
 }
 
 function collectStrictEvidenceExport() {
@@ -4083,6 +4263,10 @@ const btnViewExternal = document.getElementById('btnViewExternal');
 if (btnViewExternal) {
   btnViewExternal.addEventListener('click', () => setViewMode('external'));
 }
+const btnViewAudit = document.getElementById('btnViewAudit');
+if (btnViewAudit) {
+  btnViewAudit.addEventListener('click', () => setViewMode('audit'));
+}
 const btnHudToggle = document.getElementById('btnHudToggle');
 if (btnHudToggle) {
   btnHudToggle.addEventListener('click', () => setHudVisible(!state.hudVisible));
@@ -4477,22 +4661,26 @@ async function setHudInteractive(on) {
   saveRuntimeSettings();
 }
 function setViewMode(mode) {
-  state.viewMode = (mode === 'compact' || mode === 'benchmark' || mode === 'external') ? mode : 'detailed';
+  state.viewMode = (mode === 'compact' || mode === 'benchmark' || mode === 'external' || mode === 'audit') ? mode : 'detailed';
   document.body.classList.toggle('view-compact', state.viewMode === 'compact');
   document.body.classList.toggle('view-detailed', state.viewMode === 'detailed');
   document.body.classList.toggle('view-benchmark', state.viewMode === 'benchmark');
   document.body.classList.toggle('view-external', state.viewMode === 'external');
+  document.body.classList.toggle('view-audit', state.viewMode === 'audit');
 
   const bCompact = document.getElementById('btnViewCompact');
   const bDetailed = document.getElementById('btnViewDetailed');
   const bBenchmark = document.getElementById('btnViewBenchmark');
   const bExternal = document.getElementById('btnViewExternal');
+  const bAudit = document.getElementById('btnViewAudit');
   if (bCompact) bCompact.classList.toggle('active', state.viewMode === 'compact');
   if (bDetailed) bDetailed.classList.toggle('active', state.viewMode === 'detailed');
   if (bBenchmark) bBenchmark.classList.toggle('active', state.viewMode === 'benchmark');
   if (bExternal) bExternal.classList.toggle('active', state.viewMode === 'external');
+  if (bAudit) bAudit.classList.toggle('active', state.viewMode === 'audit');
 
   if (state.lastMetrics) renderCompactHud(state.lastMetrics);
+  if (state.viewMode === 'audit') renderPowerAuditSection();
   saveRuntimeSettings();
 }
 
