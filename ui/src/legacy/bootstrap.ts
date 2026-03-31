@@ -436,6 +436,7 @@ const MAX_SAMPLES_PER_SESSION_UI = 500;
 const PROCESS_REFRESH_ACTIVE_MS = 8000;
 const PROCESS_REFRESH_IDLE_MS = 15000;
 const PROCESS_REFRESH_HIDDEN_MS = 30000;
+const PROCESS_REFRESH_BACKGROUND_MS = 45000;
 const ADAPTIVE_WORKLOAD_CONFIRM_CYCLES = 3;
 const ADAPTIVE_WORKLOAD_COOLDOWN_MS = 30000;
 const ADVICE_CONFIRM_CYCLES = 4;
@@ -471,6 +472,7 @@ function nextPollDelayMs() {
 
 function nextProcessRefreshDelayMs() {
   if (document.hidden) return PROCESS_REFRESH_HIDDEN_MS;
+  if (!isProcessImpactPanelVisible()) return PROCESS_REFRESH_BACKGROUND_MS;
   if (shouldSleepWebview()) return 60000;
   if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return PROCESS_REFRESH_ACTIVE_MS;
   return PROCESS_REFRESH_IDLE_MS;
@@ -488,6 +490,26 @@ function shouldSleepWebview() {
   if (state.hudVisible || HUD_ONLY) return false;
   if (state.domeActive || state.adaptiveEnabled || state.kpiBench.running) return false;
   return (Date.now() - state.lastUserInteractionTs) >= UI_IDLE_SLEEP_AFTER_MS;
+}
+
+function isElementActuallyVisible(el) {
+  if (!el || document.hidden) return false;
+  if (el.closest('[hidden]')) return false;
+  if (el.closest('details:not([open])')) return false;
+  if (el.offsetParent === null) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function shouldKeepMainUiHot() {
+  if (HUD_ONLY) return false;
+  if (document.hidden) return false;
+  if (state.viewMode === 'benchmark' || state.viewMode === 'external') return false;
+  return state.windowFocused;
+}
+
+function isProcessImpactPanelVisible() {
+  return shouldKeepMainUiHot() && isElementActuallyVisible(document.querySelector('.process-impact-card'));
 }
 
 function scheduleNextPoll() {
@@ -527,10 +549,13 @@ function scheduleMetricRender(m) {
     ]);
     if (renderKey === lastRenderedMetricKey) return;
     lastRenderedMetricKey = renderKey;
-    renderMetrics(mm);
-    renderFormula(mm);
-    renderTuningAdvice(mm);
-    if (state.domeActive || state.snapshotBefore) renderProofPanel();
+    const keepMainUiHot = shouldKeepMainUiHot();
+    if (keepMainUiHot) {
+      renderMetrics(mm);
+      renderFormula(mm);
+      renderTuningAdvice(mm);
+      if (state.domeActive || state.snapshotBefore) renderProofPanel();
+    }
     if (state.hudVisible || HUD_ONLY) renderCompactHud(mm);
   });
 }
@@ -2064,6 +2089,11 @@ function stopProcessRefreshLoop() {
 
 async function refreshProcesses(options = {}) {
   const userInitiated = options.userInitiated === true;
+  const panelVisible = isProcessImpactPanelVisible();
+  if (!userInitiated && !panelVisible && !state.autoProcessTarget) {
+    startProcessRefreshLoop();
+    return;
+  }
   if (!userInitiated && shouldSleepWebview()) {
     startProcessRefreshLoop();
     return;
@@ -2097,7 +2127,7 @@ async function refreshProcesses(options = {}) {
     const sel = document.getElementById('targetProcess');
     const current = sel.value;
     const list = reportChanged ? capProcessListForSelect(rawList, current) : capProcessListForSelect(state.processList, current);
-    if (reportChanged) {
+    if (reportChanged && (panelVisible || userInitiated || state.autoProcessTarget)) {
       sel.innerHTML = '<option value="">Ce processus (SoulKernel)</option>';
       list.forEach(p => {
         const opt = document.createElement('option');
@@ -2141,7 +2171,7 @@ async function refreshProcesses(options = {}) {
       log(`Liste processus : ${list.length} affichées (${rawList.length} au total)`, 'ok');
     }
     state.lastProcessCount = rawList.length;
-    if (uiChanged && !document.hidden) {
+    if (uiChanged && panelVisible) {
       renderProcessImpactPanel();
       lastProcessUiRevision = uiRevision;
     }
