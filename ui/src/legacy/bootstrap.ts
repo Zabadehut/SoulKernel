@@ -413,6 +413,8 @@ let state = {
   lastTelemetryIngestTs: 0,
   lastTelemetryRefreshTs: 0,
   viewMode: 'detailed',
+  auditPresentationMode: 'raw',
+  auditEnergyFocus: 'machine',
   hudVisible: false,
   hudInteractive: false,
   hudPreset: 'compact',
@@ -2293,6 +2295,8 @@ function saveRuntimeSettings() {
       kpiArgs: (document.getElementById('kpiArgs')?.value || '4000'),
       kpiRuns: parseInt(document.getElementById('kpiRuns')?.value || '5', 10) || 5,
       viewMode: state.viewMode,
+      auditPresentationMode: state.auditPresentationMode,
+      auditEnergyFocus: state.auditEnergyFocus,
       hudVisible: !!state.hudVisible,
       hudInteractive: !!state.hudInteractive,
       hudPreset: state.hudPreset,
@@ -2327,6 +2331,8 @@ function loadRuntimeSettings() {
     if (typeof cfg.kpiArgs === 'string') { const el = document.getElementById('kpiArgs'); if (el) el.value = cfg.kpiArgs; }
     if (typeof cfg.kpiRuns === 'number') { const el = document.getElementById('kpiRuns'); if (el) el.value = String(Math.max(5, Math.min(20, Math.floor(cfg.kpiRuns)))); }
     if (cfg.viewMode === 'compact' || cfg.viewMode === 'detailed' || cfg.viewMode === 'benchmark' || cfg.viewMode === 'external' || cfg.viewMode === 'audit') state.viewMode = cfg.viewMode;
+    if (cfg.auditPresentationMode === 'raw' || cfg.auditPresentationMode === 'energy') state.auditPresentationMode = cfg.auditPresentationMode;
+    if (typeof cfg.auditEnergyFocus === 'string' && cfg.auditEnergyFocus) state.auditEnergyFocus = cfg.auditEnergyFocus;
     if (typeof cfg.hudVisible === 'boolean') state.hudVisible = cfg.hudVisible;
     if (typeof cfg.hudInteractive === 'boolean') state.hudInteractive = cfg.hudInteractive;
     if (cfg.hudPreset === 'mini' || cfg.hudPreset === 'compact' || cfg.hudPreset === 'detailed') state.hudPreset = cfg.hudPreset;
@@ -3238,9 +3244,267 @@ function formatGpuAuditSource(raw) {
   return parts.length ? parts.join(' · ') : '';
 }
 
+function setAuditPresentationMode(mode) {
+  state.auditPresentationMode = mode === 'energy' ? 'energy' : 'raw';
+  if (state.viewMode === 'audit') renderPowerAuditSection();
+  saveRuntimeSettings();
+}
+
+function setAuditEnergyFocus(focus) {
+  if (typeof focus !== 'string' || !focus.trim()) return;
+  state.auditEnergyFocus = focus;
+  if (state.viewMode === 'audit' && state.auditPresentationMode === 'energy') renderPowerAuditSection();
+  saveRuntimeSettings();
+}
+
+function syncAuditPresentationUi() {
+  const rawBtn = document.getElementById('btnAuditShowRaw');
+  const energyBtn = document.getElementById('btnAuditShowEnergy');
+  const rawView = document.getElementById('auditRawView');
+  const energyView = document.getElementById('auditEnergyView');
+  const isEnergy = state.auditPresentationMode === 'energy';
+  if (rawBtn) rawBtn.classList.toggle('active', !isEnergy);
+  if (energyBtn) energyBtn.classList.toggle('active', isEnergy);
+  if (rawView) rawView.classList.toggle('is-active', !isEnergy);
+  if (energyView) energyView.classList.toggle('is-active', isEnergy);
+}
+
+function buildEnergyAuditModel({ meter, raw, topContributors, grouped, audit, wallPower, hostPower, explainedPower, explainedShare, unattributed, sourcePresentation }) {
+  const gpuDevices = Array.isArray(raw.gpu_devices) ? raw.gpu_devices : [];
+  const gpuTop = topContributors
+    .filter((item) => Number(item?.gpu_usage_pct || 0) > 0)
+    .sort((a, b) => Number(b?.gpu_usage_pct || 0) - Number(a?.gpu_usage_pct || 0))
+    .slice(0, 5);
+  const cpuTop = topContributors
+    .slice()
+    .sort((a, b) => Number(b?.cpu_usage || 0) - Number(a?.cpu_usage || 0))
+    .slice(0, 5);
+  const residualPower = unattributed ?? (hostPower != null && explainedPower != null ? Math.max(0, Number(hostPower) - Number(explainedPower)) : null);
+  const summary = {
+    wallPower,
+    hostPower,
+    explainedPower,
+    explainedShare,
+    unattributed,
+    sourcePresentation,
+  };
+  const nodes = {
+    machine: {
+      title: 'Machine',
+      kicker: 'Total réconcilié',
+      strong: wallPower != null ? formatAuditWatts(wallPower) : formatAuditWatts(hostPower),
+      meta: `Host ${formatAuditWatts(hostPower)} · expliquée ${explainedShare == null ? '—' : explainedShare.toFixed(1) + ' %'} · non attribuée ${formatAuditWatts(unattributed)}`,
+      chips: [sourcePresentation.confidence, sourcePresentation.sourceLabel].filter(Boolean),
+      details: [
+        { label: 'Source active', value: sourcePresentation.sourceLabel || '—' },
+        { label: 'Mur / externe', value: formatAuditWatts(wallPower) },
+        { label: 'Puissance host', value: formatAuditWatts(hostPower) },
+        { label: 'Part expliquée', value: explainedShare == null ? '—' : `${explainedShare.toFixed(1)} %` },
+      ],
+    },
+    cpu: {
+      title: 'CPU',
+      kicker: 'Sous-système',
+      strong: `${formatAuditPct(raw.cpu_pct)} · ${raw.cpu_clock_mhz != null ? `${Number(raw.cpu_clock_mhz).toFixed(0)} MHz` : 'clock —'}`,
+      meta: `Temp ${raw.cpu_temp_c != null ? `${Number(raw.cpu_temp_c).toFixed(1)} C` : '—'} · max ${raw.cpu_max_clock_mhz != null ? `${Number(raw.cpu_max_clock_mhz).toFixed(0)} MHz` : '—'}`,
+      chips: ['host metrics'],
+      details: [
+        { label: 'CPU global', value: formatAuditPct(raw.cpu_pct) },
+        { label: 'Fréquence', value: raw.cpu_clock_mhz != null ? `${Number(raw.cpu_clock_mhz).toFixed(0)} MHz` : '—' },
+        { label: 'Température', value: raw.cpu_temp_c != null ? `${Number(raw.cpu_temp_c).toFixed(1)} C` : '—' },
+        { label: 'Runnable / faults', value: `${raw.runnable_tasks != null ? Number(raw.runnable_tasks) : '—'} · ${raw.page_faults_per_sec != null ? Number(raw.page_faults_per_sec).toFixed(1) + '/s' : '—'}` },
+      ],
+      related: cpuTop,
+    },
+    gpu: {
+      title: 'GPU',
+      kicker: 'Sous-système',
+      strong: `${formatAuditPct(raw.gpu_pct)} · ${raw.gpu_power_watts != null ? `${Number(raw.gpu_power_watts).toFixed(1)} W` : 'W —'}`,
+      meta: `Core ${raw.gpu_core_clock_mhz != null ? `${Number(raw.gpu_core_clock_mhz).toFixed(0)} MHz` : '—'} · VRAM ${raw.gpu_mem_used_mb != null && raw.gpu_mem_total_mb != null ? `${Number(raw.gpu_mem_used_mb)} / ${Number(raw.gpu_mem_total_mb)} MiB` : '—'}`,
+      chips: [raw.gpu_power_source, raw.gpu_power_confidence].filter(Boolean),
+      details: [
+        { label: 'GPU global', value: formatAuditPct(raw.gpu_pct) },
+        { label: 'Puissance', value: formatAuditWatts(raw.gpu_power_watts) },
+        { label: 'Clocks / VRAM', value: `${raw.gpu_core_clock_mhz != null ? `${Number(raw.gpu_core_clock_mhz).toFixed(0)} MHz` : '—'} · ${raw.gpu_mem_used_mb != null && raw.gpu_mem_total_mb != null ? `${Number(raw.gpu_mem_used_mb)} / ${Number(raw.gpu_mem_total_mb)} MiB` : '—'}` },
+        { label: 'Source', value: formatGpuAuditSource(raw) || '—' },
+      ],
+      related: gpuTop,
+      devices: gpuDevices,
+    },
+    platform: {
+      title: 'Motherboard & platform',
+      kicker: 'Résiduel réconcilié',
+      strong: formatAuditWatts(residualPower),
+      meta: 'Carte mère, chipset, VRM, USB, ventilateurs, périphériques et part non expliquée restante.',
+      chips: ['derived', 'residual_reconciled'],
+      details: [
+        { label: 'Résiduel', value: formatAuditWatts(residualPower) },
+        { label: 'Mur - process', value: formatAuditWatts(unattributed) },
+        { label: 'Source', value: sourcePresentation.confidence },
+        { label: 'Lecture', value: 'Valeur dérivée, pas capteur direct.' },
+      ],
+    },
+    os: {
+      title: 'OS & runtime',
+      kicker: 'Kernel / mémoire / host UI',
+      strong: `${raw.load_avg_1m_norm != null ? `${Number(raw.load_avg_1m_norm).toFixed(2)} x/core` : '—'} · ${formatAuditMiB(raw.webview_host_mem_mb)}`,
+      meta: `PSI CPU ${formatAuditPct(raw.psi_cpu != null ? Number(raw.psi_cpu) * 100 : null)} · PSI MEM ${formatAuditPct(raw.psi_mem != null ? Number(raw.psi_mem) * 100 : null)} · WebView host ${formatAuditPct(raw.webview_host_cpu_sum)}`,
+      chips: ['scheduler', 'memory', 'webview'],
+      details: [
+        { label: 'Charge OS', value: raw.load_avg_1m_norm != null ? `${Number(raw.load_avg_1m_norm).toFixed(2)} x/core` : '—' },
+        { label: 'PSI', value: `CPU ${formatAuditPct(raw.psi_cpu != null ? Number(raw.psi_cpu) * 100 : null)} · MEM ${formatAuditPct(raw.psi_mem != null ? Number(raw.psi_mem) * 100 : null)}` },
+        { label: 'WebView host', value: `${formatAuditPct(raw.webview_host_cpu_sum)} · ${formatAuditMiB(raw.webview_host_mem_mb)}` },
+        { label: 'Swap / zRAM', value: `${raw.swap_used_mb != null && raw.swap_total_mb != null ? `${Number(raw.swap_used_mb).toFixed(0)} / ${Number(raw.swap_total_mb).toFixed(0)} MiB` : '—'} · ${formatAuditMiB(raw.zram_used_mb)}` },
+      ],
+      related: audit ? [
+        { name: 'SoulKernel + WebView', estimated_power_w: audit.combined_estimated_power_w, cpu_usage: audit.combined_cpu_usage_pct, gpu_usage_pct: audit.combined_gpu_usage_pct, memory_kb: audit.combined_memory_kb },
+        { name: 'Hôte SoulKernel', estimated_power_w: audit.soulkernel_estimated_power_w, cpu_usage: audit.soulkernel_cpu_usage_pct, gpu_usage_pct: audit.soulkernel_gpu_usage_pct, memory_kb: audit.soulkernel_memory_kb },
+        { name: 'Runtime WebView', estimated_power_w: audit.webview_estimated_power_w, cpu_usage: audit.webview_cpu_usage_pct, gpu_usage_pct: audit.webview_gpu_usage_pct, memory_kb: audit.webview_memory_kb },
+      ] : [],
+    },
+    processes: {
+      title: 'Processus',
+      kicker: 'Attribution estimée',
+      strong: formatAuditWatts(explainedPower),
+      meta: `${grouped.length} groupes · ${topContributors.length} processus top · part expliquée ${explainedShare == null ? '—' : explainedShare.toFixed(1) + ' %'}`,
+      chips: ['observed first', 'estimated second'],
+      details: [
+        { label: 'Top process cumulés', value: formatAuditWatts(explainedPower) },
+        { label: 'Groupes', value: String(grouped.length) },
+        { label: 'Top list', value: String(topContributors.length) },
+        { label: 'Méthode', value: topContributors[0]?.attribution_method || '—' },
+      ],
+      related: topContributors.slice(0, 6),
+      groups: grouped.slice(0, 6),
+    },
+    external: {
+      title: 'Source externe',
+      kicker: 'Validation murale',
+      strong: formatAuditWatts(wallPower),
+      meta: `${meter.external_power?.source_tag || sourcePresentation.sourceLabel || '—'} · ${meter.external_power?.freshness || '—'} · bridge ${meter.external_power?.bridge_state || '—'}`,
+      chips: [sourcePresentation.confidence, meter.external_power?.runtime].filter(Boolean),
+      details: [
+        { label: 'Dernière mesure', value: meter.external_power?.last_watts_label || '—' },
+        { label: 'Timestamp', value: meter.external_power?.last_ts_label || '—' },
+        { label: 'Bridge', value: meter.external_power?.bridge_state || '—' },
+        { label: 'Runtime', value: meter.external_power?.runtime || '—' },
+      ],
+    },
+  };
+  return { summary, nodes };
+}
+
+function renderEnergyAuditView(model) {
+  const energyView = document.getElementById('auditEnergyView');
+  if (!energyView) return;
+  const focus = model.nodes[state.auditEnergyFocus] ? state.auditEnergyFocus : 'machine';
+  if (focus !== state.auditEnergyFocus) state.auditEnergyFocus = focus;
+  const node = model.nodes[focus];
+  const nodeOrder = ['external', 'cpu', 'gpu', 'platform', 'os', 'processes'];
+  const rootNodes = nodeOrder.map((key) => ({ key, node: model.nodes[key] })).filter((item) => !!item.node);
+  const breadcrumb = [
+    { key: 'machine', label: 'Machine' },
+  ];
+  if (focus !== 'machine') breadcrumb.push({ key: focus, label: node.title });
+  const detailCards = (node.details || []).map((item) => (
+    `<div class="energy-mini-stat"><div class="energy-mini-label">${escapeHtml(item.label)}</div><div class="energy-mini-value">${escapeHtml(String(item.value ?? '—'))}</div></div>`
+  )).join('');
+  const related = Array.isArray(node.related) ? node.related : [];
+  const relatedHtml = related.length
+    ? related.map((item) => (
+      `<div class="energy-detail-card"><strong>${escapeHtml(item.name || item.title || item.key || 'élément')}</strong><div class="audit-item-meta">W ${formatAuditWatts(item.estimated_power_w ?? item.power_watts)} · CPU ${formatAuditPct(item.cpu_usage)} · GPU ${formatAuditPct(item.gpu_usage_pct)} · RAM ${item.memory_kb != null ? formatAuditMiBFromKb(item.memory_kb) : (item.memory_used_mb != null ? formatAuditMiB(item.memory_used_mb) : '—')}</div></div>`
+    )).join('')
+    : '<div class="energy-detail-card">Aucun élément détaillé disponible à ce niveau.</div>';
+  const devices = Array.isArray(node.devices) && node.devices.length
+    ? node.devices.map((device) => (
+      `<div class="energy-detail-card"><strong>${escapeHtml(device.name || `GPU ${device.index}`)}</strong><div class="audit-item-meta">${escapeHtml(device.vendor || 'vendor —')} · ${escapeHtml(device.kind || 'kind —')} · ${formatAuditPct(device.utilization_pct)} · ${formatAuditWatts(device.power_watts)}</div></div>`
+    )).join('')
+    : '';
+  const groups = Array.isArray(node.groups) && node.groups.length
+    ? node.groups.map((group) => (
+      `<div class="energy-detail-card"><strong>${escapeHtml(group.key || 'groupe')}</strong><div class="audit-item-meta">${formatAuditWatts(group.estimated_power_w)} · CPU ${formatAuditPct(group.cpu_usage_pct)} · GPU ${formatAuditPct(group.gpu_usage_pct)} · ${Number(group.process_count || 0)} proc</div></div>`
+    )).join('')
+    : '';
+  energyView.innerHTML = `
+    <div class="energy-stage">
+      <div class="energy-hero">
+        <div class="energy-focus-panel">
+          <div class="energy-focus-kicker">${escapeHtml(node.kicker || 'couche')}</div>
+          <div class="energy-focus-title">${escapeHtml(node.title || 'Vue énergétique')}</div>
+          <div class="energy-focus-strong">${escapeHtml(node.strong || '—')}</div>
+          <div class="energy-focus-meta">${escapeHtml(node.meta || '—')}</div>
+          <div class="energy-chip-row">${(node.chips || []).map((chip) => `<span class="energy-chip">${escapeHtml(String(chip))}</span>`).join('')}</div>
+        </div>
+        <div class="energy-focus-panel">
+          <div class="energy-focus-kicker">Navigation</div>
+          <div class="energy-breadcrumbs">
+            ${breadcrumb.map((item, idx) => `${idx > 0 ? '<span class="energy-crumb-sep">/</span>' : ''}<button type="button" class="energy-crumb${item.key === focus ? ' is-current' : ''}" data-energy-focus="${escapeHtml(item.key)}">${escapeHtml(item.label)}</button>`).join('')}
+          </div>
+          <div class="energy-focus-meta" style="margin-top:.55rem">${escapeHtml(model.summary.sourcePresentation.summary || '')}</div>
+          <div class="energy-mini-grid" style="margin-top:.7rem">${[
+            { label: 'Mur', value: formatAuditWatts(model.summary.wallPower) },
+            { label: 'Host', value: formatAuditWatts(model.summary.hostPower) },
+            { label: 'Expliquée', value: model.summary.explainedShare == null ? '—' : `${model.summary.explainedShare.toFixed(1)} %` },
+            { label: 'Non attribuée', value: formatAuditWatts(model.summary.unattributed) },
+          ].map((item) => `<div class="energy-mini-stat"><div class="energy-mini-label">${escapeHtml(item.label)}</div><div class="energy-mini-value">${escapeHtml(item.value)}</div></div>`).join('')}</div>
+        </div>
+      </div>
+      <div class="energy-map-panel">
+        <div class="energy-link-label">Vue système</div>
+        <div class="energy-map-shell">
+          <div class="energy-column">
+            <div class="energy-link-label">Source</div>
+            <button type="button" class="energy-node energy-node--external${focus === 'external' ? ' is-active' : ''}" data-energy-focus="external">
+              <div class="energy-node-kicker">${escapeHtml(model.nodes.external.kicker || '')}</div>
+              <div class="energy-node-title">${escapeHtml(model.nodes.external.title || '')}</div>
+              <div class="energy-node-strong">${escapeHtml(model.nodes.external.strong || '—')}</div>
+              <div class="energy-node-meta">${escapeHtml(model.nodes.external.meta || '—')}</div>
+            </button>
+          </div>
+          <div class="energy-column">
+            <div class="energy-link-label">Machine</div>
+            <button type="button" class="energy-node${focus === 'machine' ? ' is-active' : ''}" data-energy-focus="machine">
+              <div class="energy-node-kicker">${escapeHtml(model.nodes.machine.kicker || '')}</div>
+              <div class="energy-node-title">${escapeHtml(model.nodes.machine.title || '')}</div>
+              <div class="energy-node-strong">${escapeHtml(model.nodes.machine.strong || '—')}</div>
+              <div class="energy-node-meta">${escapeHtml(model.nodes.machine.meta || '—')}</div>
+            </button>
+          </div>
+          <div class="energy-column">
+            <div class="energy-link-label">Couches</div>
+            ${rootNodes.map((item) => `
+              <button type="button" class="energy-node energy-node--${escapeHtml(item.key)}${focus === item.key ? ' is-active' : ''}" data-energy-focus="${escapeHtml(item.key)}">
+                <div class="energy-node-kicker">${escapeHtml(item.node.kicker || '')}</div>
+                <div class="energy-node-title">${escapeHtml(item.node.title || '')}</div>
+                <div class="energy-node-strong">${escapeHtml(item.node.strong || '—')}</div>
+                <div class="energy-node-meta">${escapeHtml(item.node.meta || '—')}</div>
+              </button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="energy-detail-grid">
+        <div class="energy-detail-section">
+          <div class="energy-detail-title">Mesures & attributs</div>
+          <div class="energy-mini-grid">${detailCards}</div>
+          ${devices ? `<div class="energy-detail-title" style="margin-top:2px">Devices</div><div class="energy-detail-list">${devices}</div>` : ''}
+          ${groups ? `<div class="energy-detail-title" style="margin-top:2px">Groupes</div><div class="energy-detail-list">${groups}</div>` : ''}
+        </div>
+        <div class="energy-detail-section">
+          <div class="energy-detail-title">Contributeurs dominants</div>
+          <div class="energy-detail-list">${relatedHtml}</div>
+        </div>
+      </div>
+    </div>
+  `;
+  energyView.querySelectorAll('[data-energy-focus]').forEach((el) => {
+    el.addEventListener('click', () => setAuditEnergyFocus(el.getAttribute('data-energy-focus')));
+  });
+}
+
 function renderPowerAuditSection() {
   const view = document.getElementById('powerAuditView');
   if (!view) return;
+  syncAuditPresentationUi();
   const meter = collectEnergyMeterExport();
   const host = collectRawHostMetricsExport();
   const proc = collectProcessImpactExport();
@@ -3280,6 +3544,19 @@ function renderPowerAuditSection() {
       sourceLabel: 'differential_only',
     };
   })();
+  renderEnergyAuditView(buildEnergyAuditModel({
+    meter,
+    raw,
+    topContributors,
+    grouped,
+    audit,
+    wallPower,
+    hostPower,
+    explainedPower,
+    explainedShare,
+    unattributed,
+    sourcePresentation,
+  }));
   set('auditPowerHeadline', sourcePresentation.headline);
   set('auditPowerConfidence', sourcePresentation.confidence);
   set('auditPowerSummary', sourcePresentation.summary);
@@ -4279,6 +4556,14 @@ if (btnViewExternal) {
 const btnViewAudit = document.getElementById('btnViewAudit');
 if (btnViewAudit) {
   btnViewAudit.addEventListener('click', () => setViewMode('audit'));
+}
+const btnAuditShowRaw = document.getElementById('btnAuditShowRaw');
+if (btnAuditShowRaw) {
+  btnAuditShowRaw.addEventListener('click', () => setAuditPresentationMode('raw'));
+}
+const btnAuditShowEnergy = document.getElementById('btnAuditShowEnergy');
+if (btnAuditShowEnergy) {
+  btnAuditShowEnergy.addEventListener('click', () => setAuditPresentationMode('energy'));
 }
 const btnHudToggle = document.getElementById('btnHudToggle');
 if (btnHudToggle) {

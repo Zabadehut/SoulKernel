@@ -1,4 +1,22 @@
 <section class="audit-view" id="powerAuditView">
+  <div class="audit-mode-bar">
+    <div class="audit-mode-copy">
+      <div class="audit-mode-title">Mode de lecture</div>
+      <div class="audit-mode-sub">Audit brut pour la preuve, vue énergétique pour lire la puissance par couches.</div>
+    </div>
+    <div class="view-switch audit-mode-switch">
+      <button type="button" class="view-btn active" id="btnAuditShowRaw">
+        <span class="view-ico"><i data-lucide="scroll-text"></i></span> Audit brut
+      </button>
+      <button type="button" class="view-btn" id="btnAuditShowEnergy">
+        <span class="view-ico"><i data-lucide="network"></i></span> Vue énergétique
+      </button>
+    </div>
+  </div>
+
+  <div class="audit-subview audit-subview--energy" id="auditEnergyView"></div>
+
+  <div class="audit-subview audit-subview--raw is-active" id="auditRawView">
   <div class="audit-shell">
     <div class="audit-column">
       <div class="advisor-panel audit-panel">
@@ -62,5 +80,6 @@
         <div class="audit-list" id="auditOverheadBreakdown"></div>
       </div>
     </div>
+  </div>
   </div>
 </section>
