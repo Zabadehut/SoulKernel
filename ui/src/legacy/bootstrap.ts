@@ -1252,7 +1252,7 @@ function renderGreenItPanel(s) {
     const firstDate = new Date(lt.first_launch_ts).toLocaleDateString('fr-FR');
     let text = `Depuis le ${firstDate} : `;
     text += `<strong>${lt.total_dome_activations}</strong> activations, `;
-    text += `<strong>${f2(lt.total_dome_hours)}</strong> h de dome, `;
+    text += `<strong>${f2(lt.total_dome_hours)}</strong> h de dome ON (brut), `;
       text += `<strong>${f2(lt.total_cpu_hours_differential)}</strong> CPU-h (diff. mesure), `;
     text += `<strong>${f2(lt.total_mem_gb_hours_differential ?? 0)}</strong> RAM·GB·h (diff. mesure)`;
     if (lt.has_real_power) {

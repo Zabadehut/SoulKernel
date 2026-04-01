@@ -116,7 +116,7 @@
       </div>
       <div class="green-it-stat">
         <div class="green-it-val" id="greenDomeH">0</div>
-        <div class="green-it-label">DOME HOURS</div>
+        <div class="green-it-label">DÔME ON · H</div>
       </div>
     </div>
     <div class="green-it-grid" style="margin-top:.35rem">
@@ -169,8 +169,9 @@
       class="green-it-hint compactable-copy"
       style="margin-top:.5rem;font-size:.74rem;line-height:1.35;color:var(--muted);max-width:42rem"
     >
-      Compteurs <strong>ACTIF</strong> seulement (idle/média exclus). <strong>kWh / CO₂ / €</strong> = intégrale
-      de la <strong>puissance mesurée</strong> × tarifs (pas un « gain dôme » sans double mesure énergétique).
+      <strong>CPU·h</strong> et <strong>RAM·GB·h</strong> excluent les périodes idle/média. <strong>DÔME ON · H</strong>
+      compte le temps dôme actif brut. <strong>kWh / CO₂ / €</strong> = intégrale de la <strong>puissance mesurée</strong>
+      × tarifs (pas un « gain dôme » sans double mesure énergétique).
     </div>
     <details class="advanced-fold" style="margin-top:.4rem">
       <summary
