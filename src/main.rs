@@ -6,10 +6,11 @@
 mod audit;
 mod hud;
 
-use soulkernel_core::{
-    benchmark, external_power, formula, metrics, orchestrator, platform, telemetry, workload_catalog,
-};
 use soulkernel_core::inventory::{DeviceInventoryItem, DeviceInventoryReport};
+use soulkernel_core::{
+    benchmark, external_power, formula, metrics, orchestrator, platform, telemetry,
+    workload_catalog,
+};
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -1190,11 +1191,10 @@ fn get_device_inventory(app: AppHandle) -> Result<DeviceInventoryReport, String>
 
     // Override display list with Tauri-detected info (dimensions, scale, primary flag).
     let app2 = app.clone();
-    let tauri_displays = hud::dispatch_on_main_thread(&app, move || {
-        hud::list_displays_internal(&app2)
-    })
-    .unwrap_or_else(|_| Ok(Vec::new()))
-    .unwrap_or_default();
+    let tauri_displays =
+        hud::dispatch_on_main_thread(&app, move || hud::list_displays_internal(&app2))
+            .unwrap_or_else(|_| Ok(Vec::new()))
+            .unwrap_or_default();
 
     if !tauri_displays.is_empty() {
         report.displays = tauri_displays
