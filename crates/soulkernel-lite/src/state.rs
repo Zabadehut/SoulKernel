@@ -350,13 +350,7 @@ impl LiteState {
             .bridge_interval_s
             .unwrap_or(8.0)
             .clamp(2.0, 300.0);
-        let python_bin = self
-            .vm
-            .external_config
-            .python_bin
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| self.vm.external_status.default_python_hint.clone());
+        let python_bin = pick_python_bin(&self.vm.external_config)?;
         let script_path = resolve_bridge_script_path()?;
         let out_path = self
             .vm
@@ -644,6 +638,99 @@ fn default_benchmark_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("soulkernel_benchmark_history.jsonl")
+}
+
+fn bundled_python_relative_paths() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        &[
+            "runtime/python/windows/python.exe",
+            "python/windows/python.exe",
+        ]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &[
+            "runtime/python/macos/bin/python3",
+            "python/macos/bin/python3",
+        ]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        &[
+            "runtime/python/linux/bin/python3",
+            "python/linux/bin/python3",
+        ]
+    }
+}
+
+fn resolve_bundled_python() -> Option<PathBuf> {
+    let mut bases = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            bases.push(dir.to_path_buf());
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        bases.push(cwd);
+    }
+
+    for base in bases {
+        for rel in bundled_python_relative_paths() {
+            let candidate = base.join(rel);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn effective_python_candidates(cfg: &MerossFileConfig) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(path) = resolve_bundled_python() {
+        out.push(path.to_string_lossy().into_owned());
+    }
+    if let Some(bin) = cfg
+        .python_bin
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        out.push(bin.to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        out.push("py".to_string());
+        out.push("python".to_string());
+        out.push("python3".to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        out.push("python3".to_string());
+        out.push("python".to_string());
+    }
+    out.dedup();
+    out
+}
+
+fn pick_python_bin(cfg: &MerossFileConfig) -> Result<String, String> {
+    for candidate in effective_python_candidates(cfg) {
+        if Command::new(&candidate)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(
+        "python introuvable (essayés: runtime embarqué, python configuré, python3/python/py)"
+            .to_string(),
+    )
 }
 
 fn bridge_log_last_non_empty_line() -> Option<String> {
