@@ -12,6 +12,14 @@ pub fn watts(value: Option<f64>) -> String {
         .unwrap_or_else(|| "N/A".to_string())
 }
 
+pub fn maybe_text(value: Option<&str>, fallback: &str) -> String {
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 pub fn mib_from_kb(kb: u64) -> String {
     format!("{:.0} MiB", kb as f64 / 1024.0)
 }
