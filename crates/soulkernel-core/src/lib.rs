@@ -6,6 +6,7 @@ pub mod memory_policy;
 pub mod metrics;
 pub mod orchestrator;
 pub mod platform;
+pub mod processes;
 pub mod telemetry;
 pub mod workload_catalog;
 
