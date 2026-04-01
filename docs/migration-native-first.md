@@ -31,15 +31,21 @@ SoulKernel bascule vers une architecture `Rust native first`.
 
 ## Ordre de migration
 
-1. créer `soulkernel-core`
-2. brancher `headless`
-3. brancher `lite`
-4. garder Tauri en compat
-5. déplacer progressivement les commandes Tauri vers des wrappers autour du core
-6. remplacer ensuite l’UI WebView permanente par une vue web locale optionnelle
+1. créer `soulkernel-core` ✅
+2. brancher `headless` ✅
+3. brancher `lite` ✅
+4. garder Tauri en compat ✅
+5. déplacer les commandes Tauri vers des wrappers autour du core ✅
+6. remplacer l’UI WebView permanente par une vue web locale optionnelle
 
 ## Notes
 
-- l’extraction actuelle garde encore le binaire Tauri sur ses modules locaux pour limiter le risque de régression immédiate
-- la librairie racine ré-exporte désormais `soulkernel-core`
-- l’étape suivante consiste à faire consommer explicitement le crate `soulkernel-core` par `src/main.rs`
+- `src/main.rs` consomme désormais `soulkernel_core::{benchmark, external_power, formula, metrics,
+  orchestrator, platform, telemetry, workload_catalog}` directement — plus de doublons locaux
+- `src/inventory` supprimé : `get_device_inventory` appelle `soulkernel_core::inventory::collect_device_inventory()`
+  et override uniquement `displays` avec la détection Tauri/WebView (résolution, scale, primary)
+- les chemins de données Tauri (télémétrie, lifetime) utilisent maintenant les fonctions core
+  (`~/.local/share/SoulKernel/`) — cohérence garantie avec headless et lite
+- seuls `mod audit` (commandes Tauri audit_log_event / get_audit_log_path) et `mod hud` (WebView HUD)
+  restent locaux car strictement Tauri-spécifiques
+- prochaine étape : vue web locale optionnelle servie par axum/tiny_http, consommée depuis le lite

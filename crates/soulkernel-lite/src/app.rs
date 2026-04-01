@@ -175,12 +175,22 @@ impl LiteApp {
             );
             ui.horizontal(|ui| {
                 ui.label("Power file");
-                let path = state.vm.external_config.power_file.get_or_insert_default();
+                let path = state.vm.external_config.power_file.get_or_insert_with(|| {
+                    soulkernel_core::external_power::default_power_file()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                });
                 ui.text_edit_singleline(path);
             });
             ui.horizontal(|ui| {
                 ui.label("Python");
-                let bin = state.vm.external_config.python_bin.get_or_insert_default();
+                let bin = state.vm.external_config.python_bin.get_or_insert_with(|| {
+                    if cfg!(target_os = "windows") {
+                        "py".to_string()
+                    } else {
+                        "python3".to_string()
+                    }
+                });
                 ui.text_edit_singleline(bin);
             });
             ui.horizontal(|ui| {
@@ -373,6 +383,7 @@ impl LiteApp {
                 state.vm.device_inventory.connected_endpoints.len()
             ));
             egui::ScrollArea::vertical()
+                .id_salt("endpoints_scroll")
                 .max_height(180.0)
                 .show(ui, |ui| {
                     for item in state
@@ -565,6 +576,7 @@ impl LiteApp {
             ));
             ui.separator();
             egui::ScrollArea::vertical()
+                .id_salt("processes_scroll")
                 .max_height(260.0)
                 .show(ui, |ui| {
                     for proc_ in &state.vm.process_report.top_processes {
@@ -624,21 +636,41 @@ impl eframe::App for LiteApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.columns(3, |columns| {
-                Self::left_panel(&mut columns[0], &state.vm);
-                Self::center_panel(&mut columns[1], &state.vm);
-                Self::right_panel(&mut columns[2], state, &mut self.error, &mut self.info);
+            egui::ScrollArea::vertical()
+                .id_salt("central_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+            ui.push_id("row_main", |ui| {
+                ui.columns(3, |columns| {
+                    Self::left_panel(&mut columns[0], &state.vm);
+                    Self::center_panel(&mut columns[1], &state.vm);
+                    Self::right_panel(&mut columns[2], state, &mut self.error, &mut self.info);
+                });
             });
 
             ui.add_space(8.0);
-            ui.columns(2, |columns| {
-                Self::external_power_panel(&mut columns[0], state, &mut self.error, &mut self.info);
-                Self::benchmark_panel(&mut columns[1], state, &mut self.error, &mut self.info);
+            ui.push_id("row_ext_bench", |ui| {
+                ui.columns(2, |columns| {
+                    Self::external_power_panel(
+                        &mut columns[0],
+                        state,
+                        &mut self.error,
+                        &mut self.info,
+                    );
+                    Self::benchmark_panel(
+                        &mut columns[1],
+                        state,
+                        &mut self.error,
+                        &mut self.info,
+                    );
+                });
             });
             ui.add_space(8.0);
-            ui.columns(2, |columns| {
-                Self::power_audit_panel(&mut columns[0], state);
-                Self::hud_panel(&mut columns[1], state);
+            ui.push_id("row_audit_hud", |ui| {
+                ui.columns(2, |columns| {
+                    Self::power_audit_panel(&mut columns[0], state);
+                    Self::hud_panel(&mut columns[1], state);
+                });
             });
             ui.add_space(8.0);
             ui.group(|ui| {
@@ -650,6 +682,7 @@ impl eframe::App for LiteApp {
                     ui.label("Aucune action récente.");
                 }
             });
+            }); // ScrollArea
         });
 
         if state.vm.show_hud {

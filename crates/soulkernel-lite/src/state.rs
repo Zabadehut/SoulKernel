@@ -103,7 +103,26 @@ impl LiteState {
         let platform_info = platform::info();
         let soulram_backend = platform::soulram_backend_info();
         let device_inventory = inventory::collect_device_inventory();
-        let external_config = external_power::get_meross_config_or_default();
+        let mut external_config = external_power::get_meross_config_or_default();
+        // Pré-remplir les champs optionnels avec leurs valeurs par défaut calculées
+        // pour que les champs UI ne soient pas vides au premier lancement.
+        if external_config.power_file.is_none() {
+            external_config.power_file = external_power::default_power_file()
+                .map(|p| p.to_string_lossy().into_owned());
+        }
+        if external_config.python_bin.is_none() {
+            external_config.python_bin = Some(if cfg!(target_os = "windows") {
+                "py".to_string()
+            } else {
+                "python3".to_string()
+            });
+        }
+        if external_config.meross_region.is_none() {
+            external_config.meross_region = Some("eu".to_string());
+        }
+        if external_config.meross_device_type.is_none() {
+            external_config.meross_device_type = Some("mss315".to_string());
+        }
         let external_status = external_power::get_external_power_status();
         let benchmark_path = default_benchmark_path();
         let benchmark_state = BenchmarkState::new(benchmark_path);

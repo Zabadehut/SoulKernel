@@ -8,7 +8,7 @@ members = [
 
 [package]
 name    = "soulkernel"
-version = "1.1.8"
+version = "1.1.9"
 edition = "2021"
 description = "SoulKernel — Performance Dome orchestrator"
 

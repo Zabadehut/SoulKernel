@@ -4,16 +4,12 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod audit;
-mod benchmark;
-mod external_power;
-mod formula;
 mod hud;
-mod memory_policy;
-mod metrics;
-mod orchestrator;
-mod platform;
-mod telemetry;
-mod workload_catalog;
+
+use soulkernel_core::{
+    benchmark, external_power, formula, metrics, orchestrator, platform, telemetry, workload_catalog,
+};
+use soulkernel_core::inventory::{DeviceInventoryItem, DeviceInventoryReport};
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -34,207 +30,6 @@ use hud::{
     apply_hud_window_mode, cleanup_hud_before_exit, reset_hud_health_for_show, HudHealthState,
     HudOverlayData, HudRuntimeState, SharedHud, SharedHudData, SharedHudHealth, SharedHudTx,
 };
-
-#[derive(Clone, serde::Serialize)]
-pub struct DeviceInventoryItem {
-    pub kind: String,
-    pub name: String,
-    pub detail: Option<String>,
-    pub status: Option<String>,
-    pub evidence: String,
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct DeviceInventoryReport {
-    pub platform: String,
-    pub displays: Vec<DeviceInventoryItem>,
-    pub gpus: Vec<DeviceInventoryItem>,
-    pub storage: Vec<DeviceInventoryItem>,
-    pub network: Vec<DeviceInventoryItem>,
-    pub power: Vec<DeviceInventoryItem>,
-    pub connected_endpoints: Vec<DeviceInventoryItem>,
-    pub platform_features: Vec<String>,
-}
-
-#[cfg(target_os = "linux")]
-fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
-    let mut items = Vec::new();
-
-    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.contains('-') {
-                continue;
-            }
-            let status = std::fs::read_to_string(entry.path().join("status"))
-                .ok()
-                .map(|s| s.trim().to_string());
-            let modes = std::fs::read_to_string(entry.path().join("modes"))
-                .ok()
-                .map(|s| s.lines().take(2).collect::<Vec<_>>().join(", "));
-            items.push(DeviceInventoryItem {
-                kind: "display_output".to_string(),
-                name,
-                detail: modes.filter(|s| !s.is_empty()),
-                status,
-                evidence: "platform_detected".to_string(),
-            });
-        }
-    }
-
-    if let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let product = std::fs::read_to_string(path.join("product"))
-                .ok()
-                .map(|s| s.trim().to_string());
-            if product.as_deref().unwrap_or("").is_empty() {
-                continue;
-            }
-            let manufacturer = std::fs::read_to_string(path.join("manufacturer"))
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let speed = std::fs::read_to_string(path.join("speed"))
-                .ok()
-                .map(|s| format!("{} Mb/s", s.trim()))
-                .filter(|s| !s.starts_with("0"));
-            let vendor_id = std::fs::read_to_string(path.join("idVendor"))
-                .ok()
-                .map(|s| s.trim().to_string());
-            let product_id = std::fs::read_to_string(path.join("idProduct"))
-                .ok()
-                .map(|s| s.trim().to_string());
-            let mut detail_parts = Vec::new();
-            if let Some(v) = manufacturer {
-                detail_parts.push(v);
-            }
-            if let Some(v) = speed {
-                detail_parts.push(v);
-            }
-            if let (Some(v), Some(p)) = (vendor_id, product_id) {
-                detail_parts.push(format!("{v}:{p}"));
-            }
-            items.push(DeviceInventoryItem {
-                kind: "usb_device".to_string(),
-                name: product.unwrap_or_else(|| "USB device".to_string()),
-                detail: (!detail_parts.is_empty()).then(|| detail_parts.join(" · ")),
-                status: Some("connected".to_string()),
-                evidence: "platform_detected".to_string(),
-            });
-        }
-    }
-
-    if let Ok(cards) = std::fs::read_to_string("/proc/asound/cards") {
-        for line in cards.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || !trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                continue;
-            }
-            items.push(DeviceInventoryItem {
-                kind: "audio_endpoint".to_string(),
-                name: trimmed.to_string(),
-                detail: Some("ALSA card".to_string()),
-                status: Some("detected".to_string()),
-                evidence: "platform_detected".to_string(),
-            });
-        }
-    }
-
-    items
-}
-
-#[cfg(target_os = "windows")]
-fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
-    let mut items = Vec::new();
-    let out = std::process::Command::new("wmic")
-        .args([
-            "path",
-            "Win32_PnPEntity",
-            "where",
-            "PNPClass='USB' or PNPClass='Monitor' or PNPClass='MEDIA'",
-            "get",
-            "Name,PNPClass,Status",
-            "/format:csv",
-        ])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_default();
-
-    for line in out.lines().skip(1) {
-        let cols: Vec<&str> = line.split(',').collect();
-        if cols.len() < 4 {
-            continue;
-        }
-        let class = cols[2].trim();
-        let name = cols[1].trim();
-        let status = cols[3].trim();
-        if name.is_empty() || class.is_empty() {
-            continue;
-        }
-        let kind = match class {
-            "USB" => "usb_device",
-            "Monitor" => "display_output",
-            "MEDIA" => "audio_endpoint",
-            _ => "endpoint",
-        };
-        items.push(DeviceInventoryItem {
-            kind: kind.to_string(),
-            name: name.to_string(),
-            detail: Some(format!("class {class}")),
-            status: Some(status.to_string()),
-            evidence: "platform_detected".to_string(),
-        });
-    }
-
-    items
-}
-
-#[cfg(target_os = "macos")]
-fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
-    let mut items = Vec::new();
-    let sections = [
-        ("SPUSBDataType", "usb_device"),
-        ("SPAudioDataType", "audio_endpoint"),
-        ("SPThunderboltDataType", "external_bus"),
-    ];
-    for (section, kind) in sections {
-        let out = std::process::Command::new("system_profiler")
-            .arg(section)
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .unwrap_or_default();
-        for line in out.lines() {
-            let raw = line.trim_end();
-            let trimmed = raw.trim();
-            if trimmed.is_empty() || !trimmed.ends_with(':') {
-                continue;
-            }
-            if trimmed.contains("Data Type") || trimmed.contains("Bus:") {
-                continue;
-            }
-            let name = trimmed.trim_end_matches(':').trim();
-            if name.is_empty() {
-                continue;
-            }
-            items.push(DeviceInventoryItem {
-                kind: kind.to_string(),
-                name: name.to_string(),
-                detail: Some(section.to_string()),
-                status: Some("detected".to_string()),
-                evidence: "platform_detected".to_string(),
-            });
-        }
-    }
-    items
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
-    Vec::new()
-}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -1391,146 +1186,37 @@ fn platform_info() -> platform::PlatformInfo {
 
 #[tauri::command]
 fn get_device_inventory(app: AppHandle) -> Result<DeviceInventoryReport, String> {
-    let platform = platform::info();
-    let raw = metrics::collect().ok().map(|m| m.raw);
+    let mut report = soulkernel_core::inventory::collect_device_inventory();
 
+    // Override display list with Tauri-detected info (dimensions, scale, primary flag).
     let app2 = app.clone();
-    let displays = hud::dispatch_on_main_thread(&app, move || hud::list_displays_internal(&app2))
-        .unwrap_or_else(|_| Ok(Vec::new()))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|display| DeviceInventoryItem {
-            kind: "display".to_string(),
-            name: display.name,
-            detail: Some(format!(
-                "{}x{} · scale {:.2} · pos {}:{}",
-                display.width, display.height, display.scale_factor, display.x, display.y
-            )),
-            status: Some(if display.is_primary {
-                "primary".to_string()
-            } else {
-                "active".to_string()
-            }),
-            evidence: "platform_detected".to_string(),
-        })
-        .collect::<Vec<_>>();
-
-    let gpus = raw
-        .as_ref()
-        .map(|raw| {
-            if !raw.gpu_devices.is_empty() {
-                raw.gpu_devices
-                    .iter()
-                    .map(|gpu| DeviceInventoryItem {
-                        kind: "gpu".to_string(),
-                        name: gpu
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| format!("GPU {}", gpu.index)),
-                        detail: Some(format!(
-                            "{} · util {} · power {}",
-                            gpu.vendor.clone().unwrap_or_else(|| "vendor —".to_string()),
-                            gpu.utilization_pct
-                                .map(|v| format!("{v:.1} %"))
-                                .unwrap_or_else(|| "—".to_string()),
-                            gpu.power_watts
-                                .map(|v| format!("{v:.1} W"))
-                                .unwrap_or_else(|| "—".to_string())
-                        )),
-                        status: gpu.kind.clone(),
-                        evidence: gpu
-                            .confidence
-                            .clone()
-                            .unwrap_or_else(|| "observed_usage".to_string()),
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            }
-        })
-        .unwrap_or_default();
-
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    let storage = disks
-        .list()
-        .iter()
-        .map(|disk| DeviceInventoryItem {
-            kind: "storage".to_string(),
-            name: disk.name().to_string_lossy().to_string(),
-            detail: Some(format!(
-                "{} · {} / {} GiB",
-                disk.file_system().to_string_lossy(),
-                ((disk.total_space().saturating_sub(disk.available_space())) as f64
-                    / 1024.0
-                    / 1024.0
-                    / 1024.0)
-                    .round(),
-                (disk.total_space() as f64 / 1024.0 / 1024.0 / 1024.0).round()
-            )),
-            status: Some(format!("{:?}", disk.kind()).to_lowercase()),
-            evidence: "platform_detected".to_string(),
-        })
-        .collect::<Vec<_>>();
-
-    let networks = sysinfo::Networks::new_with_refreshed_list();
-    let network = networks
-        .iter()
-        .map(|(name, data)| DeviceInventoryItem {
-            kind: "network".to_string(),
-            name: name.to_string(),
-            detail: Some(format!(
-                "rx {} B · tx {} B",
-                data.received(),
-                data.transmitted()
-            )),
-            status: Some("detected".to_string()),
-            evidence: "platform_detected".to_string(),
-        })
-        .collect::<Vec<_>>();
-
-    let mut power = Vec::new();
-    if let Some(raw) = raw.as_ref() {
-        if let Some(source) = raw.power_watts_source.clone() {
-            power.push(DeviceInventoryItem {
-                kind: "power_source".to_string(),
-                name: source,
-                detail: raw
-                    .power_watts
-                    .map(|v| format!("{v:.2} W machine"))
-                    .or_else(|| Some("W machine indisponibles".to_string())),
-                status: Some("active".to_string()),
-                evidence: "platform_measured".to_string(),
-            });
-        }
-        if let Some(on_battery) = raw.on_battery {
-            power.push(DeviceInventoryItem {
-                kind: "power_mode".to_string(),
-                name: if on_battery {
-                    "battery".to_string()
-                } else {
-                    "ac".to_string()
-                },
-                detail: raw
-                    .battery_percent
-                    .map(|v| format!("{v:.0} %"))
-                    .or_else(|| Some("niveau inconnu".to_string())),
-                status: Some("detected".to_string()),
-                evidence: "platform_detected".to_string(),
-            });
-        }
-    }
-    let connected_endpoints = collect_connected_endpoints();
-
-    Ok(DeviceInventoryReport {
-        platform: platform.os,
-        displays,
-        gpus,
-        storage,
-        network,
-        power,
-        connected_endpoints,
-        platform_features: platform.features,
+    let tauri_displays = hud::dispatch_on_main_thread(&app, move || {
+        hud::list_displays_internal(&app2)
     })
+    .unwrap_or_else(|_| Ok(Vec::new()))
+    .unwrap_or_default();
+
+    if !tauri_displays.is_empty() {
+        report.displays = tauri_displays
+            .into_iter()
+            .map(|display| DeviceInventoryItem {
+                kind: "display".to_string(),
+                name: display.name,
+                detail: Some(format!(
+                    "{}x{} · scale {:.2} · pos {}:{}",
+                    display.width, display.height, display.scale_factor, display.x, display.y
+                )),
+                status: Some(if display.is_primary {
+                    "primary".to_string()
+                } else {
+                    "active".to_string()
+                }),
+                evidence: "platform_detected".to_string(),
+            })
+            .collect();
+    }
+
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1980,60 +1666,12 @@ fn export_benchmark_to_file(content: String) -> Result<String, String> {
 
 // ─── Telemetry ────────────────────────────────────────────────────────────────
 
-fn default_telemetry_path() -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(appdata)
-            .join("SoulKernel")
-            .join("telemetry")
-            .join("energy_samples.jsonl");
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("soulkernel_energy_samples.jsonl")
-}
-
-fn default_telemetry_pricing_path() -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(appdata)
-            .join("SoulKernel")
-            .join("telemetry")
-            .join("pricing.json");
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("soulkernel_pricing.json")
-}
-
-fn default_telemetry_lifetime_path() -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(appdata)
-            .join("SoulKernel")
-            .join("telemetry")
-            .join("lifetime_gains.json");
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("soulkernel_lifetime_gains.json")
-}
-
 fn default_benchmark_history_path() -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(appdata)
-            .join("SoulKernel")
-            .join("benchmark")
-            .join("ab_sessions.jsonl");
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("soulkernel_ab_sessions.jsonl")
+    audit::default_audit_path()
+        .parent()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("soulkernel_benchmark_history.jsonl")
 }
 
 #[tauri::command]
@@ -2180,11 +1818,13 @@ fn get_evidence_data_paths(audit: State<'_, SharedAudit>) -> Result<EvidenceData
             .ok_or_else(|| "audit path unavailable".to_string())?
     };
     Ok(EvidenceDataPaths {
-        telemetry_samples_jsonl: default_telemetry_path().to_string_lossy().into_owned(),
-        lifetime_gains_json: default_telemetry_lifetime_path()
+        telemetry_samples_jsonl: telemetry::default_telemetry_path()
             .to_string_lossy()
             .into_owned(),
-        energy_pricing_json: default_telemetry_pricing_path()
+        lifetime_gains_json: telemetry::default_telemetry_lifetime_path()
+            .to_string_lossy()
+            .into_owned(),
+        energy_pricing_json: telemetry::default_telemetry_pricing_path()
             .to_string_lossy()
             .into_owned(),
         benchmark_sessions_jsonl: default_benchmark_history_path()
@@ -2319,9 +1959,9 @@ fn main() {
     }));
 
     let telemetry_state: SharedTelemetry = Arc::new(Mutex::new(telemetry::TelemetryState::new(
-        default_telemetry_path(),
-        default_telemetry_pricing_path(),
-        default_telemetry_lifetime_path(),
+        telemetry::default_telemetry_path(),
+        telemetry::default_telemetry_pricing_path(),
+        telemetry::default_telemetry_lifetime_path(),
     )));
     let benchmark_state: SharedBenchmark = Arc::new(Mutex::new(benchmark::BenchmarkState::new(
         default_benchmark_history_path(),
