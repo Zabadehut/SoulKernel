@@ -132,7 +132,7 @@
       <div class="green-it-report-grid">
         <div class="green-it-stat">
           <div class="green-it-val" id="greenHourKwh">—</div>
-          <div class="green-it-label">HEURE · KWH</div>
+          <div class="green-it-label">1H GLISSANTE · KWH</div>
           <div class="green-it-mini" id="greenHourEur">—</div>
           <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyHour">
             <span class="btn-ico"><i data-lucide="download"></i></span> Export heure
@@ -140,7 +140,7 @@
         </div>
         <div class="green-it-stat">
           <div class="green-it-val" id="greenDayKwh">—</div>
-          <div class="green-it-label">JOUR · KWH</div>
+          <div class="green-it-label">24H GLISSANTES · KWH</div>
           <div class="green-it-mini" id="greenDayEur">—</div>
           <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyDay">
             <span class="btn-ico"><i data-lucide="download"></i></span> Export jour
@@ -148,7 +148,7 @@
         </div>
         <div class="green-it-stat">
           <div class="green-it-val" id="greenWeekKwh">—</div>
-          <div class="green-it-label">SEMAINE · KWH</div>
+          <div class="green-it-label">7J GLISSANTS · KWH</div>
           <div class="green-it-mini" id="greenWeekEur">—</div>
           <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyWeek">
             <span class="btn-ico"><i data-lucide="download"></i></span> Export week
@@ -156,12 +156,15 @@
         </div>
         <div class="green-it-stat">
           <div class="green-it-val" id="greenMonthKwh">—</div>
-          <div class="green-it-label">MOIS · KWH</div>
+          <div class="green-it-label">30J GLISSANTS · KWH</div>
           <div class="green-it-mini" id="greenMonthEur">—</div>
           <button type="button" class="ctrl-btn btn-secondary green-it-export" id="btnExportEnergyMonth">
             <span class="btn-ico"><i data-lucide="download"></i></span> Export mois
           </button>
         </div>
+      </div>
+      <div class="green-it-hint compactable-copy" style="margin-top:.35rem;font-size:.72rem;line-height:1.35;color:var(--muted);max-width:42rem">
+        Fenêtres <strong>glissantes</strong>, pas calendaires. Si les <strong>watts réels</strong> n’existent que sur une période récente, les valeurs <strong>7j</strong> et <strong>30j</strong> peuvent être identiques.
       </div>
     </div>
     <div class="green-it-lifetime" id="greenItLifetime">Chargement des donnees vie entiere...</div>
