@@ -17,6 +17,7 @@ use soulkernel_core::workload_catalog::{self, WorkloadSceneDto};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
@@ -67,6 +68,19 @@ pub struct LiteState {
     dome_snapshot: Option<ResourceState>,
     last_refresh: Instant,
     external_bridge_child: Option<Child>,
+    refresh_rx: Option<Receiver<Result<LiteRefreshSnapshot, String>>>,
+    refresh_in_flight: bool,
+}
+
+struct LiteRefreshSnapshot {
+    now_ms: u64,
+    metrics: ResourceState,
+    formula: FormulaResult,
+    process_report: ProcessObservedReport,
+    platform_info: PlatformInfo,
+    soulram_backend: SoulRamBackendInfo,
+    device_inventory: DeviceInventoryReport,
+    external_status: ExternalPowerStatus,
 }
 
 impl LiteState {
@@ -173,46 +187,108 @@ impl LiteState {
             dome_snapshot: None,
             last_refresh: Instant::now() - Duration::from_secs(10),
             external_bridge_child: None,
+            refresh_rx: None,
+            refresh_in_flight: false,
         })
     }
 
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
+        let applied = self.apply_pending_refresh()?;
         if self.last_refresh.elapsed() < Duration::from_secs(2) {
-            return Ok(false);
+            return Ok(applied);
+        }
+        if self.refresh_in_flight {
+            return Ok(applied);
         }
         self.last_refresh = Instant::now();
-        self.refresh_now()?;
-        Ok(true)
+        self.spawn_refresh_task();
+        Ok(applied)
     }
 
     pub fn refresh_now(&mut self) -> Result<(), String> {
-        let metrics = metrics::collect().map_err(|e| e.to_string())?;
+        let snapshot = Self::collect_refresh_snapshot(self.selected_profile(), self.vm.kappa)?;
+        self.apply_refresh_snapshot(snapshot)?;
+        self.refresh_in_flight = false;
+        self.refresh_rx = None;
+        self.last_refresh = Instant::now();
+        Ok(())
+    }
+
+    fn spawn_refresh_task(&mut self) {
         let profile = self.selected_profile();
-        let formula = formula::compute(&metrics, &profile, self.vm.kappa);
-        let now_ms = now_ms_local();
-        self.vm.now_ms = now_ms;
-        self.vm.metrics = metrics.clone();
-        self.vm.formula = formula.clone();
-        self.vm.process_report = processes::collect_observed_report(12);
-        self.vm.platform_info = platform::info();
-        self.vm.soulram_backend = platform::soulram_backend_info();
-        self.vm.device_inventory = inventory::collect_device_inventory();
-        self.vm.external_status = external_power::get_external_power_status();
+        let kappa = self.vm.kappa;
+        let (tx, rx) = mpsc::channel();
+        self.refresh_rx = Some(rx);
+        self.refresh_in_flight = true;
+        std::thread::spawn(move || {
+            let _ = tx.send(Self::collect_refresh_snapshot(profile, kappa));
+        });
+    }
+
+    fn apply_pending_refresh(&mut self) -> Result<bool, String> {
+        let Some(rx) = self.refresh_rx.take() else {
+            return Ok(false);
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                self.refresh_in_flight = false;
+                let snapshot = result?;
+                self.apply_refresh_snapshot(snapshot)?;
+                Ok(true)
+            }
+            Err(TryRecvError::Empty) => {
+                self.refresh_rx = Some(rx);
+                Ok(false)
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.refresh_in_flight = false;
+                Err("rafraîchissement lite interrompu".to_string())
+            }
+        }
+    }
+
+    fn collect_refresh_snapshot(
+        profile: WorkloadProfile,
+        kappa: f64,
+    ) -> Result<LiteRefreshSnapshot, String> {
+        let metrics = metrics::collect().map_err(|e| e.to_string())?;
+        let formula = formula::compute(&metrics, &profile, kappa);
+        Ok(LiteRefreshSnapshot {
+            now_ms: now_ms_local(),
+            metrics,
+            formula,
+            process_report: processes::collect_observed_report(12),
+            platform_info: platform::info(),
+            soulram_backend: platform::soulram_backend_info(),
+            device_inventory: inventory::collect_device_inventory(),
+            external_status: external_power::get_external_power_status(),
+        })
+    }
+
+    fn apply_refresh_snapshot(&mut self, snapshot: LiteRefreshSnapshot) -> Result<(), String> {
+        self.vm.now_ms = snapshot.now_ms;
+        self.vm.metrics = snapshot.metrics.clone();
+        self.vm.formula = snapshot.formula.clone();
+        self.vm.process_report = snapshot.process_report;
+        self.vm.platform_info = snapshot.platform_info;
+        self.vm.soulram_backend = snapshot.soulram_backend;
+        self.vm.device_inventory = snapshot.device_inventory;
+        self.vm.external_status = snapshot.external_status;
         self.vm.external_bridge_running = self.is_external_bridge_running();
         let _ = self.telemetry_state.ingest(TelemetryIngestRequest {
-            ts_ms: Some(now_ms),
-            power_watts: metrics.raw.power_watts,
+            ts_ms: Some(self.vm.now_ms),
+            power_watts: snapshot.metrics.raw.power_watts,
             dome_active: self.vm.dome_active,
             soulram_active: self.vm.soulram_active,
             kpi_gain_median_pct: None,
-            cpu_pct: Some(metrics.raw.cpu_pct),
-            pi: Some(formula.pi),
+            cpu_pct: Some(snapshot.metrics.raw.cpu_pct),
+            pi: Some(snapshot.formula.pi),
             machine_activity: Some(MachineActivity::Active),
-            mem_used_mb: Some(metrics.raw.mem_used_mb as f64),
-            mem_total_mb: Some(metrics.raw.mem_total_mb as f64),
-            power_source_tag: metrics.raw.power_watts_source.clone(),
+            mem_used_mb: Some(snapshot.metrics.raw.mem_used_mb as f64),
+            mem_total_mb: Some(snapshot.metrics.raw.mem_total_mb as f64),
+            power_source_tag: snapshot.metrics.raw.power_watts_source.clone(),
         });
-        self.vm.telemetry = self.telemetry_state.summary(now_ms);
+        self.vm.telemetry = self.telemetry_state.summary(self.vm.now_ms);
         self.vm.target_pid = if self.vm.auto_target {
             self.vm
                 .process_report
