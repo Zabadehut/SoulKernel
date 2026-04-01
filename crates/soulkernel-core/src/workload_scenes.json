@@ -1,0 +1,902 @@
+[
+  {
+    "id": "es",
+    "label": "Elasticsearch / stack recherche",
+    "category": "data",
+    "alpha": [
+      0.2,
+      0.35,
+      0.2,
+      0.25,
+      0.0
+    ],
+    "duration_estimate_s": 60,
+    "burst": true,
+    "hardware_focus": "RAM, NVMe, réseau",
+    "soulram_linux": "zRAM + priorité swap si pression PSI; éviter drop_caches fréquent",
+    "soulram_windows": "Compression + trim working set si admin; sinon ratio cible",
+    "soulram_macos": "Ratio cible + purge caches fichiers (effet indirect)"
+  },
+  {
+    "id": "compile",
+    "label": "Compilation / toolchain",
+    "category": "dev",
+    "alpha": [
+      0.55,
+      0.25,
+      0.1,
+      0.1,
+      0.0
+    ],
+    "duration_estimate_s": 120,
+    "burst": false,
+    "hardware_focus": "CPU, disque",
+    "soulram_linux": "zRAM pour absorber pics link; pas de drop_caches en plein build",
+    "soulram_windows": "Trim WS modéré; compression selon charge",
+    "soulram_macos": "Kernel gère; éviter purge agressive pendant link"
+  },
+  {
+    "id": "gamer",
+    "label": "Jeu vidéo (latence)",
+    "category": "loisir",
+    "alpha": [
+      0.45,
+      0.2,
+      0.05,
+      0.05,
+      0.25
+    ],
+    "duration_estimate_s": 90,
+    "burst": true,
+    "hardware_focus": "GPU, CPU",
+    "soulram_linux": "zRAM si swap utilisé; pas d'agressif I/O",
+    "soulram_windows": "Trim + compression: utile si forte pression",
+    "soulram_macos": "Ratio + faible perturbation caches"
+  },
+  {
+    "id": "ai",
+    "label": "IA / entraînement GPU",
+    "category": "ml",
+    "alpha": [
+      0.15,
+      0.2,
+      0.05,
+      0.05,
+      0.55
+    ],
+    "duration_estimate_s": 30,
+    "burst": false,
+    "hardware_focus": "GPU, VRAM",
+    "soulram_linux": "zRAM pour host si swap; éviter drop_caches",
+    "soulram_windows": "Compression si RAM hôte saturée",
+    "soulram_macos": "Ratio + stabilité noyau"
+  },
+  {
+    "id": "backup",
+    "label": "Sauvegarde / copie massive",
+    "category": "stockage",
+    "alpha": [
+      0.15,
+      0.15,
+      0.3,
+      0.4,
+      0.0
+    ],
+    "duration_estimate_s": 300,
+    "burst": false,
+    "hardware_focus": "I/O, bande passante",
+    "soulram_linux": "zRAM secondaire; attention drop_caches",
+    "soulram_windows": "Trim si standby gonflé",
+    "soulram_macos": "Purge caches fichiers avec prudence"
+  },
+  {
+    "id": "sqlite",
+    "label": "SQLite / embarqué",
+    "category": "data",
+    "alpha": [
+      0.2,
+      0.1,
+      0.05,
+      0.65,
+      0.0
+    ],
+    "duration_estimate_s": 20,
+    "burst": false,
+    "hardware_focus": "Disque",
+    "soulram_linux": "zRAM pour éviter thrash swap",
+    "soulram_windows": "Compression + trim si latence I/O",
+    "soulram_macos": "Ratio discret"
+  },
+  {
+    "id": "oracle",
+    "label": "SGBD lourd (Oracle/MS SQL)",
+    "category": "data",
+    "alpha": [
+      0.25,
+      0.3,
+      0.1,
+      0.35,
+      0.0
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM tampon swap; pas drop_caches en charge",
+    "soulram_windows": "Trim prudent",
+    "soulram_macos": "Pas de purge cache agressive"
+  },
+  {
+    "id": "web_browsing",
+    "label": "Navigateur / bureautique web",
+    "category": "bureau",
+    "alpha": [
+      0.18,
+      0.22,
+      0.06,
+      0.44,
+      0.1
+    ],
+    "duration_estimate_s": 45,
+    "burst": true,
+    "hardware_focus": "RAM, réseau",
+    "soulram_linux": "zRAM si nombreux onglets + swap",
+    "soulram_windows": "Compression + trim si RAM tendue",
+    "soulram_macos": "Ratio + purge cache lecture"
+  },
+  {
+    "id": "office_suite",
+    "label": "Suite bureautique locale",
+    "category": "bureau",
+    "alpha": [
+      0.25,
+      0.3,
+      0.1,
+      0.3,
+      0.05
+    ],
+    "duration_estimate_s": 60,
+    "burst": false,
+    "hardware_focus": "RAM, disque",
+    "soulram_linux": "zRAM modéré",
+    "soulram_windows": "Compression standard",
+    "soulram_macos": "Ratio discret"
+  },
+  {
+    "id": "ide_dev",
+    "label": "IDE / éditeur lourd",
+    "category": "dev",
+    "alpha": [
+      0.48,
+      0.22,
+      0.08,
+      0.17,
+      0.05
+    ],
+    "duration_estimate_s": 90,
+    "burst": true,
+    "hardware_focus": "CPU, RAM",
+    "soulram_linux": "zRAM pour indexer; éviter drop_caches",
+    "soulram_windows": "Trim si beaucoup d'IDEs",
+    "soulram_macos": "Ratio + caches"
+  },
+  {
+    "id": "video_editing",
+    "label": "Montage vidéo",
+    "category": "création",
+    "alpha": [
+      0.28,
+      0.18,
+      0.05,
+      0.22,
+      0.27
+    ],
+    "duration_estimate_s": 240,
+    "burst": false,
+    "hardware_focus": "GPU, stockage",
+    "soulram_linux": "zRAM si proxy sur disque; prudence drop_caches",
+    "soulram_windows": "Compression si RAM hôte pleine",
+    "soulram_macos": "Ratio + gros fichiers: indirect"
+  },
+  {
+    "id": "audio_daw",
+    "label": "DAW / audio pro",
+    "category": "création",
+    "alpha": [
+      0.42,
+      0.15,
+      0.08,
+      0.3,
+      0.05
+    ],
+    "duration_estimate_s": 120,
+    "burst": false,
+    "hardware_focus": "CPU, disque",
+    "soulram_linux": "zRAM léger; stabilité buffer",
+    "soulram_windows": "Trim léger",
+    "soulram_macos": "Ratio faible bruit"
+  },
+  {
+    "id": "photo_editing",
+    "label": "Photo RAW / Lightroom",
+    "category": "création",
+    "alpha": [
+      0.22,
+      0.2,
+      0.05,
+      0.18,
+      0.35
+    ],
+    "duration_estimate_s": 90,
+    "burst": false,
+    "hardware_focus": "GPU, RAM",
+    "soulram_linux": "zRAM si catalogue volumineux",
+    "soulram_windows": "Compression si pic RAM",
+    "soulram_macos": "Ratio + purge lecture"
+  },
+  {
+    "id": "live_streaming",
+    "label": "Streaming live encode",
+    "category": "création",
+    "alpha": [
+      0.35,
+      0.12,
+      0.05,
+      0.23,
+      0.25
+    ],
+    "duration_estimate_s": 75,
+    "burst": true,
+    "hardware_focus": "CPU, GPU, réseau",
+    "soulram_linux": "zRAM si swap; éviter I/O agressif",
+    "soulram_windows": "Trim ciblé",
+    "soulram_macos": "Ratio stables"
+  },
+  {
+    "id": "vm_workstation",
+    "label": "Poste VM (VirtualBox/VMware)",
+    "category": "virt",
+    "alpha": [
+      0.18,
+      0.45,
+      0.12,
+      0.22,
+      0.03
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "RAM",
+    "soulram_linux": "zRAM essentiel si swap VM",
+    "soulram_windows": "Compression + trim si ballonnement",
+    "soulram_macos": "Ratio + mémoire invités"
+  },
+  {
+    "id": "docker_dev",
+    "label": "Docker / compose dev",
+    "category": "virt",
+    "alpha": [
+      0.22,
+      0.38,
+      0.08,
+      0.27,
+      0.05
+    ],
+    "duration_estimate_s": 120,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM pour layers; prudence drop_caches",
+    "soulram_windows": "Trim si build",
+    "soulram_macos": "Ratio discret"
+  },
+  {
+    "id": "kubernetes_edge",
+    "label": "K8s local (kind/k3s)",
+    "category": "infra",
+    "alpha": [
+      0.2,
+      0.4,
+      0.1,
+      0.27,
+      0.03
+    ],
+    "duration_estimate_s": 200,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM fortement utile",
+    "soulram_windows": "Compression si pods RAM",
+    "soulram_macos": "Ratio + charge"
+  },
+  {
+    "id": "postgres_db",
+    "label": "PostgreSQL",
+    "category": "data",
+    "alpha": [
+      0.22,
+      0.38,
+      0.08,
+      0.27,
+      0.05
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM swap tampon",
+    "soulram_windows": "Trim prudent",
+    "soulram_macos": "Pas purge agressive"
+  },
+  {
+    "id": "mysql_db",
+    "label": "MySQL / MariaDB",
+    "category": "data",
+    "alpha": [
+      0.24,
+      0.36,
+      0.08,
+      0.27,
+      0.05
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM swap tampon",
+    "soulram_windows": "Trim prudent",
+    "soulram_macos": "Ratio discret"
+  },
+  {
+    "id": "mongodb_db",
+    "label": "MongoDB",
+    "category": "data",
+    "alpha": [
+      0.18,
+      0.42,
+      0.06,
+      0.29,
+      0.05
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM utile",
+    "soulram_windows": "Compression si WiredTiger pression",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "redis_cache",
+    "label": "Redis / cache in-RAM",
+    "category": "data",
+    "alpha": [
+      0.15,
+      0.55,
+      0.05,
+      0.22,
+      0.03
+    ],
+    "duration_estimate_s": 60,
+    "burst": true,
+    "hardware_focus": "RAM",
+    "soulram_linux": "zRAM critique si swap",
+    "soulram_windows": "Trim très prudent",
+    "soulram_macos": "Latence: éviter purge"
+  },
+  {
+    "id": "kafka_stream",
+    "label": "Kafka / streaming logs",
+    "category": "data",
+    "alpha": [
+      0.2,
+      0.25,
+      0.08,
+      0.42,
+      0.05
+    ],
+    "duration_estimate_s": 150,
+    "burst": false,
+    "hardware_focus": "I/O, réseau",
+    "soulram_linux": "zRAM secondaire",
+    "soulram_windows": "Trim si pagefile",
+    "soulram_macos": "Ratio faible"
+  },
+  {
+    "id": "spark_etl",
+    "label": "Spark / ETL batch",
+    "category": "data",
+    "alpha": [
+      0.45,
+      0.15,
+      0.06,
+      0.31,
+      0.03
+    ],
+    "duration_estimate_s": 300,
+    "burst": false,
+    "hardware_focus": "CPU, I/O",
+    "soulram_linux": "zRAM shuffle disque",
+    "soulram_windows": "Compression modérée",
+    "soulram_macos": "Ratio batch"
+  },
+  {
+    "id": "pytorch_training",
+    "label": "PyTorch / entraînement",
+    "category": "ml",
+    "alpha": [
+      0.25,
+      0.2,
+      0.03,
+      0.12,
+      0.4
+    ],
+    "duration_estimate_s": 600,
+    "burst": false,
+    "hardware_focus": "GPU, VRAM",
+    "soulram_linux": "zRAM host swap",
+    "soulram_windows": "Compression RAM hôte",
+    "soulram_macos": "Ratio long run"
+  },
+  {
+    "id": "llm_serving",
+    "label": "LLM inference / API",
+    "category": "ml",
+    "alpha": [
+      0.12,
+      0.2,
+      0.04,
+      0.1,
+      0.54
+    ],
+    "duration_estimate_s": 45,
+    "burst": true,
+    "hardware_focus": "GPU, RAM",
+    "soulram_linux": "zRAM KV host",
+    "soulram_windows": "Trim si RAM hôte",
+    "soulram_macos": "Ratio latence"
+  },
+  {
+    "id": "blender_3d",
+    "label": "Blender / rendu 3D",
+    "category": "création",
+    "alpha": [
+      0.18,
+      0.12,
+      0.03,
+      0.12,
+      0.55
+    ],
+    "duration_estimate_s": 300,
+    "burst": false,
+    "hardware_focus": "GPU",
+    "soulram_linux": "zRAM si bake",
+    "soulram_windows": "Compression rare utile",
+    "soulram_macos": "Ratio rendu"
+  },
+  {
+    "id": "cad_engineering",
+    "label": "CAO / CFD léger",
+    "category": "pro",
+    "alpha": [
+      0.32,
+      0.14,
+      0.04,
+      0.1,
+      0.4
+    ],
+    "duration_estimate_s": 200,
+    "burst": false,
+    "hardware_focus": "GPU, CPU",
+    "soulram_linux": "zRAM fichiers swap",
+    "soulram_windows": "Trim discret",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "hpc_simulation",
+    "label": "Calcul scientifique / HPC",
+    "category": "science",
+    "alpha": [
+      0.62,
+      0.22,
+      0.06,
+      0.08,
+      0.02
+    ],
+    "duration_estimate_s": 400,
+    "burst": false,
+    "hardware_focus": "CPU, RAM",
+    "soulram_linux": "zRAM tampon; pas drop_caches",
+    "soulram_windows": "Compression prudente",
+    "soulram_macos": "Stabilité"
+  },
+  {
+    "id": "data_science",
+    "label": "Notebooks / pandas",
+    "category": "science",
+    "alpha": [
+      0.38,
+      0.24,
+      0.04,
+      0.18,
+      0.16
+    ],
+    "duration_estimate_s": 90,
+    "burst": false,
+    "hardware_focus": "RAM, CPU",
+    "soulram_linux": "zRAM dataframes",
+    "soulram_windows": "Trim léger",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "video_transcode",
+    "label": "Transcodage vidéo batch",
+    "category": "création",
+    "alpha": [
+      0.52,
+      0.14,
+      0.04,
+      0.18,
+      0.12
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "CPU, I/O",
+    "soulram_linux": "zRAM pipeline",
+    "soulram_windows": "Compression host",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "cloud_sync",
+    "label": "Sync cloud (OneDrive…)",
+    "category": "stockage",
+    "alpha": [
+      0.12,
+      0.15,
+      0.28,
+      0.45,
+      0.0
+    ],
+    "duration_estimate_s": 120,
+    "burst": false,
+    "hardware_focus": "I/O, réseau",
+    "soulram_linux": "zRAM peu prioritaire",
+    "soulram_windows": "Trim si standby",
+    "soulram_macos": "Purge caches sync"
+  },
+  {
+    "id": "p2p_heavy",
+    "label": "P2P / torrent",
+    "category": "réseau",
+    "alpha": [
+      0.1,
+      0.12,
+      0.25,
+      0.48,
+      0.05
+    ],
+    "duration_estimate_s": 180,
+    "burst": false,
+    "hardware_focus": "I/O",
+    "soulram_linux": "zRAM limité",
+    "soulram_windows": "Trim cache disque",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "nas_archive",
+    "label": "NAS / archive locale",
+    "category": "stockage",
+    "alpha": [
+      0.1,
+      0.18,
+      0.35,
+      0.37,
+      0.0
+    ],
+    "duration_estimate_s": 300,
+    "burst": false,
+    "hardware_focus": "I/O",
+    "soulram_linux": "zRAM peu",
+    "soulram_windows": "Trim",
+    "soulram_macos": "Purge prudente"
+  },
+  {
+    "id": "electron_app",
+    "label": "App Electron / Chromium",
+    "category": "dev",
+    "alpha": [
+      0.28,
+      0.4,
+      0.06,
+      0.21,
+      0.05
+    ],
+    "duration_estimate_s": 60,
+    "burst": false,
+    "hardware_focus": "RAM",
+    "soulram_linux": "zRAM multi-fenêtres",
+    "soulram_windows": "Compression + trim",
+    "soulram_macos": "Ratio + purge"
+  },
+  {
+    "id": "mobile_backup",
+    "label": "Sauvegarde téléphone",
+    "category": "stockage",
+    "alpha": [
+      0.12,
+      0.14,
+      0.22,
+      0.52,
+      0.0
+    ],
+    "duration_estimate_s": 90,
+    "burst": false,
+    "hardware_focus": "I/O",
+    "soulram_linux": "zRAM secondaire",
+    "soulram_windows": "Trim",
+    "soulram_macos": "Purge"
+  },
+  {
+    "id": "rdp_remote",
+    "label": "Bureau à distance",
+    "category": "bureau",
+    "alpha": [
+      0.38,
+      0.18,
+      0.06,
+      0.14,
+      0.24
+    ],
+    "duration_estimate_s": 90,
+    "burst": true,
+    "hardware_focus": "CPU, GPU, réseau",
+    "soulram_linux": "zRAM session",
+    "soulram_windows": "Compression + trim",
+    "soulram_macos": "Ratio fluidité"
+  },
+  {
+    "id": "browser_many_tabs",
+    "label": "Navigateur 50+ onglets",
+    "category": "bureau",
+    "alpha": [
+      0.2,
+      0.52,
+      0.08,
+      0.15,
+      0.05
+    ],
+    "duration_estimate_s": 60,
+    "burst": true,
+    "hardware_focus": "RAM",
+    "soulram_linux": "zRAM fortement recommandé",
+    "soulram_windows": "Compression + trim",
+    "soulram_macos": "Ratio + purge lecture"
+  },
+  {
+    "id": "messaging_collab",
+    "label": "Teams / Slack / Zoom fond",
+    "category": "bureau",
+    "alpha": [
+      0.22,
+      0.38,
+      0.06,
+      0.27,
+      0.07
+    ],
+    "duration_estimate_s": 60,
+    "burst": true,
+    "hardware_focus": "RAM, réseau",
+    "soulram_linux": "zRAM si comm apps",
+    "soulram_windows": "Trim",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "videoconf_meeting",
+    "label": "Visioconf active",
+    "category": "bureau",
+    "alpha": [
+      0.32,
+      0.14,
+      0.04,
+      0.2,
+      0.3
+    ],
+    "duration_estimate_s": 45,
+    "burst": true,
+    "hardware_focus": "CPU, GPU",
+    "soulram_linux": "zRAM éviter GC swap",
+    "soulram_windows": "Compression + trim",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "idle_desktop",
+    "label": "Machine quasi idle",
+    "category": "système",
+    "alpha": [
+      0.05,
+      0.15,
+      0.1,
+      0.1,
+      0.6
+    ],
+    "duration_estimate_s": 30,
+    "burst": false,
+    "hardware_focus": "GPU veille",
+    "soulram_linux": "zRAM maintenance",
+    "soulram_windows": "Rien d'agressif",
+    "soulram_macos": "Ratio minimal"
+  },
+  {
+    "id": "laptop_battery",
+    "label": "Laptop sur batterie",
+    "category": "mobilité",
+    "alpha": [
+      0.12,
+      0.32,
+      0.15,
+      0.28,
+      0.13
+    ],
+    "duration_estimate_s": 60,
+    "burst": true,
+    "hardware_focus": "RAM, écran",
+    "soulram_linux": "zRAM réduit swap disque",
+    "soulram_windows": "Compression pour éviter disque",
+    "soulram_macos": "Purge caches économie"
+  },
+  {
+    "id": "apache_httpd",
+    "label": "Apache / PHP",
+    "category": "infra",
+    "alpha": [
+      0.25,
+      0.28,
+      0.1,
+      0.32,
+      0.05
+    ],
+    "duration_estimate_s": 120,
+    "burst": false,
+    "hardware_focus": "I/O",
+    "soulram_linux": "zRAM worker",
+    "soulram_windows": "Trim",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "nginx_static",
+    "label": "Nginx / reverse proxy",
+    "category": "infra",
+    "alpha": [
+      0.18,
+      0.2,
+      0.08,
+      0.49,
+      0.05
+    ],
+    "duration_estimate_s": 90,
+    "burst": true,
+    "hardware_focus": "I/O",
+    "soulram_linux": "zRAM buffer",
+    "soulram_windows": "Trim cache",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "game_dev_engine",
+    "label": "Moteur jeu (éditeur)",
+    "category": "dev",
+    "alpha": [
+      0.4,
+      0.16,
+      0.04,
+      0.1,
+      0.3
+    ],
+    "duration_estimate_s": 120,
+    "burst": true,
+    "hardware_focus": "GPU, RAM",
+    "soulram_linux": "zRAM assets",
+    "soulram_windows": "Trim",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "unity_unreal",
+    "label": "Unity / Unreal",
+    "category": "dev",
+    "alpha": [
+      0.35,
+      0.14,
+      0.04,
+      0.08,
+      0.39
+    ],
+    "duration_estimate_s": 120,
+    "burst": true,
+    "hardware_focus": "GPU",
+    "soulram_linux": "zRAM compile shaders",
+    "soulram_windows": "Compression",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "minecraft_server",
+    "label": "Serveur Minecraft",
+    "category": "jeu",
+    "alpha": [
+      0.25,
+      0.42,
+      0.08,
+      0.22,
+      0.03
+    ],
+    "duration_estimate_s": 300,
+    "burst": false,
+    "hardware_focus": "RAM, I/O",
+    "soulram_linux": "zRAM monde",
+    "soulram_windows": "Trim rare",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "twitch_stream",
+    "label": "Stream Twitch / OBS",
+    "category": "loisir",
+    "alpha": [
+      0.3,
+      0.12,
+      0.04,
+      0.22,
+      0.32
+    ],
+    "duration_estimate_s": 90,
+    "burst": true,
+    "hardware_focus": "CPU, GPU",
+    "soulram_linux": "zRAM encode",
+    "soulram_windows": "Trim",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "crypto_gpu",
+    "label": "Mining GPU (si légal)",
+    "category": "spécial",
+    "alpha": [
+      0.08,
+      0.06,
+      0.02,
+      0.04,
+      0.8
+    ],
+    "duration_estimate_s": 600,
+    "burst": false,
+    "hardware_focus": "GPU",
+    "soulram_linux": "zRAM irrelevant",
+    "soulram_windows": "Compression off souvent",
+    "soulram_macos": "N/A GPU"
+  },
+  {
+    "id": "folding_at_home",
+    "label": "Folding@home / BOINC",
+    "category": "science",
+    "alpha": [
+      0.05,
+      0.08,
+      0.02,
+      0.05,
+      0.8
+    ],
+    "duration_estimate_s": 600,
+    "burst": false,
+    "hardware_focus": "GPU",
+    "soulram_linux": "zRAM minimal",
+    "soulram_windows": "Rien d'agressif",
+    "soulram_macos": "Ratio"
+  },
+  {
+    "id": "stress_benchmark",
+    "label": "Stress test / bench",
+    "category": "système",
+    "alpha": [
+      0.35,
+      0.25,
+      0.1,
+      0.12,
+      0.18
+    ],
+    "duration_estimate_s": 30,
+    "burst": true,
+    "hardware_focus": "Tout",
+    "soulram_linux": "zRAM selon scénario",
+    "soulram_windows": "Trim mesuré",
+    "soulram_macos": "Ratio"
+  }
+]

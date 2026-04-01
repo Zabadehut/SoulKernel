@@ -1,6 +1,6 @@
 # SoulKernel
 
-**Orchestrateur Performance Dome** — Tauri + Rust, cross‑plateforme. Donne un maximum d’amplitude au processus cible et **prouve les gains** (export + avant/après).
+**Orchestrateur Performance Dome** — migration en cours vers une architecture **Rust native first**, cross‑plateforme. Le frontend Tauri reste présent en compatibilité temporaire pour l’audit riche.
 
 **Vision** : SoulKernel orchestre l’activité des OS (charge, mémoire, priorités, politiques) pour réduire ou stabiliser la consommation électrique du PC ; la mesure **au secteur** (prise connectée) sert de validation — voir [`docs/VISION.md`](docs/VISION.md) et [`docs/MEROSS.md`](docs/MEROSS.md) (ex. prise **MSS315ZF** Meross via `scripts/meross_mss315_bridge.py` et runtime Python embarqué optionnel dans le bundle).
 
@@ -15,19 +15,15 @@
 
 ```
 SoulKernel/
+├── crates/
+│   ├── soulkernel-core/      ← coeur métier partagé, sans dépendance Tauri
+│   ├── soulkernel-headless/  ← collecte + audit JSONL sans UI permanente
+│   └── soulkernel-lite/      ← UI native Rust légère (egui/eframe)
 ├── src/
-│   ├── main.rs          ← Tauri entry + invoke handlers
-│   ├── audit.rs         ← JSONL audit log writer
+│   ├── main.rs          ← entrée Tauri historique + invoke handlers
+│   ├── audit.rs         ← wrappers Tauri sur l’audit du core
 │   ├── hud.rs           ← System HUD overlay management
-│   ├── metrics.rs       ← Hardware collection r(t)
-│   ├── formula.rs       ← Math engine (pure, with tests)
-│   ├── orchestrator.rs  ← Dome activate / rollback
-│   ├── telemetry.rs     ← Energy & performance telemetry
-│   └── platform/
-│       ├── mod.rs       ← Cross-platform router
-│       ├── linux.rs     ← /proc, /sys, cgroups v2, zRAM
-│       ├── windows.rs   ← Job Objects, affinity, powercfg
-│       └── macos.rs     ← QoS, pmset, IOKit
+│   └── lib.rs           ← ré-export de `soulkernel-core`
 ├── ui/
 │   ├── package.json     ← Vite 6 + Svelte 5 (`npm run dev` / `npm run build` → `ui/dist`)
 │   ├── index.html       ← entrée Vite (fenêtre principale)
@@ -53,6 +49,7 @@ SoulKernel/
 ```
 
 L’interface web n’existe **que** sous `ui/` — pas de copie à la racine du dépôt.
+Le découpage détaillé de la migration est documenté dans [`docs/migration-native-first.md`](docs/migration-native-first.md).
 
 ## Développement
 

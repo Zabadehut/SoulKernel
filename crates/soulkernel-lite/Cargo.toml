@@ -1,0 +1,10 @@
+[package]
+name = "soulkernel-lite"
+version = "1.1.8"
+edition = "2021"
+description = "SoulKernel native lite UI"
+
+[dependencies]
+eframe = { version = "0.33", default-features = true }
+egui = "0.33"
+soulkernel-core = { path = "../soulkernel-core" }

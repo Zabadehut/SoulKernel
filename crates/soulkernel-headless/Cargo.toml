@@ -1,0 +1,10 @@
+[package]
+name = "soulkernel-headless"
+version = "1.1.8"
+edition = "2021"
+description = "SoulKernel headless runtime"
+
+[dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+soulkernel-core = { path = "../soulkernel-core" }

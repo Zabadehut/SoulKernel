@@ -1,3 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/soulkernel-core",
+  "crates/soulkernel-headless",
+  "crates/soulkernel-lite",
+]
+
 [package]
 name    = "soulkernel"
 version = "1.1.8"
@@ -18,6 +26,7 @@ tauri        = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+soulkernel-core = { path = "crates/soulkernel-core" }
 serde        = { version = "1",   features = ["derive"] }
 serde_json   = "1"
 tokio        = { version = "1",   features = ["full"] }
