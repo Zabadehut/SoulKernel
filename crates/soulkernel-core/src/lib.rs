@@ -2,6 +2,7 @@ pub mod audit;
 pub mod benchmark;
 pub mod external_power;
 pub mod formula;
+pub mod inventory;
 pub mod memory_policy;
 pub mod metrics;
 pub mod orchestrator;

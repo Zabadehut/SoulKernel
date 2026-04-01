@@ -1,5 +1,11 @@
 use soulkernel_core::audit::{default_audit_path, now_ms_local};
+use soulkernel_core::benchmark::{
+    self, compute_summary, BenchmarkHistoryResponse, BenchmarkPhase, BenchmarkSample,
+    BenchmarkSession, BenchmarkState,
+};
+use soulkernel_core::external_power::{self, ExternalPowerStatus, MerossFileConfig};
 use soulkernel_core::formula::{self, FormulaResult, WorkloadProfile};
+use soulkernel_core::inventory::{self, DeviceInventoryReport};
 use soulkernel_core::metrics::{self, ResourceState};
 use soulkernel_core::orchestrator;
 use soulkernel_core::platform::{self, PlatformInfo, PolicyMode, SoulRamBackendInfo};
@@ -8,6 +14,9 @@ use soulkernel_core::telemetry::{
     MachineActivity, TelemetryIngestRequest, TelemetryState, TelemetrySummary,
 };
 use soulkernel_core::workload_catalog::{self, WorkloadSceneDto};
+use std::fs::OpenOptions;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
@@ -19,6 +28,7 @@ pub struct LiteViewModel {
     pub process_report: ProcessObservedReport,
     pub platform_info: PlatformInfo,
     pub soulram_backend: SoulRamBackendInfo,
+    pub device_inventory: DeviceInventoryReport,
     pub policy_mode: PolicyMode,
     pub selected_workload: String,
     pub workloads: Vec<WorkloadSceneDto>,
@@ -29,16 +39,33 @@ pub struct LiteViewModel {
     pub eta: f64,
     pub soulram_percent: u8,
     pub target_pid: Option<u32>,
+    pub auto_target: bool,
+    pub manual_target_pid: Option<u32>,
     pub audit_path: String,
     pub last_actions: Vec<String>,
+    pub external_config: MerossFileConfig,
+    pub external_status: ExternalPowerStatus,
+    pub external_bridge_running: bool,
+    pub benchmark_command: String,
+    pub benchmark_args: String,
+    pub benchmark_cwd: String,
+    pub benchmark_runs_per_state: usize,
+    pub benchmark_duration_ms: u64,
+    pub benchmark_settle_ms: u64,
+    pub benchmark_use_system_probe: bool,
+    pub benchmark_last_session: Option<BenchmarkSession>,
+    pub benchmark_history: Option<BenchmarkHistoryResponse>,
+    pub show_hud: bool,
 }
 
 pub struct LiteState {
     runtime: Runtime,
     telemetry_state: TelemetryState,
+    benchmark_state: BenchmarkState,
     pub vm: LiteViewModel,
     dome_snapshot: Option<ResourceState>,
     last_refresh: Instant,
+    external_bridge_child: Option<Child>,
 }
 
 impl LiteState {
@@ -75,10 +102,16 @@ impl LiteState {
         let process_report = processes::collect_observed_report(12);
         let platform_info = platform::info();
         let soulram_backend = platform::soulram_backend_info();
+        let device_inventory = inventory::collect_device_inventory();
+        let external_config = external_power::get_meross_config_or_default();
+        let external_status = external_power::get_external_power_status();
+        let benchmark_path = default_benchmark_path();
+        let benchmark_state = BenchmarkState::new(benchmark_path);
 
         Ok(Self {
             runtime,
             telemetry_state,
+            benchmark_state,
             vm: LiteViewModel {
                 now_ms,
                 metrics: baseline,
@@ -87,6 +120,7 @@ impl LiteState {
                 process_report,
                 platform_info,
                 soulram_backend,
+                device_inventory,
                 policy_mode: PolicyMode::Privileged,
                 selected_workload,
                 workloads,
@@ -97,11 +131,27 @@ impl LiteState {
                 eta: 0.15,
                 soulram_percent: 20,
                 target_pid: None,
+                auto_target: true,
+                manual_target_pid: None,
                 audit_path: default_audit_path().to_string_lossy().into_owned(),
                 last_actions: Vec::new(),
+                external_config,
+                external_status,
+                external_bridge_running: false,
+                benchmark_command: String::new(),
+                benchmark_args: String::new(),
+                benchmark_cwd: String::new(),
+                benchmark_runs_per_state: 4,
+                benchmark_duration_ms: 3000,
+                benchmark_settle_ms: 1200,
+                benchmark_use_system_probe: true,
+                benchmark_last_session: None,
+                benchmark_history: None,
+                show_hud: false,
             },
             dome_snapshot: None,
             last_refresh: Instant::now() - Duration::from_secs(10),
+            external_bridge_child: None,
         })
     }
 
@@ -125,6 +175,9 @@ impl LiteState {
         self.vm.process_report = processes::collect_observed_report(12);
         self.vm.platform_info = platform::info();
         self.vm.soulram_backend = platform::soulram_backend_info();
+        self.vm.device_inventory = inventory::collect_device_inventory();
+        self.vm.external_status = external_power::get_external_power_status();
+        self.vm.external_bridge_running = self.is_external_bridge_running();
         let _ = self.telemetry_state.ingest(TelemetryIngestRequest {
             ts_ms: Some(now_ms),
             power_watts: metrics.raw.power_watts,
@@ -139,13 +192,17 @@ impl LiteState {
             power_source_tag: metrics.raw.power_watts_source.clone(),
         });
         self.vm.telemetry = self.telemetry_state.summary(now_ms);
-        self.vm.target_pid = self
-            .vm
-            .process_report
-            .top_processes
-            .iter()
-            .find(|p| !p.is_self_process && !p.is_embedded_webview)
-            .map(|p| p.pid);
+        self.vm.target_pid = if self.vm.auto_target {
+            self.vm
+                .process_report
+                .top_processes
+                .iter()
+                .find(|p| !p.is_self_process && !p.is_embedded_webview)
+                .map(|p| p.pid)
+        } else {
+            self.vm.manual_target_pid
+        };
+        self.vm.benchmark_history = Some(self.benchmark_state.history(None, None, None, None));
         Ok(())
     }
 
@@ -222,4 +279,328 @@ impl LiteState {
             .collect();
         self.refresh_now()
     }
+
+    pub fn save_external_config(&mut self) -> Result<(), String> {
+        external_power::save_meross_config(&self.vm.external_config)?;
+        self.vm.external_status = external_power::get_external_power_status();
+        Ok(())
+    }
+
+    pub fn start_external_bridge(&mut self) -> Result<(), String> {
+        if !self.vm.external_config.enabled {
+            return Err("active d'abord la source puissance externe".to_string());
+        }
+        let email = self
+            .vm
+            .external_config
+            .meross_email
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "MEROSS email manquant".to_string())?
+            .to_string();
+        let password = self
+            .vm
+            .external_config
+            .meross_password
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "MEROSS password manquant".to_string())?
+            .to_string();
+        let region = self
+            .vm
+            .external_config
+            .meross_region
+            .as_deref()
+            .unwrap_or("eu")
+            .trim()
+            .to_string();
+        let device_type = self
+            .vm
+            .external_config
+            .meross_device_type
+            .as_deref()
+            .unwrap_or("mss315")
+            .trim()
+            .to_string();
+        let interval = self
+            .vm
+            .external_config
+            .bridge_interval_s
+            .unwrap_or(8.0)
+            .clamp(2.0, 300.0);
+        let python_bin = self
+            .vm
+            .external_config
+            .python_bin
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| self.vm.external_status.default_python_hint.clone());
+        let script_path = resolve_bridge_script_path()?;
+        let out_path = self
+            .vm
+            .external_config
+            .power_file
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(external_power::default_power_file)
+            .ok_or_else(|| "power file path unavailable".to_string())?;
+        let log_path = external_power::soulkernel_config_dir()
+            .map(|d| d.join("meross_bridge.log"))
+            .ok_or_else(|| "bridge log path unavailable".to_string())?;
+        let creds_cache_path = external_power::default_creds_cache_file()
+            .ok_or_else(|| "creds cache path unavailable".to_string())?;
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if let Some(parent) = creds_cache_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if self.is_external_bridge_running() {
+            return Ok(());
+        }
+        let stdout = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| e.to_string())?;
+        let stderr = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(&python_bin);
+        cmd.arg(script_path)
+            .arg("--out")
+            .arg(&out_path)
+            .arg("--interval")
+            .arg(format!("{interval:.1}"))
+            .env("MEROSS_EMAIL", email)
+            .env("MEROSS_PASSWORD", password)
+            .env("MEROSS_REGION", &region)
+            .env("MEROSS_DEVICE_TYPE", &device_type)
+            .env("MEROSS_CREDS_CACHE", &creds_cache_path)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .stdin(Stdio::null());
+        if let Some(proxy) = self
+            .vm
+            .external_config
+            .meross_http_proxy
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            cmd.env("MEROSS_HTTP_PROXY", proxy);
+        }
+        if let Some(mfa) = self
+            .vm
+            .external_config
+            .meross_mfa_code
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            cmd.env("MEROSS_MFA_CODE", mfa);
+        }
+        let child = cmd.spawn().map_err(|e| e.to_string())?;
+        self.external_bridge_child = Some(child);
+        self.vm.external_bridge_running = true;
+        self.vm
+            .last_actions
+            .push("✓ bridge externe démarré".to_string());
+        Ok(())
+    }
+
+    pub fn stop_external_bridge(&mut self) -> Result<(), String> {
+        if let Some(child) = self.external_bridge_child.as_mut() {
+            child.kill().map_err(|e| e.to_string())?;
+            let _ = child.wait();
+        }
+        self.external_bridge_child = None;
+        self.vm.external_bridge_running = false;
+        self.vm
+            .last_actions
+            .push("✓ bridge externe arrêté".to_string());
+        Ok(())
+    }
+
+    pub fn is_external_bridge_running(&mut self) -> bool {
+        if let Some(child) = self.external_bridge_child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    self.external_bridge_child = None;
+                    false
+                }
+                Ok(None) => true,
+                Err(_) => {
+                    self.external_bridge_child = None;
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn run_benchmark(&mut self) -> Result<(), String> {
+        if self.vm.dome_active {
+            return Err("rollback le dôme avant un benchmark A/B".to_string());
+        }
+        let started_at = now_ms_local().to_string();
+        let profile = self.selected_profile();
+        let mut samples = Vec::new();
+        let runs = self.vm.benchmark_runs_per_state.max(1);
+        for idx in 0..runs {
+            samples.push(self.run_benchmark_phase(idx + 1, BenchmarkPhase::Off, &profile)?);
+        }
+
+        let _ = self
+            .runtime
+            .block_on(tokio::time::sleep(Duration::from_millis(
+                self.vm.benchmark_settle_ms,
+            )));
+        let _ = self.activate_dome();
+        if self.vm.soulram_percent > 0 && !self.vm.soulram_active {
+            let _ = self.enable_soulram();
+        }
+        let _ = self
+            .runtime
+            .block_on(tokio::time::sleep(Duration::from_millis(
+                self.vm.benchmark_settle_ms,
+            )));
+        for idx in 0..runs {
+            samples.push(self.run_benchmark_phase(idx + 1, BenchmarkPhase::On, &profile)?);
+        }
+        let _ = self.rollback_dome();
+
+        let finished_at = now_ms_local().to_string();
+        let summary = compute_summary(&samples);
+        let session = BenchmarkSession {
+            started_at,
+            finished_at,
+            command: self.vm.benchmark_command.clone(),
+            args: split_args(&self.vm.benchmark_args),
+            cwd: normalized_text(&self.vm.benchmark_cwd),
+            runs_per_state: runs,
+            settle_ms: self.vm.benchmark_settle_ms,
+            workload: profile.name.clone(),
+            kappa: self.vm.kappa,
+            sigma_max: self.vm.sigma_max,
+            eta: self.vm.eta,
+            target_pid: self.vm.target_pid,
+            policy_mode: Some(self.vm.policy_mode.as_name().to_string()),
+            soulram_percent: Some(self.vm.soulram_percent),
+            samples,
+            summary,
+        };
+        self.benchmark_state.record_session(session.clone())?;
+        self.vm.benchmark_last_session = Some(session);
+        self.vm.benchmark_history = Some(self.benchmark_state.history(None, None, None, None));
+        self.refresh_now()
+    }
+
+    fn run_benchmark_phase(
+        &mut self,
+        idx: usize,
+        phase: BenchmarkPhase,
+        profile: &WorkloadProfile,
+    ) -> Result<BenchmarkSample, String> {
+        let before = metrics::collect().map_err(|e| e.to_string())?;
+        let f_before = formula::compute(&before, profile, self.vm.kappa);
+        let probe =
+            if self.vm.benchmark_use_system_probe || self.vm.benchmark_command.trim().is_empty() {
+                self.runtime.block_on(benchmark::execute_system_probe(
+                    self.vm.benchmark_duration_ms,
+                ))?
+            } else {
+                self.runtime.block_on(benchmark::execute_probe(
+                    self.vm.benchmark_command.clone(),
+                    split_args(&self.vm.benchmark_args),
+                    normalized_text(&self.vm.benchmark_cwd),
+                ))?
+            };
+        let after = metrics::collect().map_err(|e| e.to_string())?;
+        let f_after = formula::compute(&after, profile, self.vm.kappa);
+        Ok(BenchmarkSample {
+            idx,
+            phase,
+            ts: now_ms_local().to_string(),
+            duration_ms: probe.duration_ms,
+            success: probe.success,
+            exit_code: probe.exit_code,
+            dome_active: phase == BenchmarkPhase::On,
+            workload: profile.name.clone(),
+            kappa: self.vm.kappa,
+            sigma_max: self.vm.sigma_max,
+            eta: self.vm.eta,
+            sigma_before: Some(before.sigma),
+            sigma_after: Some(after.sigma),
+            cpu_before_pct: Some(before.raw.cpu_pct),
+            cpu_after_pct: Some(after.raw.cpu_pct),
+            mem_before_gb: Some(before.raw.mem_used_mb as f64 / 1024.0),
+            mem_after_gb: Some(after.raw.mem_used_mb as f64 / 1024.0),
+            gpu_before_pct: before.raw.gpu_pct,
+            gpu_after_pct: after.raw.gpu_pct,
+            io_before_mb_s: Some(
+                before.raw.io_read_mb_s.unwrap_or(0.0) + before.raw.io_write_mb_s.unwrap_or(0.0),
+            ),
+            io_after_mb_s: Some(
+                after.raw.io_read_mb_s.unwrap_or(0.0) + after.raw.io_write_mb_s.unwrap_or(0.0),
+            ),
+            power_before_watts: before.raw.power_watts,
+            power_after_watts: after.raw.power_watts,
+            cpu_temp_before_c: before.raw.cpu_temp_c,
+            cpu_temp_after_c: after.raw.cpu_temp_c,
+            gpu_temp_before_c: before.raw.gpu_temp_c,
+            gpu_temp_after_c: after.raw.gpu_temp_c,
+            sigma_effective_before: Some(f_before.sigma_effective),
+            sigma_effective_after: Some(f_after.sigma_effective),
+            stdout_tail: probe.stdout_tail,
+            stderr_tail: probe.stderr_tail,
+        })
+    }
+}
+
+fn normalized_text(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn split_args(input: &str) -> Vec<String> {
+    input.split_whitespace().map(|s| s.to_string()).collect()
+}
+
+fn default_benchmark_path() -> PathBuf {
+    default_audit_path()
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("soulkernel_benchmark_history.jsonl")
+}
+
+fn resolve_bridge_script_path() -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let repo_script = cwd.join("scripts").join("meross_mss315_bridge.py");
+    if repo_script.exists() {
+        return Ok(repo_script);
+    }
+    let exe_dir = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| "executable dir unavailable".to_string())?;
+    let bundled = exe_dir.join("scripts").join("meross_mss315_bridge.py");
+    if bundled.exists() {
+        return Ok(bundled);
+    }
+    Err("meross bridge script not found".to_string())
 }
