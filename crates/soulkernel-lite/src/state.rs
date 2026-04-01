@@ -16,7 +16,7 @@ use soulkernel_core::telemetry::{
 use soulkernel_core::workload_catalog::{self, WorkloadSceneDto};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
@@ -46,6 +46,7 @@ pub struct LiteViewModel {
     pub external_config: MerossFileConfig,
     pub external_status: ExternalPowerStatus,
     pub external_bridge_running: bool,
+    pub external_bridge_detail: String,
     pub benchmark_command: String,
     pub benchmark_args: String,
     pub benchmark_cwd: String,
@@ -107,8 +108,8 @@ impl LiteState {
         // Pré-remplir les champs optionnels avec leurs valeurs par défaut calculées
         // pour que les champs UI ne soient pas vides au premier lancement.
         if external_config.power_file.is_none() {
-            external_config.power_file = external_power::default_power_file()
-                .map(|p| p.to_string_lossy().into_owned());
+            external_config.power_file =
+                external_power::default_power_file().map(|p| p.to_string_lossy().into_owned());
         }
         if external_config.python_bin.is_none() {
             external_config.python_bin = Some(if cfg!(target_os = "windows") {
@@ -157,6 +158,7 @@ impl LiteState {
                 external_config,
                 external_status,
                 external_bridge_running: false,
+                external_bridge_detail: "bridge inactif".to_string(),
                 benchmark_command: String::new(),
                 benchmark_args: String::new(),
                 benchmark_cwd: String::new(),
@@ -428,7 +430,10 @@ impl LiteState {
         }
         let child = cmd.spawn().map_err(|e| e.to_string())?;
         self.external_bridge_child = Some(child);
-        self.vm.external_bridge_running = true;
+        self.set_external_bridge_detail(
+            "bridge démarré, attente des premiers échantillons".to_string(),
+        );
+        self.vm.external_bridge_running = self.is_external_bridge_running();
         self.vm
             .last_actions
             .push("✓ bridge externe démarré".to_string());
@@ -442,6 +447,7 @@ impl LiteState {
         }
         self.external_bridge_child = None;
         self.vm.external_bridge_running = false;
+        self.set_external_bridge_detail("bridge arrêté par l'utilisateur".to_string());
         self.vm
             .last_actions
             .push("✓ bridge externe arrêté".to_string());
@@ -451,18 +457,52 @@ impl LiteState {
     pub fn is_external_bridge_running(&mut self) -> bool {
         if let Some(child) = self.external_bridge_child.as_mut() {
             match child.try_wait() {
-                Ok(Some(_)) => {
+                Ok(Some(status)) => {
+                    let detail = self.describe_bridge_exit(status);
+                    self.set_external_bridge_detail(detail.clone());
+                    self.vm.last_actions.push(format!("✗ {detail}"));
                     self.external_bridge_child = None;
                     false
                 }
-                Ok(None) => true,
-                Err(_) => {
+                Ok(None) => {
+                    if self.vm.external_status.is_fresh {
+                        self.set_external_bridge_detail(format!(
+                            "bridge actif · dernière mesure {}",
+                            crate::fmt::watts(self.vm.external_status.last_watts)
+                        ));
+                    } else {
+                        self.set_external_bridge_detail(
+                            "bridge actif · en attente d'une mesure fraîche".to_string(),
+                        );
+                    }
+                    true
+                }
+                Err(e) => {
+                    self.set_external_bridge_detail(format!("bridge status error: {e}"));
                     self.external_bridge_child = None;
                     false
                 }
             }
         } else {
+            if self.vm.external_bridge_detail.is_empty() {
+                self.set_external_bridge_detail("bridge inactif".to_string());
+            }
             false
+        }
+    }
+
+    fn set_external_bridge_detail(&mut self, detail: String) {
+        self.vm.external_bridge_detail = detail;
+    }
+
+    fn describe_bridge_exit(&self, status: ExitStatus) -> String {
+        let status_text = match status.code() {
+            Some(code) => format!("bridge arrêté (code {code})"),
+            None => "bridge arrêté (terminé par signal)".to_string(),
+        };
+        match bridge_log_last_non_empty_line() {
+            Some(line) => format!("{status_text} · {line}"),
+            None => status_text,
         }
     }
 
@@ -604,6 +644,16 @@ fn default_benchmark_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("soulkernel_benchmark_history.jsonl")
+}
+
+fn bridge_log_last_non_empty_line() -> Option<String> {
+    let path = external_power::soulkernel_config_dir()?.join("meross_bridge.log");
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn resolve_bridge_script_path() -> Result<PathBuf, String> {

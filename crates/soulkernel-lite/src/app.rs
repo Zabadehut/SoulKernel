@@ -548,6 +548,7 @@ impl LiteApp {
                 "Dernier mur: {}",
                 fmt::watts(state.vm.external_status.last_watts)
             ));
+            ui.label(format!("Bridge état: {}", state.vm.external_bridge_detail));
             ui.label(format!(
                 "Fichier: {}",
                 state.vm.external_status.power_file_path

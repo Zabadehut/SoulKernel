@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+fn trim_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInventoryItem {
     pub kind: String,
@@ -204,16 +210,195 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
     Vec::new()
 }
 
+#[cfg(target_os = "linux")]
+fn collect_displays() -> Vec<DeviceInventoryItem> {
+    let mut items = Vec::new();
+    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.contains('-') {
+                continue;
+            }
+            let status = trim_non_empty(std::fs::read_to_string(path.join("status")).ok());
+            if status.as_deref() == Some("disconnected") {
+                continue;
+            }
+            let modes = trim_non_empty(std::fs::read_to_string(path.join("modes")).ok())
+                .map(|s| s.lines().take(2).collect::<Vec<_>>().join(", "));
+            items.push(DeviceInventoryItem {
+                kind: "display".to_string(),
+                name,
+                detail: modes,
+                status,
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+    items
+}
+
+#[cfg(target_os = "windows")]
+fn collect_displays() -> Vec<DeviceInventoryItem> {
+    let mut items = Vec::new();
+    let out = std::process::Command::new("wmic")
+        .args([
+            "path",
+            "Win32_DesktopMonitor",
+            "get",
+            "Name,ScreenHeight,ScreenWidth,Status",
+            "/format:csv",
+        ])
+        .output();
+    let Ok(out) = out else {
+        return items;
+    };
+    if !out.status.success() {
+        return items;
+    }
+    for line in String::from_utf8_lossy(&out.stdout).lines().skip(1) {
+        let cols = line.split(',').map(str::trim).collect::<Vec<_>>();
+        if cols.len() < 5 {
+            continue;
+        }
+        let name = cols[2];
+        if name.is_empty() {
+            continue;
+        }
+        let detail = match (cols.get(3), cols.get(4)) {
+            (Some(h), Some(w)) if !h.is_empty() && !w.is_empty() => Some(format!("{w}x{h}")),
+            _ => None,
+        };
+        items.push(DeviceInventoryItem {
+            kind: "display".to_string(),
+            name: name.to_string(),
+            detail,
+            status: trim_non_empty(cols.get(1).map(|s| s.to_string())),
+            evidence: "platform_detected".to_string(),
+        });
+    }
+    items
+}
+
+#[cfg(target_os = "macos")]
+fn collect_displays() -> Vec<DeviceInventoryItem> {
+    let mut items = Vec::new();
+    let out = std::process::Command::new("system_profiler")
+        .arg("SPDisplaysDataType")
+        .output();
+    let Ok(out) = out else {
+        return items;
+    };
+    if !out.status.success() {
+        return items;
+    }
+    let mut current_name: Option<String> = None;
+    let mut current_resolution: Option<String> = None;
+    let mut current_status: Option<String> = None;
+    let flush_current = |items: &mut Vec<DeviceInventoryItem>,
+                         current_name: &mut Option<String>,
+                         current_resolution: &mut Option<String>,
+                         current_status: &mut Option<String>| {
+        if let Some(name) = current_name.take() {
+            items.push(DeviceInventoryItem {
+                kind: "display".to_string(),
+                name,
+                detail: current_resolution.take(),
+                status: current_status.take(),
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.ends_with(':')
+            && !trimmed.starts_with("Displays")
+            && !trimmed.starts_with("Graphics")
+            && !trimmed.starts_with("Chipset")
+            && !trimmed.starts_with("Vendor")
+            && !trimmed.starts_with("Device")
+            && !trimmed.starts_with("Bus")
+            && !trimmed.starts_with("VRAM")
+            && !trimmed.starts_with("Metal")
+            && !trimmed.starts_with("Resolution")
+            && !trimmed.starts_with("UI Looks like")
+            && !trimmed.starts_with("Main Display")
+            && !trimmed.starts_with("Mirror")
+            && !trimmed.starts_with("Online")
+            && !trimmed.starts_with("Automatically Adjust")
+            && !trimmed.starts_with("Connection Type")
+        {
+            flush_current(
+                &mut items,
+                &mut current_name,
+                &mut current_resolution,
+                &mut current_status,
+            );
+            current_name = Some(trimmed.trim_end_matches(':').to_string());
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("Resolution:") {
+            current_resolution = trim_non_empty(Some(value.to_string()));
+        } else if let Some(value) = trimmed.strip_prefix("UI Looks like:") {
+            let ui_looks = value.trim();
+            current_resolution = Some(match current_resolution.take() {
+                Some(existing) => format!("{existing} · UI {ui_looks}"),
+                None => format!("UI {ui_looks}"),
+            });
+        } else if let Some(value) = trimmed.strip_prefix("Main Display:") {
+            current_status = trim_non_empty(Some(value.to_string())).map(|v| {
+                if v.eq_ignore_ascii_case("yes") {
+                    "primary".to_string()
+                } else {
+                    "active".to_string()
+                }
+            });
+        } else if let Some(value) = trimmed.strip_prefix("Online:") {
+            if current_status.is_none() {
+                current_status = trim_non_empty(Some(value.to_string())).map(|v| {
+                    if v.eq_ignore_ascii_case("yes") {
+                        "online".to_string()
+                    } else {
+                        v
+                    }
+                });
+            }
+        }
+    }
+    flush_current(
+        &mut items,
+        &mut current_name,
+        &mut current_resolution,
+        &mut current_status,
+    );
+    items
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn collect_displays() -> Vec<DeviceInventoryItem> {
+    Vec::new()
+}
+
 pub fn collect_device_inventory() -> DeviceInventoryReport {
     let platform = crate::platform::info();
     let raw = crate::metrics::collect().ok().map(|m| m.raw);
 
     let connected_endpoints = collect_connected_endpoints();
-    let displays = connected_endpoints
-        .iter()
-        .filter(|item| item.kind == "display_output" || item.kind == "monitor")
-        .cloned()
-        .collect::<Vec<_>>();
+    let displays = {
+        let detected = collect_displays();
+        if detected.is_empty() {
+            connected_endpoints
+                .iter()
+                .filter(|item| item.kind == "display_output" || item.kind == "monitor")
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            detected
+        }
+    };
 
     let gpus = raw
         .as_ref()
