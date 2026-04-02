@@ -533,6 +533,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                                     .map(str::to_string),
                             ),
                             evidence: "platform_detected".to_string(),
+                            ..Default::default()
                         })
                     })
                     .collect::<Vec<_>>();
@@ -611,6 +612,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                     .to_ascii_lowercase(),
             ),
             evidence: "platform_detected".to_string(),
+            ..Default::default()
         });
     }
     items
@@ -884,6 +886,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
                                     .map(str::to_string),
                             ),
                             evidence: "platform_detected".to_string(),
+                            ..Default::default()
                         })
                     })
                     .collect::<Vec<_>>();
@@ -929,6 +932,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
             detail,
             status: trim_non_empty(cols.get(1).map(|s| s.to_string())),
             evidence: "platform_detected".to_string(),
+            ..Default::default()
         });
     }
     items
