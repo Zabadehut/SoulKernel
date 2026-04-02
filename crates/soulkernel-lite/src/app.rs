@@ -170,7 +170,11 @@ impl LiteApp {
             .metrics
             .raw
             .wall_power_watts
-            .or(vm.external_status.last_watts);
+            .or(if vm.external_status.is_fresh {
+                vm.external_status.last_watts
+            } else {
+                None
+            });
         let host = vm.metrics.raw.host_power_watts;
         let host_source =
             fmt::maybe_text(vm.metrics.raw.host_power_watts_source.as_deref(), "aucune");
@@ -239,6 +243,32 @@ impl LiteApp {
                     fmt::watts(host),
                     host_source
                 ));
+                columns[0].label(format!(
+                    "Temp CPU {} · Load {}",
+                    vm.metrics
+                        .raw
+                        .cpu_temp_c
+                        .map(|v| format!("{v:.1} C"))
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    vm.metrics
+                        .raw
+                        .load_avg_1m_norm
+                        .map(|v| format!("{v:.2} x/core"))
+                        .unwrap_or_else(|| "N/A".to_string())
+                ));
+                columns[0].label(format!(
+                    "Runnable {} · faults {}",
+                    vm.metrics
+                        .raw
+                        .runnable_tasks
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    vm.metrics
+                        .raw
+                        .page_faults_per_sec
+                        .map(|v| format!("{v:.1}/s"))
+                        .unwrap_or_else(|| "N/A".to_string())
+                ));
 
                 columns[1].label(egui::RichText::new("Externe").strong());
                 columns[1].label(format!("Watts mur {}", fmt::watts(wall)));
@@ -285,9 +315,35 @@ impl LiteApp {
                         .unwrap_or_else(|| "N/A".to_string())
                 ));
                 columns[2].label(format!(
+                    "PSI CPU {} · MEM {}",
+                    vm.metrics
+                        .raw
+                        .psi_cpu
+                        .map(|v| format!("{:.1}%", v * 100.0))
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    vm.metrics
+                        .raw
+                        .psi_mem
+                        .map(|v| format!("{:.1}%", v * 100.0))
+                        .unwrap_or_else(|| "N/A".to_string())
+                ));
+                columns[2].label(format!(
                     "UI embarquée {:.1}% CPU · {}",
                     vm.metrics.raw.webview_host_cpu_sum.unwrap_or(0.0),
                     fmt::mib_from_kb(vm.metrics.raw.webview_host_mem_mb.unwrap_or(0) * 1024)
+                ));
+                columns[2].label(format!(
+                    "Batterie {} · charge {}",
+                    vm.metrics
+                        .raw
+                        .on_battery
+                        .map(|v| if v { "sur batterie" } else { "sur secteur" }.to_string())
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    vm.metrics
+                        .raw
+                        .battery_percent
+                        .map(|v| format!("{v:.0}%"))
+                        .unwrap_or_else(|| "N/A".to_string())
                 ));
             });
         });
@@ -445,11 +501,33 @@ impl LiteApp {
                 vm.telemetry.total.mem_gb_hours_differential
             ));
             ui.label(format!(
+                "Échantillons {} · durée {:.2} h · activité dôme {:.0}%",
+                vm.telemetry.total.samples,
+                vm.telemetry.total.duration_h,
+                vm.telemetry.total.dome_active_ratio * 100.0
+            ));
+            ui.label(format!(
                 "kWh total {:.3} · CO₂ {:.3} kg · coût {:.2} {}",
                 vm.telemetry.lifetime.total_energy_kwh,
                 vm.telemetry.lifetime.total_co2_measured_kg,
                 vm.telemetry.lifetime.total_energy_cost_measured,
                 vm.telemetry.pricing.currency
+            ));
+            ui.label(format!(
+                "Puiss. moy. {} · dôme ON {} · dôme OFF {}",
+                fmt::watts(vm.telemetry.total.avg_power_w),
+                fmt::watts(vm.telemetry.total.avg_power_dome_on_w),
+                fmt::watts(vm.telemetry.total.avg_power_dome_off_w)
+            ));
+            ui.label(format!(
+                "Énergie dôme estimée {} · idle {:.0}% · media {:.0}%",
+                vm.telemetry
+                    .total
+                    .energy_saved_kwh
+                    .map(|v| format!("{v:.3} kWh"))
+                    .unwrap_or_else(|| "N/A".to_string()),
+                vm.telemetry.total.idle_ratio * 100.0,
+                vm.telemetry.total.media_ratio * 100.0
             ));
             ui.label(format!(
                 "1h {:.3} kWh · 24h {:.3} · 7j {:.3} · 30j {:.3}",

@@ -1113,6 +1113,22 @@ async function ingestTelemetry(m) {
         mem_used_mb: (m.raw.mem_used_mb != null ? Number(m.raw.mem_used_mb) : null),
         mem_total_mb: (m.raw.mem_total_mb != null ? Number(m.raw.mem_total_mb) : null),
         power_source_tag: (m.raw.power_watts_source != null ? String(m.raw.power_watts_source) : null),
+        io_read_mb_s: (m.raw.io_read_mb_s != null ? Number(m.raw.io_read_mb_s) : null),
+        io_write_mb_s: (m.raw.io_write_mb_s != null ? Number(m.raw.io_write_mb_s) : null),
+        gpu_pct: (m.raw.gpu_pct != null ? Number(m.raw.gpu_pct) : null),
+        gpu_power_watts: (m.raw.gpu_power_watts != null ? Number(m.raw.gpu_power_watts) : null),
+        gpu_temp_c: (m.raw.gpu_temp_c != null ? Number(m.raw.gpu_temp_c) : null),
+        cpu_temp_c: (m.raw.cpu_temp_c != null ? Number(m.raw.cpu_temp_c) : null),
+        zram_used_mb: (m.raw.zram_used_mb != null ? Number(m.raw.zram_used_mb) : null),
+        psi_cpu: (m.raw.psi_cpu != null ? Number(m.raw.psi_cpu) : null),
+        psi_mem: (m.raw.psi_mem != null ? Number(m.raw.psi_mem) : null),
+        load_avg_1m_norm: (m.raw.load_avg_1m_norm != null ? Number(m.raw.load_avg_1m_norm) : null),
+        runnable_tasks: (m.raw.runnable_tasks != null ? Number(m.raw.runnable_tasks) : null),
+        on_battery: (m.raw.on_battery != null ? !!m.raw.on_battery : null),
+        battery_percent: (m.raw.battery_percent != null ? Number(m.raw.battery_percent) : null),
+        page_faults_per_sec: (m.raw.page_faults_per_sec != null ? Number(m.raw.page_faults_per_sec) : null),
+        webview_host_cpu_sum: (m.raw.webview_host_cpu_sum != null ? Number(m.raw.webview_host_cpu_sum) : null),
+        webview_host_mem_mb: (m.raw.webview_host_mem_mb != null ? Number(m.raw.webview_host_mem_mb) : null),
       }
     });
   } catch (_) {}
@@ -3597,12 +3613,12 @@ function renderPowerAuditSection() {
         evidenceLevel: 'measured_wall',
       };
     }
-    if (raw.host_power_watts != null || sourceTag) {
+    if (raw.host_power_watts != null) {
       return {
         headline: `Puissance machine interne: ${formatAuditWatts(hostPower)}`,
         confidence: 'Interne machine',
         summary: `Aucune source externe active ou fraîche. L’audit reste exploitable via les capteurs internes OS, avec réconciliation partielle des consommateurs.`,
-        sourceLabel: raw.host_power_watts_source || sourceTag,
+        sourceLabel: raw.host_power_watts_source || 'host_internal',
         evidenceLevel: 'measured_host',
       };
     }
@@ -3695,13 +3711,13 @@ function renderPowerAuditSection() {
   const detectedDevicesEl = document.getElementById('auditDetectedDevices');
   if (detectedDevicesEl) {
     const inv = state.deviceInventory || {};
-    const sections = estimatePeripheralPower([
+    const sections = [
       ...(Array.isArray(inv.power) ? inv.power : []),
       ...(Array.isArray(inv.displays) ? inv.displays : []),
       ...(Array.isArray(inv.gpus) ? inv.gpus : []),
       ...(Array.isArray(inv.storage) ? inv.storage : []),
       ...(Array.isArray(inv.network) ? inv.network : []),
-    ], residualDeviceBudget);
+    ].map((item) => ({ ...item, estimated_power_w: null, attribution_method: 'native_or_none' }));
     const endpoints = estimatePeripheralPower(
       Array.isArray(inv.connected_endpoints) ? inv.connected_endpoints : [],
       residualDeviceBudget != null ? Number(residualDeviceBudget) * 0.45 : null,
@@ -3710,14 +3726,14 @@ function renderPowerAuditSection() {
       detectedDevicesEl.innerHTML = '<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Aucun périphérique ou composant supplémentaire détecté à ce niveau.</div></div>';
     } else {
       detectedDevicesEl.innerHTML = [
-        `<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Écrans, GPU, stockage, réseau et contexte énergie exposés par la plateforme. La puissance par périphérique affichée ici est une dérivation du résiduel non attribué, pas une mesure capteur directe.</div></div>`,
+        `<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Écrans, GPU, stockage, réseau et contexte énergie exposés par la plateforme. Les watts ne sont affichés ici que s'ils existent nativement dans le détail; sinon SoulKernel laisse N/A pour éviter une fausse précision.</div></div>`,
         ...sections.slice(0, 16).map((item) => (
-          `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'device')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'device')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')} · ${escapeHtml(item.attribution_method || '—')}</div></div>`
+          `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'device')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'device')} · ${escapeHtml(item.evidence || 'platform_detected')} · ${escapeHtml(item.measurement_scope || 'detected')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${escapeHtml(item.active_state || item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')} · ${escapeHtml(item.physical_link_hint || item.attribution_method || '—')}</div></div>`
         )),
         ...(endpoints.length ? [
           `<div class="audit-item"><div class="audit-item-title">Ports & endpoints</div><div class="audit-item-meta">USB, sorties écran, audio et bus externes détectés par la plateforme.</div></div>`,
           ...endpoints.slice(0, 20).map((item) => (
-            `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'endpoint')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'endpoint')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')} · ${escapeHtml(item.attribution_method || '—')}</div></div>`
+            `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'endpoint')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'endpoint')} · ${escapeHtml(item.evidence || 'platform_detected')} · ${escapeHtml(item.measurement_scope || 'detected')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${escapeHtml(item.active_state || item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')} · ${escapeHtml(item.physical_link_hint || item.attribution_method || '—')}</div></div>`
           )),
         ] : []),
       ].join('');

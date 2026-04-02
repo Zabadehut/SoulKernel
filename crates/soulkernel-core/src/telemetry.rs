@@ -57,6 +57,38 @@ pub struct TelemetryIngestRequest {
     /// `meross_wall`, `rapl`, etc. — pour libellé source énergie.
     #[serde(default)]
     pub power_source_tag: Option<String>,
+    #[serde(default)]
+    pub io_read_mb_s: Option<f64>,
+    #[serde(default)]
+    pub io_write_mb_s: Option<f64>,
+    #[serde(default)]
+    pub gpu_pct: Option<f64>,
+    #[serde(default)]
+    pub gpu_power_watts: Option<f64>,
+    #[serde(default)]
+    pub gpu_temp_c: Option<f64>,
+    #[serde(default)]
+    pub cpu_temp_c: Option<f64>,
+    #[serde(default)]
+    pub zram_used_mb: Option<u64>,
+    #[serde(default)]
+    pub psi_cpu: Option<f64>,
+    #[serde(default)]
+    pub psi_mem: Option<f64>,
+    #[serde(default)]
+    pub load_avg_1m_norm: Option<f64>,
+    #[serde(default)]
+    pub runnable_tasks: Option<u64>,
+    #[serde(default)]
+    pub on_battery: Option<bool>,
+    #[serde(default)]
+    pub battery_percent: Option<f64>,
+    #[serde(default)]
+    pub page_faults_per_sec: Option<f64>,
+    #[serde(default)]
+    pub webview_host_cpu_sum: Option<f64>,
+    #[serde(default)]
+    pub webview_host_mem_mb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +116,38 @@ pub struct TelemetrySample {
     /// Rempli à l’ingest (ex. `meross_wall`, `rapl`).
     #[serde(default)]
     pub power_source_tag: Option<String>,
+    #[serde(default)]
+    pub io_read_mb_s: Option<f64>,
+    #[serde(default)]
+    pub io_write_mb_s: Option<f64>,
+    #[serde(default)]
+    pub gpu_pct: Option<f64>,
+    #[serde(default)]
+    pub gpu_power_watts: Option<f64>,
+    #[serde(default)]
+    pub gpu_temp_c: Option<f64>,
+    #[serde(default)]
+    pub cpu_temp_c: Option<f64>,
+    #[serde(default)]
+    pub zram_used_mb: Option<u64>,
+    #[serde(default)]
+    pub psi_cpu: Option<f64>,
+    #[serde(default)]
+    pub psi_mem: Option<f64>,
+    #[serde(default)]
+    pub load_avg_1m_norm: Option<f64>,
+    #[serde(default)]
+    pub runnable_tasks: Option<u64>,
+    #[serde(default)]
+    pub on_battery: Option<bool>,
+    #[serde(default)]
+    pub battery_percent: Option<f64>,
+    #[serde(default)]
+    pub page_faults_per_sec: Option<f64>,
+    #[serde(default)]
+    pub webview_host_cpu_sum: Option<f64>,
+    #[serde(default)]
+    pub webview_host_mem_mb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -335,6 +399,26 @@ impl TelemetryState {
                 .as_ref()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            io_read_mb_s: req.io_read_mb_s.filter(|v| v.is_finite() && *v >= 0.0),
+            io_write_mb_s: req.io_write_mb_s.filter(|v| v.is_finite() && *v >= 0.0),
+            gpu_pct: req.gpu_pct.filter(|v| v.is_finite() && *v >= 0.0),
+            gpu_power_watts: req.gpu_power_watts.filter(|v| v.is_finite() && *v >= 0.0),
+            gpu_temp_c: req.gpu_temp_c.filter(|v| v.is_finite()),
+            cpu_temp_c: req.cpu_temp_c.filter(|v| v.is_finite()),
+            zram_used_mb: req.zram_used_mb,
+            psi_cpu: req.psi_cpu.filter(|v| v.is_finite() && *v >= 0.0),
+            psi_mem: req.psi_mem.filter(|v| v.is_finite() && *v >= 0.0),
+            load_avg_1m_norm: req.load_avg_1m_norm.filter(|v| v.is_finite() && *v >= 0.0),
+            runnable_tasks: req.runnable_tasks,
+            on_battery: req.on_battery,
+            battery_percent: req.battery_percent.filter(|v| v.is_finite() && *v >= 0.0),
+            page_faults_per_sec: req
+                .page_faults_per_sec
+                .filter(|v| v.is_finite() && *v >= 0.0),
+            webview_host_cpu_sum: req
+                .webview_host_cpu_sum
+                .filter(|v| v.is_finite() && *v >= 0.0),
+            webview_host_mem_mb: req.webview_host_mem_mb,
         };
 
         // ── Update lifetime gains ─────────────────────────────────────────
