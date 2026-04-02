@@ -423,32 +423,50 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
           default { "video_$code" }
         }
       }
-      $classes = @('USB','Monitor','MEDIA','Bluetooth','HIDClass','Image','Ports')
+      $classes = @('USB','Monitor','MEDIA','Bluetooth','HIDClass','Image','Ports','AudioEndpoint','Net','System')
       $items = @()
       $items += Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
         Where-Object {
           $_.Class -in $classes -or
-          $_.FriendlyName -match 'USB|Bluetooth|Audio|Speaker|Headset|Headphones|Microphone|HID|Camera|HDMI|DisplayPort|DP'
+          $_.FriendlyName -match 'USB|Bluetooth|Audio|Speaker|Headset|Headphones|Microphone|HID|Camera|HDMI|DisplayPort|DP|UCSI|Type-C|Thunderbolt|Dock|Host Controller|Root Hub|Ethernet|Network|NIC|PCI Express Root Port'
         } |
         ForEach-Object {
           [PSCustomObject]@{
             Name = if ([string]::IsNullOrWhiteSpace($_.FriendlyName)) { $_.InstanceId } else { $_.FriendlyName }
             PNPClass = $_.Class
             Status = $_.Status
-            Manufacturer = ''
+            Manufacturer = $_.Manufacturer
             Service = $_.InstanceId
+            Location = ''
           }
         }
       $items += Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
         Where-Object {
           $_.PNPClass -in $classes -or
-          $_.Service -match 'BTH|USBSTOR|HidUsb|usbaudio|monitor|HdAudAddService|usbhub'
+          $_.Service -match 'BTH|USBSTOR|HidUsb|usbaudio|monitor|HdAudAddService|usbhub|UsbHub3|USBXHCI|UcmUcsiCx|neta|rt640x64|NDIS'
         } |
-        Select-Object Name, @{Name='PNPClass';Expression={$_.PNPClass}}, Status, Manufacturer, Service
+        Select-Object Name, @{Name='PNPClass';Expression={$_.PNPClass}}, Status, Manufacturer, Service, LocationInformation
       $items += Get-CimInstance Win32_SoundDevice -ErrorAction SilentlyContinue |
-        Select-Object Name, @{Name='PNPClass';Expression={'AudioEndpoint'}}, Status, Manufacturer, Service
+        Select-Object Name, @{Name='PNPClass';Expression={'AudioEndpoint'}}, Status, Manufacturer, Service, DeviceID
       $items += Get-CimInstance Win32_USBHub -ErrorAction SilentlyContinue |
         Select-Object Name, @{Name='PNPClass';Expression={'USBHub'}}, Status, Manufacturer, PNPDeviceID
+      $items += Get-CimInstance Win32_USBController -ErrorAction SilentlyContinue |
+        Select-Object Name, @{Name='PNPClass';Expression={'USBController'}}, Status, Manufacturer, DeviceID
+      $items += Get-CimInstance Win32_USBControllerDevice -ErrorAction SilentlyContinue |
+        ForEach-Object {
+          $dep = $_.Dependent
+          $ant = $_.Antecedent
+          [PSCustomObject]@{
+            Name = $dep
+            PNPClass = 'USBAttached'
+            Status = 'OK'
+            Manufacturer = ''
+            Service = $ant
+          }
+        }
+      $items += Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
+        Where-Object { $_.HardwareInterface -eq $true -or $_.Status -ne 'Disabled' } |
+        Select-Object @{Name='Name';Expression={$_.InterfaceDescription}}, @{Name='PNPClass';Expression={'NetAdapter'}}, @{Name='Status';Expression={$_.Status}}, @{Name='Manufacturer';Expression={$_.DriverDescription}}, @{Name='Service';Expression={$_.InterfaceName}}
       $items += Get-CimInstance -Namespace root\wmi WmiMonitorConnectionParams -ErrorAction SilentlyContinue |
         Where-Object { $_.Active -eq $true } |
         ForEach-Object {
@@ -495,6 +513,14 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                                 .and_then(Value::as_str)
                                 .map(str::trim)
                                 .filter(|s| !s.is_empty()),
+                            row.get("Location")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty()),
+                            row.get("LocationInformation")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty()),
                         ]
                         .into_iter()
                         .flatten()
@@ -503,6 +529,24 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                             "displayoutput" => "display_output".to_string(),
                             "audioendpoint" => "audio_endpoint".to_string(),
                             "usbhub" => "usb_hub".to_string(),
+                            "usbcontroller" => "usb_controller".to_string(),
+                            "usbattached" => "usb_attached".to_string(),
+                            "netadapter" => "network_adapter".to_string(),
+                            "net" => "network_adapter".to_string(),
+                            "ports" => "port_device".to_string(),
+                            "media" => {
+                                let n = name.to_ascii_lowercase();
+                                if n.contains("audio")
+                                    || n.contains("speaker")
+                                    || n.contains("headset")
+                                    || n.contains("headphone")
+                                    || n.contains("microphone")
+                                {
+                                    "audio_endpoint".to_string()
+                                } else {
+                                    "media_device".to_string()
+                                }
+                            }
                             "" => "endpoint".to_string(),
                             // Detect USB Type-C / UCSI controllers by name
                             "usb" => {
@@ -513,6 +557,14 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                                     || n.contains("usb-c")
                                 {
                                     "typec_port".to_string()
+                                } else if n.contains("host controller")
+                                    || n.contains("xhci")
+                                    || n.contains("ehci")
+                                    || n.contains("uhci")
+                                {
+                                    "usb_controller".to_string()
+                                } else if n.contains("root hub") || n.contains("hub") {
+                                    "usb_hub".to_string()
                                 } else {
                                     "usb_device".to_string()
                                 }
@@ -538,7 +590,20 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                     })
                     .collect::<Vec<_>>();
                 if !items.is_empty() {
-                    return items;
+                    let mut seen = std::collections::HashSet::new();
+                    let mut deduped = Vec::new();
+                    for item in items {
+                        let key = format!(
+                            "{}|{}|{}",
+                            item.kind,
+                            item.name,
+                            item.detail.as_deref().unwrap_or("")
+                        );
+                        if seen.insert(key) {
+                            deduped.push(item);
+                        }
+                    }
+                    return deduped;
                 }
             }
         }
@@ -592,9 +657,31 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                     || n.contains("usb-c")
                 {
                     "typec_port".to_string()
+                } else if n.contains("host controller")
+                    || n.contains("xhci")
+                    || n.contains("ehci")
+                    || n.contains("uhci")
+                {
+                    "usb_controller".to_string()
+                } else if n.contains("root hub") || n.contains("hub") {
+                    "usb_hub".to_string()
                 } else {
                     "usb_device".to_string()
                 }
+            } else if class.eq_ignore_ascii_case("MEDIA") {
+                let n = name.to_ascii_lowercase();
+                if n.contains("audio")
+                    || n.contains("speaker")
+                    || n.contains("headset")
+                    || n.contains("headphone")
+                    || n.contains("microphone")
+                {
+                    "audio_endpoint".to_string()
+                } else {
+                    "media_device".to_string()
+                }
+            } else if class.eq_ignore_ascii_case("Ports") {
+                "port_device".to_string()
             } else {
                 class.to_ascii_lowercase()
             },
@@ -1308,12 +1395,12 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
 
     let mut power = Vec::new();
     if let Some(raw) = raw.as_ref() {
-        if let Some(source) = raw.power_watts_source.clone() {
+        if let Some(source) = raw.host_power_watts_source.clone() {
             power.push(DeviceInventoryItem {
-                kind: "power_source".to_string(),
+                kind: "host_power_source".to_string(),
                 name: source,
                 detail: raw
-                    .power_watts
+                    .host_power_watts
                     .map(|v| format!("{v:.2} W machine"))
                     .or_else(|| Some("W machine indisponibles".to_string())),
                 status: Some("active".to_string()),
@@ -1321,18 +1408,37 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
                 ..Default::default()
             });
         }
+        if let Some(source) = raw.wall_power_watts_source.clone() {
+            power.push(DeviceInventoryItem {
+                kind: "wall_power_source".to_string(),
+                name: source,
+                detail: raw
+                    .wall_power_watts
+                    .map(|v| format!("{v:.2} W mur"))
+                    .or_else(|| Some("W mur indisponibles".to_string())),
+                status: Some("active".to_string()),
+                evidence: "platform_measured".to_string(),
+                ..Default::default()
+            });
+        }
         if let Some(on_battery) = raw.on_battery {
+            let no_battery = !on_battery && raw.battery_percent.unwrap_or(0.0) <= 0.0;
             power.push(DeviceInventoryItem {
                 kind: "power_mode".to_string(),
-                name: if on_battery {
+                name: if no_battery {
+                    "no_battery".to_string()
+                } else if on_battery {
                     "battery".to_string()
                 } else {
                     "ac".to_string()
                 },
-                detail: raw
-                    .battery_percent
-                    .map(|v| format!("{v:.0} %"))
-                    .or_else(|| Some("niveau inconnu".to_string())),
+                detail: if no_battery {
+                    Some("pas de batterie exposée".to_string())
+                } else {
+                    raw.battery_percent
+                        .map(|v| format!("{v:.0} %"))
+                        .or_else(|| Some("niveau inconnu".to_string()))
+                },
                 status: Some("detected".to_string()),
                 evidence: "platform_detected".to_string(),
                 ..Default::default()

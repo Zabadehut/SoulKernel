@@ -329,21 +329,33 @@ impl LiteApp {
                 ));
                 columns[2].label(format!(
                     "UI embarquée {:.1}% CPU · {}",
-                    vm.metrics.raw.webview_host_cpu_sum.unwrap_or(0.0),
-                    fmt::mib_from_kb(vm.metrics.raw.webview_host_mem_mb.unwrap_or(0) * 1024)
+                    vm.process_report.summary.webview_cpu_usage_pct,
+                    fmt::mib_from_kb(vm.process_report.summary.webview_memory_kb)
                 ));
                 columns[2].label(format!(
                     "Batterie {} · charge {}",
-                    vm.metrics
-                        .raw
-                        .on_battery
-                        .map(|v| if v { "sur batterie" } else { "sur secteur" }.to_string())
-                        .unwrap_or_else(|| "N/A".to_string()),
-                    vm.metrics
-                        .raw
-                        .battery_percent
-                        .map(|v| format!("{v:.0}%"))
-                        .unwrap_or_else(|| "N/A".to_string())
+                    if vm.metrics.raw.on_battery == Some(false)
+                        && vm.metrics.raw.battery_percent.unwrap_or(0.0) <= 0.0
+                    {
+                        "pas de batterie".to_string()
+                    } else {
+                        vm.metrics
+                            .raw
+                            .on_battery
+                            .map(|v| if v { "sur batterie" } else { "sur secteur" }.to_string())
+                            .unwrap_or_else(|| "N/A".to_string())
+                    },
+                    if vm.metrics.raw.on_battery == Some(false)
+                        && vm.metrics.raw.battery_percent.unwrap_or(0.0) <= 0.0
+                    {
+                        "N/A".to_string()
+                    } else {
+                        vm.metrics
+                            .raw
+                            .battery_percent
+                            .map(|v| format!("{v:.0}%"))
+                            .unwrap_or_else(|| "N/A".to_string())
+                    }
                 ));
             });
         });
@@ -775,7 +787,11 @@ impl LiteApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.strong(&item.name);
                     ui.label(format!("[{}]", item.kind));
-                    ui.label(crate::fmt::watts(estimated_w));
+                    if endpoint_budget_w.is_some() {
+                        ui.label(format!("W dérivé {}", crate::fmt::watts(estimated_w)));
+                    } else {
+                        ui.label(crate::fmt::watts(estimated_w));
+                    }
                     if let Some(scope) = &item.measurement_scope {
                         ui.label(format!("preuve {scope}"));
                     }
