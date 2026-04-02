@@ -5,6 +5,7 @@ edition = "2021"
 description = "SoulKernel native lite UI"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 eframe = { version = "0.33", default-features = true }
 egui = "0.33"
 rfd = "0.14"

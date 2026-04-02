@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use serde_json::Value;
 
 fn trim_non_empty(value: Option<String>) -> Option<String> {
     value
@@ -123,6 +125,56 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
 
 #[cfg(target_os = "windows")]
 fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
+    let script = r#"
+      $items = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+        Where-Object { $_.PNPClass -in @('USB','Monitor','MEDIA') } |
+        Select-Object Name, PNPClass, Status
+      $items | ConvertTo-Json -Compress
+    "#;
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output();
+    if let Ok(out) = out {
+        if out.status.success() {
+            if let Ok(value) = serde_json::from_slice::<Value>(&out.stdout) {
+                let rows = match value {
+                    Value::Array(rows) => rows,
+                    Value::Null => Vec::new(),
+                    row => vec![row],
+                };
+                let items = rows
+                    .into_iter()
+                    .filter_map(|row| {
+                        let name = row.get("Name")?.as_str()?.trim();
+                        if name.is_empty() {
+                            return None;
+                        }
+                        let class = row
+                            .get("PNPClass")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim()
+                            .to_ascii_lowercase();
+                        Some(DeviceInventoryItem {
+                            kind: class,
+                            name: name.to_string(),
+                            detail: None,
+                            status: trim_non_empty(
+                                row.get("Status")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
+                            ),
+                            evidence: "platform_detected".to_string(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !items.is_empty() {
+                    return items;
+                }
+            }
+        }
+    }
+
     let mut items = Vec::new();
     let out = std::process::Command::new("wmic")
         .args([
@@ -171,6 +223,61 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
 
 #[cfg(target_os = "macos")]
 fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
+    let mut json_items = Vec::new();
+    let kinds = [
+        ("SPUSBDataType", "usb_device"),
+        ("SPAudioDataType", "audio_device"),
+        ("SPThunderboltDataType", "thunderbolt"),
+    ];
+    for (datatype, kind) in kinds {
+        let out = std::process::Command::new("system_profiler")
+            .args([datatype, "-json"])
+            .output();
+        let Ok(out) = out else { continue };
+        if !out.status.success() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(&out.stdout) else {
+            continue;
+        };
+        let Some(entries) = value.get(datatype).and_then(Value::as_array) else {
+            continue;
+        };
+        for entry in entries {
+            let Some(obj) = entry.as_object() else {
+                continue;
+            };
+            let name = obj
+                .get("_name")
+                .and_then(Value::as_str)
+                .or_else(|| obj.get("device_title").and_then(Value::as_str))
+                .unwrap_or("")
+                .trim();
+            if name.is_empty() {
+                continue;
+            }
+            let detail = obj
+                .get("vendor_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    obj.get("manufacturer")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            json_items.push(DeviceInventoryItem {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                detail: trim_non_empty(detail),
+                status: Some("connected".to_string()),
+                evidence: "platform_detected".to_string(),
+            });
+        }
+    }
+    if !json_items.is_empty() {
+        return json_items;
+    }
+
     let mut items = Vec::new();
     let kinds = [
         ("SPUSBDataType", "usb_device"),
@@ -240,6 +347,65 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
 
 #[cfg(target_os = "windows")]
 fn collect_displays() -> Vec<DeviceInventoryItem> {
+    let script = r#"
+      $items = Get-CimInstance Win32_DesktopMonitor -ErrorAction SilentlyContinue |
+        Select-Object Name, ScreenWidth, ScreenHeight, Status, MonitorType
+      $items | ConvertTo-Json -Compress
+    "#;
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output();
+    if let Ok(out) = out {
+        if out.status.success() {
+            if let Ok(value) = serde_json::from_slice::<Value>(&out.stdout) {
+                let rows = match value {
+                    Value::Array(rows) => rows,
+                    Value::Null => Vec::new(),
+                    row => vec![row],
+                };
+                let items = rows
+                    .into_iter()
+                    .filter_map(|row| {
+                        let name = row.get("Name")?.as_str()?.trim();
+                        if name.is_empty() || name.eq_ignore_ascii_case("Generic PnP Monitor") {
+                            return None;
+                        }
+                        let width = row.get("ScreenWidth").and_then(Value::as_u64);
+                        let height = row.get("ScreenHeight").and_then(Value::as_u64);
+                        let monitor_type = row
+                            .get("MonitorType")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty() && *s != "Generic PnP Monitor")
+                            .map(str::to_string);
+                        let detail = match (width, height, monitor_type) {
+                            (Some(w), Some(h), Some(t)) if w > 0 && h > 0 => {
+                                Some(format!("{w}x{h} · {t}"))
+                            }
+                            (Some(w), Some(h), None) if w > 0 && h > 0 => Some(format!("{w}x{h}")),
+                            (_, _, Some(t)) => Some(t),
+                            _ => None,
+                        };
+                        Some(DeviceInventoryItem {
+                            kind: "display".to_string(),
+                            name: name.to_string(),
+                            detail,
+                            status: trim_non_empty(
+                                row.get("Status")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
+                            ),
+                            evidence: "platform_detected".to_string(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !items.is_empty() {
+                    return items;
+                }
+            }
+        }
+    }
+
     let mut items = Vec::new();
     let out = std::process::Command::new("wmic")
         .args([
@@ -282,6 +448,83 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
 
 #[cfg(target_os = "macos")]
 fn collect_displays() -> Vec<DeviceInventoryItem> {
+    let out = std::process::Command::new("system_profiler")
+        .args(["SPDisplaysDataType", "-json"])
+        .output();
+    if let Ok(out) = out {
+        if out.status.success() {
+            if let Ok(value) = serde_json::from_slice::<Value>(&out.stdout) {
+                if let Some(gpus) = value.get("SPDisplaysDataType").and_then(Value::as_array) {
+                    let mut items = Vec::new();
+                    for gpu in gpus {
+                        let Some(ndrvs) = gpu.get("spdisplays_ndrvs").and_then(Value::as_array)
+                        else {
+                            continue;
+                        };
+                        for display in ndrvs {
+                            let name = display
+                                .get("_name")
+                                .and_then(Value::as_str)
+                                .or_else(|| {
+                                    display
+                                        .get("_spdisplays_display-product-name")
+                                        .and_then(Value::as_str)
+                                })
+                                .unwrap_or("")
+                                .trim();
+                            if name.is_empty() {
+                                continue;
+                            }
+                            let resolution = display
+                                .get("_spdisplays_resolution")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string);
+                            let ui_looks = display
+                                .get("_spdisplays_ui_looks_like")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string);
+                            let detail = match (resolution, ui_looks) {
+                                (Some(r), Some(ui)) => Some(format!("{r} · UI {ui}")),
+                                (Some(r), None) => Some(r),
+                                (None, Some(ui)) => Some(format!("UI {ui}")),
+                                (None, None) => None,
+                            };
+                            let status = if display
+                                .get("spdisplays_main")
+                                .and_then(Value::as_str)
+                                .is_some_and(|v| v.eq_ignore_ascii_case("yes"))
+                            {
+                                Some("primary".to_string())
+                            } else if display
+                                .get("spdisplays_online")
+                                .and_then(Value::as_str)
+                                .is_some_and(|v| v.eq_ignore_ascii_case("yes"))
+                            {
+                                Some("online".to_string())
+                            } else {
+                                Some("detected".to_string())
+                            };
+                            items.push(DeviceInventoryItem {
+                                kind: "display".to_string(),
+                                name: name.to_string(),
+                                detail,
+                                status,
+                                evidence: "platform_detected".to_string(),
+                            });
+                        }
+                    }
+                    if !items.is_empty() {
+                        return items;
+                    }
+                }
+            }
+        }
+    }
+
     let mut items = Vec::new();
     let out = std::process::Command::new("system_profiler")
         .arg("SPDisplaysDataType")
