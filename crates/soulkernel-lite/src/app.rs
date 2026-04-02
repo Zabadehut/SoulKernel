@@ -638,12 +638,51 @@ impl LiteApp {
     }
 
     fn inventory_panel(ui: &mut egui::Ui, state: &LiteState) {
+        fn endpoint_weight(kind: &str) -> f64 {
+            let kind = kind.to_ascii_lowercase();
+            if kind.contains("display_output")
+                || kind.contains("monitor")
+                || kind.contains("display")
+            {
+                2.4
+            } else if kind.contains("usb_hub") {
+                0.9
+            } else if kind.contains("usb") {
+                0.6
+            } else if kind.contains("audio") || kind.contains("jack") {
+                0.5
+            } else if kind.contains("bluetooth") {
+                0.25
+            } else if kind.contains("hid") {
+                0.15
+            } else if kind.contains("port") {
+                0.35
+            } else {
+                0.3
+            }
+        }
+
         ui.group(|ui| {
             Self::section_title(
                 ui,
                 "Inventaire matériel",
                 "Contexte physique connecté: écrans, GPU, stockage, réseau et périphériques.",
             );
+            let endpoint_budget_w = state
+                .vm
+                .external_status
+                .last_watts
+                .filter(|_| state.vm.external_status.is_fresh)
+                .or(state.vm.metrics.raw.power_watts)
+                .map(|w| w * 0.18);
+            let total_weight = state
+                .vm
+                .device_inventory
+                .connected_endpoints
+                .iter()
+                .map(|item| endpoint_weight(&item.kind))
+                .sum::<f64>()
+                .max(0.0001);
             ui.label(format!(
                 "Inventaire: {} displays · {} GPU · {} storage · {} net · {} endpoints",
                 state.vm.device_inventory.displays.len(),
@@ -661,11 +700,14 @@ impl LiteApp {
                         .device_inventory
                         .connected_endpoints
                         .iter()
-                        .take(18)
+                        .take(28)
                     {
+                        let estimated_w = endpoint_budget_w
+                            .map(|budget| budget * (endpoint_weight(&item.kind) / total_weight));
                         ui.horizontal_wrapped(|ui| {
                             ui.strong(&item.name);
                             ui.label(format!("[{}]", item.kind));
+                            ui.label(crate::fmt::watts(estimated_w));
                             if let Some(status) = &item.status {
                                 ui.label(status);
                             }

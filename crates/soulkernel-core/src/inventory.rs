@@ -138,13 +138,42 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
 #[cfg(target_os = "windows")]
 fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
     let script = r#"
-      $classes = @('USB','Monitor','MEDIA','Bluetooth','HIDClass','Image')
-      $items = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+      function VideoOutputLabel($code) {
+        switch ([int]$code) {
+          -2 { 'internal' }
+          -1 { 'other' }
+          0 { 'vga' }
+          4 { 'dvi' }
+          5 { 'hdmi' }
+          10 { 'displayport_embedded' }
+          11 { 'displayport_external' }
+          15 { 'miracast' }
+          default { "video_$code" }
+        }
+      }
+      $classes = @('USB','Monitor','MEDIA','Bluetooth','HIDClass','Image','Ports')
+      $items = @()
+      $items += Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
         Where-Object {
           $_.PNPClass -in $classes -or
-          $_.Service -match 'BTH|USBSTOR|HidUsb|usbaudio|monitor'
+          $_.Service -match 'BTH|USBSTOR|HidUsb|usbaudio|monitor|HdAudAddService|usbhub'
         } |
-        Select-Object Name, PNPClass, Status, Manufacturer, Service
+        Select-Object Name, @{Name='PNPClass';Expression={$_.PNPClass}}, Status, Manufacturer, Service
+      $items += Get-CimInstance Win32_SoundDevice -ErrorAction SilentlyContinue |
+        Select-Object Name, @{Name='PNPClass';Expression={'AudioEndpoint'}}, Status, Manufacturer, Service
+      $items += Get-CimInstance Win32_USBHub -ErrorAction SilentlyContinue |
+        Select-Object Name, @{Name='PNPClass';Expression={'USBHub'}}, Status, Manufacturer, PNPDeviceID
+      $items += Get-CimInstance -Namespace root\wmi WmiMonitorConnectionParams -ErrorAction SilentlyContinue |
+        Where-Object { $_.Active -eq $true } |
+        ForEach-Object {
+          [PSCustomObject]@{
+            Name = $_.InstanceName
+            PNPClass = 'DisplayOutput'
+            Status = 'active'
+            Manufacturer = ''
+            Service = (VideoOutputLabel $_.VideoOutputTechnology)
+          }
+        }
       $items | ConvertTo-Json -Compress
     "#;
     let out = command_for_inventory("powershell")
@@ -184,12 +213,15 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                         .into_iter()
                         .flatten()
                         .collect::<Vec<_>>();
+                        let kind = match class.as_str() {
+                            "displayoutput" => "display_output".to_string(),
+                            "audioendpoint" => "audio_endpoint".to_string(),
+                            "usbhub" => "usb_hub".to_string(),
+                            "" => "endpoint".to_string(),
+                            _ => class,
+                        };
                         Some(DeviceInventoryItem {
-                            kind: if class.is_empty() {
-                                "endpoint".to_string()
-                            } else {
-                                class
-                            },
+                            kind,
                             name: name.to_string(),
                             detail: if detail.is_empty() {
                                 None
@@ -237,10 +269,10 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
         let service = cols[4].trim();
         if !matches!(
             class,
-            "USB" | "Monitor" | "MEDIA" | "Bluetooth" | "HIDClass" | "Image"
+            "USB" | "Monitor" | "MEDIA" | "Bluetooth" | "HIDClass" | "Image" | "Ports"
         ) && !matches!(
             service,
-            "BTHUSB" | "USBSTOR" | "HidUsb" | "usbaudio" | "monitor"
+            "BTHUSB" | "USBSTOR" | "HidUsb" | "usbaudio" | "monitor" | "HdAudAddService"
         ) {
             continue;
         }
