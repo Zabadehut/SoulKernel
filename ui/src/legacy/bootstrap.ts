@@ -3428,6 +3428,35 @@ function buildEnergyAuditModel({ meter, raw, topContributors, grouped, audit, wa
   return { summary, nodes };
 }
 
+function peripheralWeight(item) {
+  const kind = String(item?.kind || '').toLowerCase();
+  if (kind.includes('display') || kind.includes('monitor')) return 2.4;
+  if (kind.includes('gpu')) return 3.0;
+  if (kind.includes('storage')) return 1.4;
+  if (kind.includes('network') || kind.includes('net')) return 0.7;
+  if (kind.includes('thunderbolt')) return 0.9;
+  if (kind.includes('usb')) return 0.6;
+  if (kind.includes('audio')) return 0.5;
+  if (kind.includes('bluetooth')) return 0.25;
+  if (kind.includes('hid')) return 0.15;
+  return 0.35;
+}
+
+function estimatePeripheralPower(items, budgetWatts) {
+  const list = Array.isArray(items) ? items : [];
+  const budget = Number.isFinite(Number(budgetWatts)) ? Math.max(0, Number(budgetWatts)) : 0;
+  if (!list.length || budget <= 0) {
+    return list.map((item) => ({ ...item, estimated_power_w: null, attribution_method: 'none' }));
+  }
+  const weights = list.map((item) => peripheralWeight(item));
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0) || 1;
+  return list.map((item, idx) => ({
+    ...item,
+    estimated_power_w: budget * (weights[idx] / totalWeight),
+    attribution_method: 'derived_residual_weighted_inventory',
+  }));
+}
+
 function renderEnergyAuditView(model) {
   const energyView = document.getElementById('auditEnergyView');
   if (!energyView) return;
@@ -3552,6 +3581,7 @@ function renderPowerAuditSection() {
   const referencePower = wallPower ?? hostPower ?? null;
   const explainedShare = referencePower && referencePower > 0 ? (explainedPower / referencePower) * 100 : null;
   const unattributed = referencePower && referencePower > 0 ? Math.max(0, referencePower - explainedPower) : null;
+  const residualDeviceBudget = unattributed ?? (hostPower != null && explainedPower != null ? Math.max(0, Number(hostPower) - Number(explainedPower)) : null);
   const sourceTag = String(meter.power_source || '').trim();
   const external = meter.external_power || {};
   const sourcePresentation = (() => {
@@ -3658,25 +3688,29 @@ function renderPowerAuditSection() {
   const detectedDevicesEl = document.getElementById('auditDetectedDevices');
   if (detectedDevicesEl) {
     const inv = state.deviceInventory || {};
-    const sections = [
+    const sections = estimatePeripheralPower([
       ...(Array.isArray(inv.power) ? inv.power : []),
       ...(Array.isArray(inv.displays) ? inv.displays : []),
       ...(Array.isArray(inv.gpus) ? inv.gpus : []),
       ...(Array.isArray(inv.storage) ? inv.storage : []),
       ...(Array.isArray(inv.network) ? inv.network : []),
-    ];
+    ], residualDeviceBudget);
+    const endpoints = estimatePeripheralPower(
+      Array.isArray(inv.connected_endpoints) ? inv.connected_endpoints : [],
+      residualDeviceBudget != null ? Number(residualDeviceBudget) * 0.45 : null,
+    );
     if (!sections.length) {
       detectedDevicesEl.innerHTML = '<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Aucun périphérique ou composant supplémentaire détecté à ce niveau.</div></div>';
     } else {
       detectedDevicesEl.innerHTML = [
-        `<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Écrans, GPU, stockage, réseau et contexte énergie réellement exposés par la plateforme. Pas de watts inventés par périphérique.</div></div>`,
+        `<div class="audit-item"><div class="audit-item-title">Inventaire détecté</div><div class="audit-item-meta">Écrans, GPU, stockage, réseau et contexte énergie exposés par la plateforme. La puissance par périphérique affichée ici est une dérivation du résiduel non attribué, pas une mesure capteur directe.</div></div>`,
         ...sections.slice(0, 16).map((item) => (
-          `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'device')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'device')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')}</div></div>`
+          `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'device')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'device')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')} · ${escapeHtml(item.attribution_method || '—')}</div></div>`
         )),
-        ...(Array.isArray(inv.connected_endpoints) && inv.connected_endpoints.length ? [
+        ...(endpoints.length ? [
           `<div class="audit-item"><div class="audit-item-title">Ports & endpoints</div><div class="audit-item-meta">USB, sorties écran, audio et bus externes détectés par la plateforme.</div></div>`,
-          ...inv.connected_endpoints.slice(0, 20).map((item) => (
-            `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'endpoint')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'endpoint')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')}</div></div>`
+          ...endpoints.slice(0, 20).map((item) => (
+            `<div class="audit-item"><div class="audit-item-row"><div><div class="audit-item-title">${escapeHtml(item.name || item.kind || 'endpoint')}</div><div class="audit-item-meta">${escapeHtml(item.kind || 'endpoint')} · ${escapeHtml(item.evidence || 'platform_detected')}</div></div><div class="audit-item-meta"><span class="audit-item-strong">${formatAuditWatts(item.estimated_power_w)}</span><br>${escapeHtml(item.status || 'detected')}</div></div><div class="audit-item-meta">${escapeHtml(item.detail || '—')} · ${escapeHtml(item.attribution_method || '—')}</div></div>`
           )),
         ] : []),
       ].join('');

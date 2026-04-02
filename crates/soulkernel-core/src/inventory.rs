@@ -138,9 +138,13 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
 #[cfg(target_os = "windows")]
 fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
     let script = r#"
+      $classes = @('USB','Monitor','MEDIA','Bluetooth','HIDClass','Image')
       $items = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-        Where-Object { $_.PNPClass -in @('USB','Monitor','MEDIA') } |
-        Select-Object Name, PNPClass, Status
+        Where-Object {
+          $_.PNPClass -in $classes -or
+          $_.Service -match 'BTH|USBSTOR|HidUsb|usbaudio|monitor'
+        } |
+        Select-Object Name, PNPClass, Status, Manufacturer, Service
       $items | ConvertTo-Json -Compress
     "#;
     let out = command_for_inventory("powershell")
@@ -167,10 +171,31 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                             .unwrap_or("")
                             .trim()
                             .to_ascii_lowercase();
+                        let detail = [
+                            row.get("Manufacturer")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty()),
+                            row.get("Service")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty()),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
                         Some(DeviceInventoryItem {
-                            kind: class,
+                            kind: if class.is_empty() {
+                                "endpoint".to_string()
+                            } else {
+                                class
+                            },
                             name: name.to_string(),
-                            detail: None,
+                            detail: if detail.is_empty() {
+                                None
+                            } else {
+                                Some(detail.join(" · "))
+                            },
                             status: trim_non_empty(
                                 row.get("Status")
                                     .and_then(Value::as_str)
@@ -193,7 +218,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
             "path",
             "Win32_PnPEntity",
             "get",
-            "Name,PNPClass,Status",
+            "Name,PNPClass,Status,Manufacturer,Service",
             "/format:csv",
         ])
         .output();
@@ -205,21 +230,37 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
     }
     for line in String::from_utf8_lossy(&out.stdout).lines().skip(1) {
         let cols = line.split(',').collect::<Vec<_>>();
-        if cols.len() < 4 {
+        if cols.len() < 6 {
             continue;
         }
         let class = cols[2].trim();
-        if !matches!(class, "USB" | "Monitor" | "MEDIA") {
+        let service = cols[4].trim();
+        if !matches!(
+            class,
+            "USB" | "Monitor" | "MEDIA" | "Bluetooth" | "HIDClass" | "Image"
+        ) && !matches!(
+            service,
+            "BTHUSB" | "USBSTOR" | "HidUsb" | "usbaudio" | "monitor"
+        ) {
             continue;
         }
-        let name = cols[3].trim();
+        let name = cols[5].trim();
         if name.is_empty() {
             continue;
         }
+        let manufacturer = cols.get(3).copied().unwrap_or("").trim();
         items.push(DeviceInventoryItem {
-            kind: class.to_ascii_lowercase(),
+            kind: if class.trim().is_empty() {
+                "endpoint".to_string()
+            } else {
+                class.to_ascii_lowercase()
+            },
             name: name.to_string(),
-            detail: None,
+            detail: trim_non_empty(
+                (!manufacturer.is_empty())
+                    .then(|| format!("{manufacturer} · {service}"))
+                    .or_else(|| (!service.is_empty()).then(|| service.to_string())),
+            ),
             status: Some(
                 cols.get(1)
                     .copied()
