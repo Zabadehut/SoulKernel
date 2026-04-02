@@ -438,6 +438,18 @@ pub fn collect() -> Result<ResourceState> {
         .clone()
         .or_else(|| wall_power_watts_source.clone());
 
+    // On Linux, when no system-level power meter is available (no RAPL + no wall meter),
+    // fall back to USB PD supply measurement as a partial power signal.
+    #[cfg(target_os = "linux")]
+    let (power_watts, power_watts_source) = if power_watts.is_none() {
+        match linux_usb_pd_supply_watts() {
+            Some(w) => (Some(w), Some("usb_pd_measured".to_string())),
+            None => (power_watts, power_watts_source),
+        }
+    } else {
+        (power_watts, power_watts_source)
+    };
+
     #[cfg(target_os = "windows")]
     let (on_battery, battery_percent) = crate::platform::windows::battery_status()
         .map(|(on_dc, pct)| (Some(on_dc), Some(pct as f64)))
@@ -681,4 +693,61 @@ pub fn collect() -> Result<ResourceState> {
     ];
 
     Ok(state)
+}
+
+/// Read USB Power Delivery supply watts from `/sys/class/power_supply/`.
+/// Returns total watts from all online USB_PD/USB_PD_DRP supplies, or None.
+#[cfg(target_os = "linux")]
+fn linux_usb_pd_supply_watts() -> Option<f64> {
+    let mut total = 0.0_f64;
+    let mut found = false;
+    let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") else {
+        return None;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let type_str = match std::fs::read_to_string(path.join("type")) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if !type_str.trim().starts_with("USB_PD") {
+            continue;
+        }
+        let online = std::fs::read_to_string(path.join("online"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .unwrap_or(0);
+        if online == 0 {
+            continue;
+        }
+        // power_now in µW
+        let pw = std::fs::read_to_string(path.join("power_now"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|v| *v > 0.0)
+            .map(|uw| uw / 1_000_000.0);
+        if let Some(w) = pw {
+            total += w;
+            found = true;
+        } else {
+            // Derive from current_now (µA) × voltage_now (µV)
+            let ua = std::fs::read_to_string(path.join("current_now"))
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .filter(|v| *v > 0.0);
+            let uv = std::fs::read_to_string(path.join("voltage_now"))
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .filter(|v| *v > 0.0);
+            if let (Some(ua), Some(uv)) = (ua, uv) {
+                total += (ua * uv) / 1_000_000_000_000.0; // µA × µV → W
+                found = true;
+            }
+        }
+    }
+    if found && total > 0.0 {
+        Some(total)
+    } else {
+        None
+    }
 }

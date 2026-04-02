@@ -132,6 +132,137 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
         }
     }
 
+    // USB-C / TypeC ports via sysfs (Linux ≥ 4.x, PD state ≥ 5.x)
+    if let Ok(entries) = std::fs::read_dir("/sys/class/typec") {
+        // Helper: parse "[active] other" format returned by typec sysfs files.
+        let active = |s: String| -> String {
+            let s = s.trim();
+            if let (Some(a), Some(b)) = (s.find('['), s.find(']')) {
+                s[a + 1..b].to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        for entry in entries.flatten() {
+            let port_name = entry.file_name().to_string_lossy().to_string();
+            // portX only — skip portX-partner, portX-cable, etc.
+            if !port_name.starts_with("port") || port_name.contains('-') {
+                continue;
+            }
+            let path = entry.path();
+            let power_role = std::fs::read_to_string(path.join("power_role"))
+                .ok()
+                .map(active);
+            let op_mode = std::fs::read_to_string(path.join("power_operation_mode"))
+                .ok()
+                .map(active);
+            let data_role = std::fs::read_to_string(path.join("data_role"))
+                .ok()
+                .map(active);
+            let partner_connected = path
+                .parent()
+                .map(|p| p.join(format!("{port_name}-partner")).exists())
+                .unwrap_or(false);
+
+            // Map PD operation mode → estimated watts + evidence tag.
+            // usb_power_delivery means full PD negotiation in progress; real
+            // PDO contract watts would require parsing the USB PD sysclass.
+            let (watts_hint, evidence) = match op_mode.as_deref() {
+                Some("usb_power_delivery") => (None, "pd_negotiated"),
+                Some("5A") => (Some(25.0_f64), "pd_estimated"),
+                Some("3.0A") => (Some(15.0_f64), "pd_estimated"),
+                Some("1.5A") => (Some(7.5_f64), "pd_estimated"),
+                Some("default") => (Some(2.5_f64), "pd_estimated"),
+                _ => (None, "platform_detected"),
+            };
+
+            let mut detail_parts: Vec<String> = Vec::new();
+            if let Some(m) = &op_mode {
+                detail_parts.push(format!("PD: {m}"));
+            }
+            if let Some(dr) = &data_role {
+                detail_parts.push(dr.clone());
+            }
+            if let Some(w) = watts_hint {
+                detail_parts.push(format!("~{w:.0} W"));
+            } else if !partner_connected {
+                detail_parts.push("idle".to_string());
+            }
+
+            items.push(DeviceInventoryItem {
+                kind: "typec_port".to_string(),
+                name: port_name.clone(),
+                detail: if detail_parts.is_empty() {
+                    None
+                } else {
+                    Some(detail_parts.join(" · "))
+                },
+                status: Some(power_role.unwrap_or_else(|| {
+                    if partner_connected {
+                        "connected"
+                    } else {
+                        "idle"
+                    }
+                    .to_string()
+                })),
+                evidence: evidence.to_string(),
+            });
+        }
+    }
+
+    // USB power supplies via /sys/class/power_supply — active USB chargers
+    // with measurable current/voltage (laptop chargers, USB-PD bricks, etc.)
+    if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = entry.path();
+            let supply_type = std::fs::read_to_string(path.join("type"))
+                .ok()
+                .map(|s| s.trim().to_string());
+            if !supply_type.as_deref().unwrap_or("").starts_with("USB") {
+                continue;
+            }
+            let online = std::fs::read_to_string(path.join("online"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u8>().ok())
+                .unwrap_or(0);
+            if online == 0 {
+                continue;
+            }
+            let current_ua = std::fs::read_to_string(path.join("current_now"))
+                .ok()
+                .and_then(|s| s.trim().parse::<i64>().ok());
+            let voltage_uv = std::fs::read_to_string(path.join("voltage_now"))
+                .ok()
+                .and_then(|s| s.trim().parse::<i64>().ok());
+            let power_uw = std::fs::read_to_string(path.join("power_now"))
+                .ok()
+                .and_then(|s| s.trim().parse::<i64>().ok());
+            // Prefer direct power_now; fall back to I×V (µA × µV → pW → W).
+            let watts = power_uw
+                .filter(|&p| p > 0)
+                .map(|p| p as f64 / 1_000_000.0)
+                .or_else(|| match (current_ua, voltage_uv) {
+                    (Some(i), Some(v)) if i > 0 && v > 0 => {
+                        Some(i as f64 * v as f64 / 1_000_000_000_000.0)
+                    }
+                    _ => None,
+                });
+            let evidence = if watts.is_some() {
+                "platform_measured"
+            } else {
+                "platform_detected"
+            };
+            items.push(DeviceInventoryItem {
+                kind: "usb_power_supply".to_string(),
+                name,
+                detail: watts.map(|w| format!("{w:.1} W")),
+                status: Some("online".to_string()),
+                evidence: evidence.to_string(),
+            });
+        }
+    }
+
     items
 }
 
@@ -232,6 +363,19 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                             "audioendpoint" => "audio_endpoint".to_string(),
                             "usbhub" => "usb_hub".to_string(),
                             "" => "endpoint".to_string(),
+                            // Detect USB Type-C / UCSI controllers by name
+                            "usb" => {
+                                let n = name.to_ascii_lowercase();
+                                if n.contains("type-c")
+                                    || n.contains("type c")
+                                    || n.contains("ucsi")
+                                    || n.contains("usb-c")
+                                {
+                                    "typec_port".to_string()
+                                } else {
+                                    "usb_device".to_string()
+                                }
+                            }
                             _ => class,
                         };
                         Some(DeviceInventoryItem {
@@ -298,6 +442,17 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
         items.push(DeviceInventoryItem {
             kind: if class.trim().is_empty() {
                 "endpoint".to_string()
+            } else if class.eq_ignore_ascii_case("USB") {
+                let n = name.to_ascii_lowercase();
+                if n.contains("type-c")
+                    || n.contains("type c")
+                    || n.contains("ucsi")
+                    || n.contains("usb-c")
+                {
+                    "typec_port".to_string()
+                } else {
+                    "usb_device".to_string()
+                }
             } else {
                 class.to_ascii_lowercase()
             },
@@ -373,6 +528,37 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
             });
         }
     }
+    // macOS power adapter wattage via SPPowerDataType JSON
+    if let Ok(pwr_out) = command_for_inventory("system_profiler")
+        .args(["SPPowerDataType", "-json"])
+        .output()
+    {
+        if pwr_out.status.success() {
+            if let Ok(val) = serde_json::from_slice::<Value>(&pwr_out.stdout) {
+                if let Some(arr) = val.get("SPPowerDataType").and_then(Value::as_array) {
+                    for entry in arr {
+                        let Some(obj) = entry.as_object() else {
+                            continue;
+                        };
+                        if let Some(w) = obj
+                            .get("sppower_charger_adapter_wattage_id")
+                            .and_then(Value::as_f64)
+                        {
+                            if w > 0.0 {
+                                json_items.push(DeviceInventoryItem {
+                                    kind: "power_adapter".to_string(),
+                                    name: "AC Adapter".to_string(),
+                                    detail: Some(format!("{w:.0} W")),
+                                    status: Some("connected".to_string()),
+                                    evidence: "platform_measured".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     if !json_items.is_empty() {
         return json_items;
     }
@@ -405,6 +591,37 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                     status: Some("connected".to_string()),
                     evidence: "platform_detected".to_string(),
                 });
+            }
+        }
+    }
+    // macOS power adapter wattage via SPPowerDataType text fallback
+    if let Ok(pwr_out) = command_for_inventory("system_profiler")
+        .arg("SPPowerDataType")
+        .output()
+    {
+        if pwr_out.status.success() {
+            let text = String::from_utf8_lossy(&pwr_out.stdout);
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if let Some(rest) = line.trim().strip_prefix("Wattage (W):") {
+                    if let Ok(w) = rest.trim().parse::<f64>() {
+                        // Find the nearest charger section heading above
+                        let name = lines[..i]
+                            .iter()
+                            .rev()
+                            .map(|l| l.trim())
+                            .find(|l| l.to_ascii_lowercase().contains("charger"))
+                            .map(|l| l.trim_end_matches(':').to_string())
+                            .unwrap_or_else(|| "AC Adapter".to_string());
+                        items.push(DeviceInventoryItem {
+                            kind: "power_adapter".to_string(),
+                            name,
+                            detail: Some(format!("{w:.0} W")),
+                            status: Some("connected".to_string()),
+                            evidence: "platform_measured".to_string(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -754,6 +971,89 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
     Vec::new()
 }
 
+/// Affine les estimations `pd_estimated` des ports TypeC en bornant
+/// par le budget puissance résiduel réel : total_machine − composants connus.
+///
+/// Ne s'applique PAS quand `power_watts` vient de RAPL : RAPL mesure le
+/// package CPU seul, pas la consommation totale machine (GPU discret, USB,
+/// stockage, backlight ne sont pas dans RAPL).
+fn refine_typec_power_budget(
+    endpoints: &mut [DeviceInventoryItem],
+    raw: &crate::metrics::RawMetrics,
+    disk_count: usize,
+) {
+    // RAPL = package CPU uniquement → ne représente pas le total machine.
+    let total_w = match (raw.power_watts, raw.power_watts_source.as_deref()) {
+        (Some(_), Some(src)) if src.contains("rapl") => return,
+        (Some(w), _) if w > 0.0 => w,
+        _ => return,
+    };
+
+    // Consommateurs mesurés ou estimés.
+    let gpu_w = raw.gpu_power_watts.unwrap_or(0.0);
+    // CPU : fraction conservatrice usage × 50 % du total, plancher 5 W.
+    let cpu_w = (raw.cpu_pct / 100.0 * total_w * 0.50).max(5.0).min(total_w * 0.85);
+    // Stockage : ~1.5 W moyen par périphérique (mix SSD/HDD).
+    let disk_w = disk_count as f64 * 1.5;
+    // CM, ventilateurs, chipset, rétroéclairage : plancher fixe.
+    let overhead_w = 8.0_f64;
+
+    let usb_budget = (total_w - gpu_w - cpu_w - disk_w - overhead_w).max(0.0);
+
+    // Ports actifs avec estimation PD (pas idle, pas déjà mesurés directement).
+    let active: Vec<usize> = endpoints
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            e.kind == "typec_port"
+                && e.evidence == "pd_estimated"
+                && !e.detail.as_deref().unwrap_or("").contains("idle")
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    if active.is_empty() {
+        return;
+    }
+
+    let per_port_w = usb_budget / active.len() as f64;
+
+    for &idx in &active {
+        let item = &mut endpoints[idx];
+        // Plafond = maximum PD négocié initialement stocké dans le detail (~XX W).
+        let pd_max = item
+            .detail
+            .as_deref()
+            .and_then(|d| {
+                d.split(" · ")
+                    .find(|p| p.starts_with('~') && p.ends_with('W'))
+                    .and_then(|p| {
+                        p.trim_start_matches('~')
+                            .trim_end_matches('W')
+                            .trim()
+                            .parse::<f64>()
+                            .ok()
+                    })
+            })
+            .unwrap_or(25.0);
+
+        let refined_w = per_port_w.min(pd_max);
+
+        if let Some(detail) = &item.detail {
+            let stripped: String = detail
+                .split(" · ")
+                .filter(|p| !(p.starts_with('~') && p.ends_with('W')))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            item.detail = Some(if refined_w > 0.1 {
+                format!("{stripped} · ~{refined_w:.1} W")
+            } else {
+                stripped
+            });
+        }
+    }
+}
+
 pub fn collect_device_inventory() -> DeviceInventoryReport {
     let platform = crate::platform::info();
     let raw = crate::metrics::collect().ok().map(|m| m.raw);
@@ -884,6 +1184,11 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
                 evidence: "platform_detected".to_string(),
             });
         }
+    }
+
+    // Affiner les estimations TypeC avec le budget puissance résiduel réel.
+    if let Some(r) = raw.as_ref() {
+        refine_typec_power_budget(&mut connected_endpoints, r, storage.len());
     }
 
     DeviceInventoryReport {

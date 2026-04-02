@@ -91,6 +91,15 @@ pub struct WindowSummary {
     pub samples: usize,
     pub duration_h: f64,
     pub avg_power_w: Option<f64>,
+    /// Average machine power while dome is active (W).
+    #[serde(default)]
+    pub avg_power_dome_on_w: Option<f64>,
+    /// Average machine power while dome is inactive (W).
+    #[serde(default)]
+    pub avg_power_dome_off_w: Option<f64>,
+    /// Energy delta saved by dome: (avg_off − avg_on) × dome_on_duration / 3_600_000 (kWh).
+    #[serde(default)]
+    pub energy_saved_kwh: Option<f64>,
     pub has_power_data: bool,
     pub energy_kwh: f64,
     pub cost: f64,
@@ -423,6 +432,10 @@ impl TelemetryState {
         };
 
         // Second pass: aggregate all metrics.
+        let mut power_on_sum = 0.0_f64;
+        let mut power_on_dt = 0.0_f64;
+        let mut power_off_sum = 0.0_f64;
+        let mut power_off_dt = 0.0_f64;
         for s in self.ring.iter().filter(|s| s.ts_ms >= start_ms) {
             let activity = s.machine_activity.unwrap_or(MachineActivity::Active);
             out.samples += 1;
@@ -464,6 +477,13 @@ impl TelemetryState {
                 weighted_w_sum += w * s.dt_s;
                 weighted_w_dt += s.dt_s;
                 out.energy_kwh += (w * s.dt_s) / 3_600_000.0;
+                if s.dome_active {
+                    power_on_sum += w * s.dt_s;
+                    power_on_dt += s.dt_s;
+                } else {
+                    power_off_sum += w * s.dt_s;
+                    power_off_dt += s.dt_s;
+                }
             }
         }
 
@@ -471,6 +491,22 @@ impl TelemetryState {
             Some(weighted_w_sum / weighted_w_dt)
         } else {
             None
+        };
+        out.avg_power_dome_on_w = if power_on_dt > 0.0 {
+            Some(power_on_sum / power_on_dt)
+        } else {
+            None
+        };
+        out.avg_power_dome_off_w = if power_off_dt > 0.0 {
+            Some(power_off_sum / power_off_dt)
+        } else {
+            None
+        };
+        out.energy_saved_kwh = match (out.avg_power_dome_on_w, out.avg_power_dome_off_w) {
+            (Some(on_w), Some(off_w)) if off_w > on_w => {
+                Some((off_w - on_w) * power_on_dt / 3_600_000.0)
+            }
+            _ => None,
         };
         out.dome_active_ratio = if out.duration_h > 0.0 {
             (active_dt / (out.duration_h * 3600.0)).clamp(0.0, 1.0)
@@ -825,14 +861,23 @@ mod tests {
         );
 
         let summary = state.summary(base + 5_000);
+        // Sample 1: dt=1s (first sample default), 120W → 120 Ws
+        // Sample 2: dt=5s, 60W → 300 Ws  — total = 420 Ws = 420/3_600_000 kWh
+        let expected_kwh = 420.0 / 3_600_000.0;
         assert!(summary.total.has_power_data);
         assert_eq!(summary.power_source, "meross_wall");
-        assert!((summary.total.energy_kwh - 0.00025).abs() < 1e-9);
+        assert!((summary.total.energy_kwh - expected_kwh).abs() < 1e-9);
         assert!((summary.total.cpu_hours_differential - (30.0 * 5.0 / 360_000.0)).abs() < 1e-9);
         assert!((summary.total.mem_gb_hours_differential - (2.0 * 5.0 / 3600.0)).abs() < 1e-9);
-        assert!((summary.lifetime.total_energy_kwh - 0.00025).abs() < 1e-9);
+        assert!((summary.lifetime.total_energy_kwh - expected_kwh).abs() < 1e-9);
         assert!(summary.lifetime.total_cpu_hours_differential > 0.0);
         assert!(summary.lifetime.total_mem_gb_hours_differential > 0.0);
+        // Dome-split power: off=120W (1s), on=60W (5s).
+        assert!((summary.total.avg_power_dome_off_w.unwrap() - 120.0).abs() < 1e-9);
+        assert!((summary.total.avg_power_dome_on_w.unwrap() - 60.0).abs() < 1e-9);
+        // energy_saved_kwh = (120-60) * 5 / 3_600_000 = 300/3_600_000
+        let expected_saved = 300.0 / 3_600_000.0;
+        assert!((summary.total.energy_saved_kwh.unwrap() - expected_saved).abs() < 1e-12);
     }
 
     #[test]
