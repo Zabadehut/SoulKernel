@@ -742,41 +742,46 @@ impl LiteApp {
                 .id_salt("endpoints_scroll")
                 .max_height(260.0)
                 .show(ui, |ui| {
+                    // Displays, GPU, storage, network: no estimated watts — real data is in
+                    // item.detail already (e.g. NVML watts). Fake apportioned estimates
+                    // would show misleading numbers for devices with no power telemetry.
                     render_inventory_items(
                         ui,
                         "Displays",
                         &state.vm.device_inventory.displays,
-                        endpoint_budget_w,
+                        None,
                         total_weight,
                     );
                     render_inventory_items(
                         ui,
                         "GPU",
                         &state.vm.device_inventory.gpus,
-                        endpoint_budget_w,
+                        None,
                         total_weight,
                     );
                     render_inventory_items(
                         ui,
                         "Storage",
                         &state.vm.device_inventory.storage,
-                        endpoint_budget_w,
+                        None,
                         total_weight,
                     );
                     render_inventory_items(
                         ui,
                         "Network",
                         &state.vm.device_inventory.network,
-                        endpoint_budget_w,
+                        None,
                         total_weight,
                     );
                     render_inventory_items(
                         ui,
                         "Power",
                         &state.vm.device_inventory.power,
-                        endpoint_budget_w,
+                        None,
                         total_weight,
                     );
+                    // Connected endpoints: show apportioned estimate only here,
+                    // where real per-port telemetry is absent.
                     render_inventory_items(
                         ui,
                         "Endpoints",

@@ -3334,6 +3334,7 @@ function buildEnergyAuditModel({ meter, raw, topContributors, grouped, audit, wa
         { label: 'Mur / externe', value: formatAuditWatts(wallPower) },
         { label: 'Puissance host', value: formatAuditWatts(hostPower) },
         { label: 'Part expliquée', value: explainedShare == null ? '—' : `${explainedShare.toFixed(1)} %` },
+        { label: 'Niveau de preuve', value: sourcePresentation.evidenceLevel || '—' },
       ],
     },
     cpu: {
@@ -3376,6 +3377,7 @@ function buildEnergyAuditModel({ meter, raw, topContributors, grouped, audit, wa
         { label: 'Mur - process', value: formatAuditWatts(unattributed) },
         { label: 'Source', value: sourcePresentation.confidence },
         { label: 'Lecture', value: 'Valeur dérivée, pas capteur direct.' },
+        { label: 'Niveau de preuve', value: 'derived' },
       ],
     },
     os: {
@@ -3422,6 +3424,7 @@ function buildEnergyAuditModel({ meter, raw, topContributors, grouped, audit, wa
         { label: 'Timestamp', value: meter.external_power?.last_ts_label || '—' },
         { label: 'Bridge', value: meter.external_power?.bridge_state || '—' },
         { label: 'Runtime', value: meter.external_power?.runtime || '—' },
+        { label: 'Niveau de preuve', value: wallPower != null ? 'measured' : 'unknown' },
       ],
     },
   };
@@ -3575,8 +3578,8 @@ function renderPowerAuditSection() {
   const topContributors = Array.isArray(proc.top_contributors) ? proc.top_contributors : [];
   const grouped = Array.isArray(proc.grouped_processes) ? proc.grouped_processes : [];
   const audit = proc.overhead_audit && typeof proc.overhead_audit === 'object' ? proc.overhead_audit : null;
-  const wallPower = meter.is_external_wall_source ? meter.live_power_w : null;
-  const hostPower = raw.power_watts ?? meter.live_power_w ?? null;
+  const wallPower = raw.wall_power_watts ?? (meter.is_external_wall_source ? meter.live_power_w : null);
+  const hostPower = raw.host_power_watts ?? raw.power_watts ?? null;
   const explainedPower = topContributors.reduce((sum, item) => sum + Number(item?.estimated_power_w || 0), 0);
   const referencePower = wallPower ?? hostPower ?? null;
   const explainedShare = referencePower && referencePower > 0 ? (explainedPower / referencePower) * 100 : null;
@@ -3591,14 +3594,16 @@ function renderPowerAuditSection() {
         confidence: 'Murale réelle',
         summary: `La source externe active alimente le total machine. SoulKernel réconcilie ensuite ce total avec la machine, les groupes de processus et la part non expliquée.`,
         sourceLabel: external.source_tag || sourceTag || 'source_externe',
+        evidenceLevel: 'measured_wall',
       };
     }
-    if (sourceTag) {
+    if (raw.host_power_watts != null || sourceTag) {
       return {
         headline: `Puissance machine interne: ${formatAuditWatts(hostPower)}`,
         confidence: 'Interne machine',
         summary: `Aucune source externe active ou fraîche. L’audit reste exploitable via les capteurs internes OS, avec réconciliation partielle des consommateurs.`,
-        sourceLabel: sourceTag,
+        sourceLabel: raw.host_power_watts_source || sourceTag,
+        evidenceLevel: 'measured_host',
       };
     }
     return {
@@ -3606,6 +3611,7 @@ function renderPowerAuditSection() {
       confidence: 'Différentiel',
       summary: `Aucune source watts disponible à cet instant. L’onglet reste utile pour les métriques observées, mais la réconciliation énergétique reste partielle.`,
       sourceLabel: 'differential_only',
+      evidenceLevel: 'unknown',
     };
   })();
   renderEnergyAuditView(buildEnergyAuditModel({
@@ -3679,6 +3685,7 @@ function renderPowerAuditSection() {
       { title: 'Fichier / config', strong: external.power_file_path || '—', meta: `Config ${external.config_path || '—'}` },
       { title: 'Erreur source externe', strong: external.last_error || 'aucune', meta: `Présence fichier ${external.file_presence || '—'}` },
       { title: 'Confiance audit', strong: sourcePresentation.confidence, meta: sourcePresentation.summary },
+      { title: 'Niveau de preuve', strong: sourcePresentation.evidenceLevel || '—', meta: `Host ${raw.host_power_watts != null ? 'mesuré' : 'N/A'} · Mur ${wallPower != null ? 'mesuré' : 'N/A'} · Process ${topContributors.length ? 'dérivé' : 'N/A'}` },
     ];
     externalEl.innerHTML = items.map((item) => (
       `<div class="audit-item"><div class="audit-item-title">${escapeHtml(item.title)}</div><div class="audit-item-meta audit-item-strong">${escapeHtml(item.strong)}</div><div class="audit-item-meta">${escapeHtml(item.meta)}</div></div>`
