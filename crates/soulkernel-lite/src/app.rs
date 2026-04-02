@@ -166,9 +166,14 @@ impl LiteApp {
         } else {
             0.0
         };
-        let wall = vm.external_status.last_watts;
-        let host = vm.metrics.raw.power_watts;
-        let host_source = fmt::maybe_text(vm.metrics.raw.power_watts_source.as_deref(), "aucune");
+        let wall = vm
+            .metrics
+            .raw
+            .wall_power_watts
+            .or(vm.external_status.last_watts);
+        let host = vm.metrics.raw.host_power_watts;
+        let host_source =
+            fmt::maybe_text(vm.metrics.raw.host_power_watts_source.as_deref(), "aucune");
         let external_source = if vm.external_status.source_tag.trim().is_empty() {
             "aucune".to_string()
         } else {
@@ -193,8 +198,10 @@ impl LiteApp {
             } else {
                 "à rafraîchir"
             }
-        } else if wall.is_some() || host.is_some() {
-            "partielle"
+        } else if wall.is_some() && host.is_none() {
+            "mur seul"
+        } else if host.is_some() && wall.is_none() {
+            "hôte seul"
         } else {
             "faible"
         };
@@ -227,7 +234,11 @@ impl LiteApp {
                     fmt::opt_pct(vm.metrics.raw.gpu_pct),
                     fmt::watts(vm.metrics.raw.gpu_power_watts)
                 ));
-                columns[0].label(format!("Watts hôte {} · src {}", fmt::watts(host), host_source));
+                columns[0].label(format!(
+                    "Watts hôte {} · src {}",
+                    fmt::watts(host),
+                    host_source
+                ));
 
                 columns[1].label(egui::RichText::new("Externe").strong());
                 columns[1].label(format!("Watts mur {}", fmt::watts(wall)));
@@ -254,6 +265,13 @@ impl LiteApp {
                 ));
                 columns[2].label(format!("Non attribué {}", fmt::watts(unattributed)));
                 columns[2].label(format!("Confiance {}", confidence));
+                columns[2].label(if host.is_none() {
+                    "Comparaison host↔mur indisponible: pas de watt interne natif.".to_string()
+                } else if wall.is_none() {
+                    "Comparaison host↔mur indisponible: pas de watt externe frais.".to_string()
+                } else {
+                    "Comparaison host↔mur mesurable.".to_string()
+                });
                 columns[2].label(format!(
                     "Compression {} · zRAM {}",
                     vm.metrics
@@ -662,6 +680,35 @@ impl LiteApp {
             }
         }
 
+        fn render_inventory_items(
+            ui: &mut egui::Ui,
+            title: &str,
+            items: &[soulkernel_core::inventory::DeviceInventoryItem],
+            endpoint_budget_w: Option<f64>,
+            total_weight: f64,
+        ) {
+            if items.is_empty() {
+                return;
+            }
+            ui.label(egui::RichText::new(title).strong());
+            for item in items {
+                let estimated_w = endpoint_budget_w
+                    .map(|budget| budget * (endpoint_weight(&item.kind) / total_weight));
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(&item.name);
+                    ui.label(format!("[{}]", item.kind));
+                    ui.label(crate::fmt::watts(estimated_w));
+                    if let Some(status) = &item.status {
+                        ui.label(status);
+                    }
+                    if let Some(detail) = &item.detail {
+                        ui.label(detail);
+                    }
+                });
+            }
+            ui.separator();
+        }
+
         ui.group(|ui| {
             Self::section_title(
                 ui,
@@ -693,29 +740,50 @@ impl LiteApp {
             ));
             egui::ScrollArea::vertical()
                 .id_salt("endpoints_scroll")
-                .max_height(180.0)
+                .max_height(260.0)
                 .show(ui, |ui| {
-                    for item in state
-                        .vm
-                        .device_inventory
-                        .connected_endpoints
-                        .iter()
-                        .take(28)
-                    {
-                        let estimated_w = endpoint_budget_w
-                            .map(|budget| budget * (endpoint_weight(&item.kind) / total_weight));
-                        ui.horizontal_wrapped(|ui| {
-                            ui.strong(&item.name);
-                            ui.label(format!("[{}]", item.kind));
-                            ui.label(crate::fmt::watts(estimated_w));
-                            if let Some(status) = &item.status {
-                                ui.label(status);
-                            }
-                            if let Some(detail) = &item.detail {
-                                ui.label(detail);
-                            }
-                        });
-                    }
+                    render_inventory_items(
+                        ui,
+                        "Displays",
+                        &state.vm.device_inventory.displays,
+                        endpoint_budget_w,
+                        total_weight,
+                    );
+                    render_inventory_items(
+                        ui,
+                        "GPU",
+                        &state.vm.device_inventory.gpus,
+                        endpoint_budget_w,
+                        total_weight,
+                    );
+                    render_inventory_items(
+                        ui,
+                        "Storage",
+                        &state.vm.device_inventory.storage,
+                        endpoint_budget_w,
+                        total_weight,
+                    );
+                    render_inventory_items(
+                        ui,
+                        "Network",
+                        &state.vm.device_inventory.network,
+                        endpoint_budget_w,
+                        total_weight,
+                    );
+                    render_inventory_items(
+                        ui,
+                        "Power",
+                        &state.vm.device_inventory.power,
+                        endpoint_budget_w,
+                        total_weight,
+                    );
+                    render_inventory_items(
+                        ui,
+                        "Endpoints",
+                        &state.vm.device_inventory.connected_endpoints,
+                        endpoint_budget_w,
+                        total_weight,
+                    );
                 });
         });
     }

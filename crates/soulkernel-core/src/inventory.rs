@@ -153,6 +153,20 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
       }
       $classes = @('USB','Monitor','MEDIA','Bluetooth','HIDClass','Image','Ports')
       $items = @()
+      $items += Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+        Where-Object {
+          $_.Class -in $classes -or
+          $_.FriendlyName -match 'USB|Bluetooth|Audio|Speaker|Headset|Headphones|Microphone|HID|Camera|HDMI|DisplayPort|DP'
+        } |
+        ForEach-Object {
+          [PSCustomObject]@{
+            Name = if ([string]::IsNullOrWhiteSpace($_.FriendlyName)) { $_.InstanceId } else { $_.FriendlyName }
+            PNPClass = $_.Class
+            Status = $_.Status
+            Manufacturer = ''
+            Service = $_.InstanceId
+          }
+        }
       $items += Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
         Where-Object {
           $_.PNPClass -in $classes -or
