@@ -270,7 +270,7 @@ impl LiteState {
     fn spawn_refresh_task(&mut self) {
         let profile = self.selected_profile();
         let kappa = self.vm.kappa;
-        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(4);
+        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(8);
         let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(15);
         let (tx, rx) = mpsc::channel();
         self.refresh_rx = Some(rx);

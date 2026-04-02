@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sysinfo::{get_current_pid, ProcessStatus, System};
+use sysinfo::{get_current_pid, ProcessRefreshKind, ProcessStatus, RefreshKind, System};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSample {
@@ -50,8 +50,15 @@ fn status_label(status: ProcessStatus) -> String {
 }
 
 pub fn collect_observed_report(top_n: usize) -> ProcessObservedReport {
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    let mut sys = System::new_with_specifics(
+        RefreshKind::new().with_processes(
+            ProcessRefreshKind::new()
+                .with_memory()
+                .with_cpu()
+                .with_disk_usage(),
+        ),
+    );
+    sys.refresh_processes();
 
     let self_pid = get_current_pid().ok();
     let mut samples = Vec::with_capacity(sys.processes().len());
