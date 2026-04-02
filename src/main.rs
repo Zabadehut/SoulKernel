@@ -49,6 +49,17 @@ type SharedTelemetry = Arc<Mutex<telemetry::TelemetryState>>;
 type SharedBenchmark = Arc<Mutex<benchmark::BenchmarkState>>;
 type SharedExternalBridge = Arc<Mutex<ExternalBridgeState>>;
 
+fn command_silent(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
 pub struct ExternalBridgeState {
     pub child: Option<Child>,
     pub last_error: Option<String>,
@@ -717,7 +728,7 @@ fn start_external_bridge_inner(
         g.child = None;
     }
 
-    let mut cmd = Command::new(&python_bin);
+    let mut cmd = command_silent(&python_bin);
     cmd.arg(script_path)
         .arg("--out")
         .arg(out_path)

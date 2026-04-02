@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use serde_json::Value;
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn command_for_inventory(program: &str) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
 fn trim_non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|s| s.trim().to_string())
@@ -131,7 +143,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
         Select-Object Name, PNPClass, Status
       $items | ConvertTo-Json -Compress
     "#;
-    let out = std::process::Command::new("powershell")
+    let out = command_for_inventory("powershell")
         .args(["-NoProfile", "-Command", script])
         .output();
     if let Ok(out) = out {
@@ -176,7 +188,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
     }
 
     let mut items = Vec::new();
-    let out = std::process::Command::new("wmic")
+    let out = command_for_inventory("wmic")
         .args([
             "path",
             "Win32_PnPEntity",
@@ -230,7 +242,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
         ("SPThunderboltDataType", "thunderbolt"),
     ];
     for (datatype, kind) in kinds {
-        let out = std::process::Command::new("system_profiler")
+        let out = command_for_inventory("system_profiler")
             .args([datatype, "-json"])
             .output();
         let Ok(out) = out else { continue };
@@ -285,7 +297,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
         ("SPThunderboltDataType", "thunderbolt"),
     ];
     for (datatype, kind) in kinds {
-        let out = std::process::Command::new("system_profiler")
+        let out = command_for_inventory("system_profiler")
             .arg(datatype)
             .output();
         let Ok(out) = out else { continue };
@@ -352,7 +364,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
         Select-Object Name, ScreenWidth, ScreenHeight, Status, MonitorType
       $items | ConvertTo-Json -Compress
     "#;
-    let out = std::process::Command::new("powershell")
+    let out = command_for_inventory("powershell")
         .args(["-NoProfile", "-Command", script])
         .output();
     if let Ok(out) = out {
@@ -407,7 +419,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
     }
 
     let mut items = Vec::new();
-    let out = std::process::Command::new("wmic")
+    let out = command_for_inventory("wmic")
         .args([
             "path",
             "Win32_DesktopMonitor",
@@ -448,7 +460,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
 
 #[cfg(target_os = "macos")]
 fn collect_displays() -> Vec<DeviceInventoryItem> {
-    let out = std::process::Command::new("system_profiler")
+    let out = command_for_inventory("system_profiler")
         .args(["SPDisplaysDataType", "-json"])
         .output();
     if let Ok(out) = out {
@@ -526,7 +538,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
     }
 
     let mut items = Vec::new();
-    let out = std::process::Command::new("system_profiler")
+    let out = command_for_inventory("system_profiler")
         .arg("SPDisplaysDataType")
         .output();
     let Ok(out) = out else {

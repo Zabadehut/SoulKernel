@@ -21,6 +21,17 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
+fn command_silent(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
 pub struct LiteViewModel {
     pub now_ms: u64,
     pub metrics: ResourceState,
@@ -487,7 +498,7 @@ impl LiteState {
             .append(true)
             .open(&log_path)
             .map_err(|e| e.to_string())?;
-        let mut cmd = Command::new(&python_bin);
+        let mut cmd = command_silent(&python_bin);
         cmd.arg(script_path)
             .arg("--out")
             .arg(&out_path)
@@ -816,7 +827,7 @@ fn effective_python_candidates(cfg: &MerossFileConfig) -> Vec<String> {
 
 fn pick_python_bin(cfg: &MerossFileConfig) -> Result<String, String> {
     for candidate in effective_python_candidates(cfg) {
-        if Command::new(&candidate)
+        if command_silent(&candidate)
             .arg("--version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
