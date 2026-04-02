@@ -20,13 +20,23 @@ fn trim_non_empty(value: Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeviceInventoryItem {
     pub kind: String,
     pub name: String,
     pub detail: Option<String>,
     pub status: Option<String>,
     pub evidence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical_link_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -39,6 +49,132 @@ pub struct DeviceInventoryReport {
     pub power: Vec<DeviceInventoryItem>,
     pub connected_endpoints: Vec<DeviceInventoryItem>,
     pub platform_features: Vec<String>,
+}
+
+fn normalize_active_state(status: Option<&str>) -> Option<String> {
+    let normalized = status?.trim().to_ascii_lowercase();
+    let mapped = match normalized.as_str() {
+        "ok" | "up" | "ready" | "present" | "detected" | "primary" | "connected" => "connected",
+        "active" | "online" | "charging" | "playing" | "running" => "active",
+        "idle" | "standby" | "suspended" => "idle",
+        "disconnected" | "offline" | "not present" => "unknown",
+        other if other.is_empty() => return None,
+        other => other,
+    };
+    Some(mapped.to_string())
+}
+
+fn infer_physical_link_hint(item: &DeviceInventoryItem) -> Option<String> {
+    let kind = item.kind.to_ascii_lowercase();
+    let mut haystack = format!("{} {}", kind, item.name.to_ascii_lowercase());
+    if let Some(detail) = &item.detail {
+        haystack.push(' ');
+        haystack.push_str(&detail.to_ascii_lowercase());
+    }
+    if haystack.contains("thunderbolt") {
+        Some("thunderbolt".to_string())
+    } else if haystack.contains("usb-c")
+        || haystack.contains("type-c")
+        || haystack.contains("typec")
+        || kind == "typec_port"
+    {
+        Some("usb-c".to_string())
+    } else if haystack.contains("displayport")
+        || haystack.contains(" dp")
+        || haystack.contains("dp ")
+    {
+        Some("displayport".to_string())
+    } else if haystack.contains("hdmi") {
+        Some("hdmi".to_string())
+    } else if haystack.contains("dvi") {
+        Some("dvi".to_string())
+    } else if haystack.contains("vga") {
+        Some("vga".to_string())
+    } else if haystack.contains("jack")
+        || haystack.contains("headphone")
+        || haystack.contains("speaker")
+        || haystack.contains("microphone")
+    {
+        Some("jack".to_string())
+    } else if haystack.contains("bluetooth") {
+        Some("bluetooth".to_string())
+    } else if haystack.contains("nvme") {
+        Some("nvme".to_string())
+    } else if haystack.contains("sata") {
+        Some("sata".to_string())
+    } else if haystack.contains("pcie") || haystack.contains("pci") {
+        Some("pcie".to_string())
+    } else if haystack.contains("usb3")
+        || haystack.contains("usb 3")
+        || haystack.contains("5000 mb/s")
+    {
+        Some("usb3".to_string())
+    } else if haystack.contains("usb2")
+        || haystack.contains("usb 2")
+        || haystack.contains("480 mb/s")
+    {
+        Some("usb2".to_string())
+    } else if kind.contains("network") {
+        Some("ethernet".to_string())
+    } else {
+        None
+    }
+}
+
+fn infer_measurement_scope(evidence: &str) -> String {
+    match evidence {
+        "platform_measured" => "measured",
+        "pd_estimated" | "pd_negotiated" => "derived",
+        "display_fallback" => "fallback",
+        _ => "detected",
+    }
+    .to_string()
+}
+
+fn infer_confidence_score(evidence: &str) -> f64 {
+    match evidence {
+        "platform_measured" => 0.95,
+        "pd_negotiated" => 0.75,
+        "pd_estimated" => 0.55,
+        "display_fallback" => 0.35,
+        _ => 0.65,
+    }
+}
+
+fn infer_attribution_kind(scope: &str) -> String {
+    match scope {
+        "measured" => "observed_telemetry",
+        "derived" => "modeled_from_platform_signals",
+        "fallback" => "fallback_inference",
+        _ => "platform_presence",
+    }
+    .to_string()
+}
+
+fn enrich_inventory_item(item: &mut DeviceInventoryItem) {
+    if item.active_state.is_none() {
+        item.active_state = normalize_active_state(item.status.as_deref());
+    }
+    if item.measurement_scope.is_none() {
+        item.measurement_scope = Some(infer_measurement_scope(&item.evidence));
+    }
+    if item.confidence_score.is_none() {
+        item.confidence_score = Some(infer_confidence_score(&item.evidence));
+    }
+    if item.physical_link_hint.is_none() {
+        item.physical_link_hint = infer_physical_link_hint(item);
+    }
+    if item.attribution_kind.is_none() {
+        if let Some(scope) = item.measurement_scope.as_deref() {
+            item.attribution_kind = Some(infer_attribution_kind(scope));
+        }
+    }
+}
+
+fn enrich_inventory_slice(items: &mut [DeviceInventoryItem]) {
+    for item in items {
+        enrich_inventory_item(item);
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -63,6 +199,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                 detail: modes.filter(|s| !s.is_empty()),
                 status,
                 evidence: "platform_detected".to_string(),
+                ..Default::default()
             });
         }
     }
@@ -110,6 +247,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                 },
                 status: Some("connected".to_string()),
                 evidence: "platform_detected".to_string(),
+                ..Default::default()
             });
         }
     }
@@ -127,6 +265,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                     detail: None,
                     status: Some("detected".to_string()),
                     evidence: "platform_detected".to_string(),
+                    ..Default::default()
                 });
             }
         }
@@ -206,6 +345,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                     .to_string()
                 })),
                 evidence: evidence.to_string(),
+                ..Default::default()
             });
         }
     }
@@ -259,6 +399,7 @@ fn collect_connected_endpoints() -> Vec<DeviceInventoryItem> {
                 detail: watts.map(|w| format!("{w:.1} W")),
                 status: Some("online".to_string()),
                 evidence: evidence.to_string(),
+                ..Default::default()
             });
         }
     }
@@ -655,6 +796,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
                 detail: modes,
                 status,
                 evidence: "platform_detected".to_string(),
+                ..Default::default()
             });
         }
     }
@@ -992,7 +1134,9 @@ fn refine_typec_power_budget(
     // Consommateurs mesurés ou estimés.
     let gpu_w = raw.gpu_power_watts.unwrap_or(0.0);
     // CPU : fraction conservatrice usage × 50 % du total, plancher 5 W.
-    let cpu_w = (raw.cpu_pct / 100.0 * total_w * 0.50).max(5.0).min(total_w * 0.85);
+    let cpu_w = (raw.cpu_pct / 100.0 * total_w * 0.50)
+        .max(5.0)
+        .min(total_w * 0.85);
     // Stockage : ~1.5 W moyen par périphérique (mix SSD/HDD).
     let disk_w = disk_count as f64 * 1.5;
     // CM, ventilateurs, chipset, rétroéclairage : plancher fixe.
@@ -1081,6 +1225,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
                 detail: display.detail.clone(),
                 status: display.status.clone(),
                 evidence: "display_fallback".to_string(),
+                ..Default::default()
             })
             .collect();
     }
@@ -1111,6 +1256,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
                         .confidence
                         .clone()
                         .unwrap_or_else(|| "observed_usage".to_string()),
+                    ..Default::default()
                 })
                 .collect::<Vec<_>>()
         })
@@ -1135,6 +1281,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
             )),
             status: Some(format!("{:?}", disk.kind()).to_lowercase()),
             evidence: "platform_detected".to_string(),
+            ..Default::default()
         })
         .collect::<Vec<_>>();
 
@@ -1151,6 +1298,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
             )),
             status: Some("detected".to_string()),
             evidence: "platform_detected".to_string(),
+            ..Default::default()
         })
         .collect::<Vec<_>>();
 
@@ -1166,6 +1314,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
                     .or_else(|| Some("W machine indisponibles".to_string())),
                 status: Some("active".to_string()),
                 evidence: "platform_measured".to_string(),
+                ..Default::default()
             });
         }
         if let Some(on_battery) = raw.on_battery {
@@ -1182,6 +1331,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
                     .or_else(|| Some("niveau inconnu".to_string())),
                 status: Some("detected".to_string()),
                 evidence: "platform_detected".to_string(),
+                ..Default::default()
             });
         }
     }
@@ -1190,6 +1340,19 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
     if let Some(r) = raw.as_ref() {
         refine_typec_power_budget(&mut connected_endpoints, r, storage.len());
     }
+
+    let mut displays = displays;
+    let mut gpus = gpus;
+    let mut storage = storage;
+    let mut network = network;
+    let mut power = power;
+
+    enrich_inventory_slice(&mut displays);
+    enrich_inventory_slice(&mut gpus);
+    enrich_inventory_slice(&mut storage);
+    enrich_inventory_slice(&mut network);
+    enrich_inventory_slice(&mut power);
+    enrich_inventory_slice(&mut connected_endpoints);
 
     DeviceInventoryReport {
         platform: platform.os,

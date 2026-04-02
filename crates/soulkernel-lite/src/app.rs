@@ -698,8 +698,19 @@ impl LiteApp {
                     ui.strong(&item.name);
                     ui.label(format!("[{}]", item.kind));
                     ui.label(crate::fmt::watts(estimated_w));
-                    if let Some(status) = &item.status {
+                    if let Some(scope) = &item.measurement_scope {
+                        ui.label(format!("preuve {scope}"));
+                    }
+                    if let Some(active_state) = &item.active_state {
+                        ui.label(format!("etat {active_state}"));
+                    } else if let Some(status) = &item.status {
                         ui.label(status);
+                    }
+                    if let Some(link) = &item.physical_link_hint {
+                        ui.label(format!("lien {link}"));
+                    }
+                    if let Some(score) = item.confidence_score {
+                        ui.label(format!("fiab {:.0}%", score * 100.0));
                     }
                     if let Some(detail) = &item.detail {
                         ui.label(detail);

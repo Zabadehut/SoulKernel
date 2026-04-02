@@ -13,7 +13,7 @@ Ce document suit la feuille de route "sans bullshit" de SoulKernel sur la mesure
 
 ## Chantiers critiques
 
-- [ ] Unifier partout la separation `host_power_watts` / `wall_power_watts`.
+- [x] Unifier partout la separation `host_power_watts` / `wall_power_watts`.
 - [ ] Tagger chaque chiffre d'audit avec `evidence_level`, `evidence_source`, `confidence_score`.
 - [ ] Afficher dans toutes les UIs une legende claire:
   - `Mesure reelle`
@@ -42,13 +42,13 @@ Ce document suit la feuille de route "sans bullshit" de SoulKernel sur la mesure
   - ports occupes
   - devices presents
   - devices actifs
-- [ ] Ajouter un champ `active_state` standardise:
+- [x] Ajouter un champ `active_state` standardise:
   - `idle`
   - `connected`
   - `active`
   - `online`
   - `unknown`
-- [ ] Ajouter un champ `physical_link_hint`:
+- [x] Ajouter un champ `physical_link_hint`:
   - `usb2`
   - `usb3`
   - `usb-c`
@@ -174,6 +174,7 @@ Ce document suit la feuille de route "sans bullshit" de SoulKernel sur la mesure
   - `residual`
   - `confidence`
 - [ ] Ajouter un mode `strict evidence` dans la lite UI.
+  - Base posee: les items d'inventaire exportent deja `measurement_scope`, `active_state`, `physical_link_hint`, `confidence_score`, `attribution_kind`.
 - [ ] Afficher `N/A` plutot que `0 W` quand la mesure n'existe pas.
 
 ## Export / Schema
@@ -184,6 +185,7 @@ Ce document suit la feuille de route "sans bullshit" de SoulKernel sur la mesure
   - `attribution_kind`
   - `confidence_score`
   - `measurement_scope`
+  - Base posee: les noeuds `device_inventory.*` exposent deja ces champs.
 - [ ] Conserver la separation `host` vs `wall` dans tous les exports.
 - [ ] Ajouter un bloc `limitations`.
 
