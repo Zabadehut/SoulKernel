@@ -360,8 +360,38 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
 #[cfg(target_os = "windows")]
 fn collect_displays() -> Vec<DeviceInventoryItem> {
     let script = r#"
-      $items = Get-CimInstance Win32_DesktopMonitor -ErrorAction SilentlyContinue |
-        Select-Object Name, ScreenWidth, ScreenHeight, Status, MonitorType
+      function Decode-Uint16String($values) {
+        if ($null -eq $values) { return $null }
+        $bytes = @($values | Where-Object { $_ -ne 0 } | ForEach-Object { [byte]$_ })
+        if ($bytes.Count -eq 0) { return $null }
+        return ([System.Text.Encoding]::ASCII.GetString($bytes)).Trim([char]0).Trim()
+      }
+      $items = @()
+      $active = Get-CimInstance -Namespace root\wmi WmiMonitorID -ErrorAction SilentlyContinue |
+        Where-Object { $_.Active -eq $true }
+      foreach ($monitor in $active) {
+        $name = Decode-Uint16String $monitor.UserFriendlyName
+        if ([string]::IsNullOrWhiteSpace($name)) {
+          $name = Decode-Uint16String $monitor.ManufacturerName
+        }
+        if ([string]::IsNullOrWhiteSpace($name)) {
+          $name = $monitor.InstanceName
+        }
+        if ([string]::IsNullOrWhiteSpace($name)) {
+          continue
+        }
+        $items += [PSCustomObject]@{
+          Name = $name
+          ScreenWidth = $null
+          ScreenHeight = $null
+          Status = 'active'
+          MonitorType = $monitor.InstanceName
+        }
+      }
+      if ($items.Count -eq 0) {
+        $items = Get-CimInstance Win32_DesktopMonitor -ErrorAction SilentlyContinue |
+          Select-Object Name, ScreenWidth, ScreenHeight, Status, MonitorType
+      }
       $items | ConvertTo-Json -Compress
     "#;
     let out = command_for_inventory("powershell")
@@ -379,7 +409,7 @@ fn collect_displays() -> Vec<DeviceInventoryItem> {
                     .into_iter()
                     .filter_map(|row| {
                         let name = row.get("Name")?.as_str()?.trim();
-                        if name.is_empty() || name.eq_ignore_ascii_case("Generic PnP Monitor") {
+                        if name.is_empty() {
                             return None;
                         }
                         let width = row.get("ScreenWidth").and_then(Value::as_u64);
