@@ -671,7 +671,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
     let platform = crate::platform::info();
     let raw = crate::metrics::collect().ok().map(|m| m.raw);
 
-    let connected_endpoints = collect_connected_endpoints();
+    let mut connected_endpoints = collect_connected_endpoints();
     let displays = {
         let detected = collect_displays();
         if detected.is_empty() {
@@ -684,6 +684,19 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
             detected
         }
     };
+
+    if connected_endpoints.is_empty() && !displays.is_empty() {
+        connected_endpoints = displays
+            .iter()
+            .map(|display| DeviceInventoryItem {
+                kind: "monitor".to_string(),
+                name: display.name.clone(),
+                detail: display.detail.clone(),
+                status: display.status.clone(),
+                evidence: "display_fallback".to_string(),
+            })
+            .collect();
+    }
 
     let gpus = raw
         .as_ref()

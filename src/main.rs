@@ -767,7 +767,17 @@ fn list_processes() -> Result<ProcessImpactReport, String> {
     sys.refresh_memory();
 
     let machine_metrics = metrics::collect().ok();
-    let machine_power_w = machine_metrics.as_ref().and_then(|m| m.raw.power_watts);
+    let external_status = external_power::get_external_power_status();
+    let machine_power_w = machine_metrics
+        .as_ref()
+        .and_then(|m| m.raw.power_watts)
+        .or_else(|| {
+            if external_status.is_fresh {
+                external_status.last_watts
+            } else {
+                None
+            }
+        });
     #[cfg(target_os = "windows")]
     let process_gpu_map = crate::platform::windows::process_gpu_utilisation_by_pid();
     #[cfg(not(target_os = "windows"))]
