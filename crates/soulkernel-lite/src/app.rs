@@ -909,9 +909,8 @@ impl LiteApp {
 
 impl eframe::App for LiteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
-
         let Some(state) = self.state.as_mut() else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("SoulKernel Lite");
                 if let Some(err) = &self.error {
@@ -920,6 +919,13 @@ impl eframe::App for LiteApp {
             });
             return;
         };
+
+        let repaint_ms = if state.vm.show_hud || state.is_refresh_in_flight() {
+            250
+        } else {
+            1000
+        };
+        ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
 
         if let Err(err) = state.refresh_if_needed() {
             self.error = Some(err);

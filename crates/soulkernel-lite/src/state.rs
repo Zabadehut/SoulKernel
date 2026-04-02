@@ -67,6 +67,8 @@ pub struct LiteState {
     pub vm: LiteViewModel,
     dome_snapshot: Option<ResourceState>,
     last_refresh: Instant,
+    last_process_refresh: Instant,
+    last_inventory_refresh: Instant,
     external_bridge_child: Option<Child>,
     refresh_rx: Option<Receiver<Result<LiteRefreshSnapshot, String>>>,
     refresh_in_flight: bool,
@@ -76,10 +78,10 @@ struct LiteRefreshSnapshot {
     now_ms: u64,
     metrics: ResourceState,
     formula: FormulaResult,
-    process_report: ProcessObservedReport,
+    process_report: Option<ProcessObservedReport>,
     platform_info: PlatformInfo,
     soulram_backend: SoulRamBackendInfo,
-    device_inventory: DeviceInventoryReport,
+    device_inventory: Option<DeviceInventoryReport>,
     external_status: ExternalPowerStatus,
 }
 
@@ -141,6 +143,7 @@ impl LiteState {
         let external_status = external_power::get_external_power_status();
         let benchmark_path = default_benchmark_path();
         let benchmark_state = BenchmarkState::new(benchmark_path);
+        let benchmark_history = benchmark_state.history(None, None, None, None);
 
         Ok(Self {
             runtime,
@@ -181,11 +184,13 @@ impl LiteState {
                 benchmark_settle_ms: 1200,
                 benchmark_use_system_probe: true,
                 benchmark_last_session: None,
-                benchmark_history: None,
+                benchmark_history: Some(benchmark_history),
                 show_hud: false,
             },
             dome_snapshot: None,
             last_refresh: Instant::now() - Duration::from_secs(10),
+            last_process_refresh: Instant::now() - Duration::from_secs(10),
+            last_inventory_refresh: Instant::now() - Duration::from_secs(20),
             external_bridge_child: None,
             refresh_rx: None,
             refresh_in_flight: false,
@@ -206,7 +211,8 @@ impl LiteState {
     }
 
     pub fn refresh_now(&mut self) -> Result<(), String> {
-        let snapshot = Self::collect_refresh_snapshot(self.selected_profile(), self.vm.kappa)?;
+        let snapshot =
+            Self::collect_refresh_snapshot(self.selected_profile(), self.vm.kappa, true, true)?;
         self.apply_refresh_snapshot(snapshot)?;
         self.refresh_in_flight = false;
         self.refresh_rx = None;
@@ -217,11 +223,18 @@ impl LiteState {
     fn spawn_refresh_task(&mut self) {
         let profile = self.selected_profile();
         let kappa = self.vm.kappa;
+        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(4);
+        let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(15);
         let (tx, rx) = mpsc::channel();
         self.refresh_rx = Some(rx);
         self.refresh_in_flight = true;
         std::thread::spawn(move || {
-            let _ = tx.send(Self::collect_refresh_snapshot(profile, kappa));
+            let _ = tx.send(Self::collect_refresh_snapshot(
+                profile,
+                kappa,
+                refresh_processes,
+                refresh_inventory,
+            ));
         });
     }
 
@@ -250,6 +263,8 @@ impl LiteState {
     fn collect_refresh_snapshot(
         profile: WorkloadProfile,
         kappa: f64,
+        refresh_processes: bool,
+        refresh_inventory: bool,
     ) -> Result<LiteRefreshSnapshot, String> {
         let metrics = metrics::collect().map_err(|e| e.to_string())?;
         let formula = formula::compute(&metrics, &profile, kappa);
@@ -257,10 +272,10 @@ impl LiteState {
             now_ms: now_ms_local(),
             metrics,
             formula,
-            process_report: processes::collect_observed_report(12),
+            process_report: refresh_processes.then(|| processes::collect_observed_report(12)),
             platform_info: platform::info(),
             soulram_backend: platform::soulram_backend_info(),
-            device_inventory: inventory::collect_device_inventory(),
+            device_inventory: refresh_inventory.then(inventory::collect_device_inventory),
             external_status: external_power::get_external_power_status(),
         })
     }
@@ -269,10 +284,16 @@ impl LiteState {
         self.vm.now_ms = snapshot.now_ms;
         self.vm.metrics = snapshot.metrics.clone();
         self.vm.formula = snapshot.formula.clone();
-        self.vm.process_report = snapshot.process_report;
+        if let Some(process_report) = snapshot.process_report {
+            self.vm.process_report = process_report;
+            self.last_process_refresh = Instant::now();
+        }
         self.vm.platform_info = snapshot.platform_info;
         self.vm.soulram_backend = snapshot.soulram_backend;
-        self.vm.device_inventory = snapshot.device_inventory;
+        if let Some(device_inventory) = snapshot.device_inventory {
+            self.vm.device_inventory = device_inventory;
+            self.last_inventory_refresh = Instant::now();
+        }
         self.vm.external_status = snapshot.external_status;
         self.vm.external_bridge_running = self.is_external_bridge_running();
         let _ = self.telemetry_state.ingest(TelemetryIngestRequest {
@@ -299,8 +320,11 @@ impl LiteState {
         } else {
             self.vm.manual_target_pid
         };
-        self.vm.benchmark_history = Some(self.benchmark_state.history(None, None, None, None));
         Ok(())
+    }
+
+    pub fn is_refresh_in_flight(&self) -> bool {
+        self.refresh_in_flight
     }
 
     pub fn selected_profile(&self) -> WorkloadProfile {
