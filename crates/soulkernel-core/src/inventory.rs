@@ -1289,9 +1289,17 @@ fn refine_typec_power_budget(
     }
 }
 
-pub fn collect_device_inventory() -> DeviceInventoryReport {
+pub fn collect_device_inventory_with_raw(
+    raw: Option<&crate::metrics::RawMetrics>,
+) -> DeviceInventoryReport {
     let platform = crate::platform::info();
-    let raw = crate::metrics::collect().ok().map(|m| m.raw);
+    let raw_owned;
+    let raw = if let Some(raw) = raw {
+        Some(raw)
+    } else {
+        raw_owned = crate::metrics::collect().ok().map(|m| m.raw);
+        raw_owned.as_ref()
+    };
 
     let mut connected_endpoints = collect_connected_endpoints();
     let displays = {
@@ -1394,7 +1402,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
         .collect::<Vec<_>>();
 
     let mut power = Vec::new();
-    if let Some(raw) = raw.as_ref() {
+    if let Some(raw) = raw {
         if let Some(source) = raw.host_power_watts_source.clone() {
             power.push(DeviceInventoryItem {
                 kind: "host_power_source".to_string(),
@@ -1447,7 +1455,7 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
     }
 
     // Affiner les estimations TypeC avec le budget puissance résiduel réel.
-    if let Some(r) = raw.as_ref() {
+    if let Some(r) = raw {
         refine_typec_power_budget(&mut connected_endpoints, r, storage.len());
     }
 
@@ -1474,4 +1482,8 @@ pub fn collect_device_inventory() -> DeviceInventoryReport {
         connected_endpoints,
         platform_features: platform.features,
     }
+}
+
+pub fn collect_device_inventory() -> DeviceInventoryReport {
+    collect_device_inventory_with_raw(None)
 }

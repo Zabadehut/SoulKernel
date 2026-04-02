@@ -32,6 +32,26 @@ fn command_silent(program: &str) -> Command {
     cmd
 }
 
+fn infer_machine_activity(metrics: &ResourceState) -> MachineActivity {
+    let cpu = metrics.raw.cpu_pct;
+    let gpu_pct = metrics.raw.gpu_pct.unwrap_or(0.0);
+    let io_total =
+        metrics.raw.io_read_mb_s.unwrap_or(0.0) + metrics.raw.io_write_mb_s.unwrap_or(0.0);
+    let webview_mem_mb = metrics.raw.webview_host_mem_mb.unwrap_or(0) as f64;
+    let gpu_adjusted = if webview_mem_mb >= 48.0 {
+        (gpu_pct - 18.0).max(0.0)
+    } else {
+        gpu_pct
+    };
+    if cpu < 12.0 && gpu_adjusted > 34.0 {
+        MachineActivity::Media
+    } else if cpu < 8.0 && io_total < 0.5 && gpu_pct < 8.0 {
+        MachineActivity::Idle
+    } else {
+        MachineActivity::Active
+    }
+}
+
 pub struct LiteViewModel {
     pub now_ms: u64,
     pub metrics: ResourceState,
@@ -121,7 +141,7 @@ impl LiteState {
             kpi_gain_median_pct: None,
             cpu_pct: Some(baseline.raw.cpu_pct),
             pi: Some(formula.pi),
-            machine_activity: Some(MachineActivity::Active),
+            machine_activity: Some(infer_machine_activity(&baseline)),
             mem_used_mb: Some(baseline.raw.mem_used_mb as f64),
             mem_total_mb: Some(baseline.raw.mem_total_mb as f64),
             power_source_tag: baseline.raw.power_watts_source.clone(),
@@ -146,7 +166,7 @@ impl LiteState {
         let process_report = processes::collect_observed_report(12);
         let platform_info = platform::info();
         let soulram_backend = platform::soulram_backend_info();
-        let device_inventory = inventory::collect_device_inventory();
+        let device_inventory = inventory::collect_device_inventory_with_raw(Some(&baseline.raw));
         let mut external_config = external_power::get_meross_config_or_default();
         // Pré-remplir les champs optionnels avec leurs valeurs par défaut calculées
         // pour que les champs UI ne soient pas vides au premier lancement.
@@ -295,6 +315,8 @@ impl LiteState {
     ) -> Result<LiteRefreshSnapshot, String> {
         let metrics = metrics::collect().map_err(|e| e.to_string())?;
         let formula = formula::compute(&metrics, &profile, kappa);
+        let device_inventory = refresh_inventory
+            .then(|| inventory::collect_device_inventory_with_raw(Some(&metrics.raw)));
         Ok(LiteRefreshSnapshot {
             now_ms: now_ms_local(),
             metrics,
@@ -302,7 +324,7 @@ impl LiteState {
             process_report: refresh_processes.then(|| processes::collect_observed_report(12)),
             platform_info: platform::info(),
             soulram_backend: platform::soulram_backend_info(),
-            device_inventory: refresh_inventory.then(inventory::collect_device_inventory),
+            device_inventory,
             external_status: external_power::get_external_power_status(),
         })
     }
@@ -331,7 +353,7 @@ impl LiteState {
             kpi_gain_median_pct: None,
             cpu_pct: Some(snapshot.metrics.raw.cpu_pct),
             pi: Some(snapshot.formula.pi),
-            machine_activity: Some(MachineActivity::Active),
+            machine_activity: Some(infer_machine_activity(&snapshot.metrics)),
             mem_used_mb: Some(snapshot.metrics.raw.mem_used_mb as f64),
             mem_total_mb: Some(snapshot.metrics.raw.mem_total_mb as f64),
             power_source_tag: snapshot.metrics.raw.power_watts_source.clone(),
