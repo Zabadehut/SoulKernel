@@ -641,6 +641,17 @@ impl LiteApp {
                     KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
                     KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
                 };
+                // ── Alerte auto-sabotage ──────────────────────────────────
+                if kpi.self_overload {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(210, 84, 84),
+                        format!(
+                            "⚠ SoulKernel {:.0}% CPU — l'optimiseur consomme plus qu'il n'optimise",
+                            kpi.cpu_self_pct
+                        ),
+                    );
+                }
+
                 ui.horizontal_wrapped(|ui| {
                     // KPI* valeur principale
                     match kpi.kpi_penalized {
@@ -1591,26 +1602,62 @@ impl LiteApp {
 
             ui.separator();
 
-            // ── Actions ───────────────────────────────────────────────────────
+            // ── Dôme ─────────────────────────────────────────────────────────
+            ui.label(egui::RichText::new("Dôme").strong());
             ui.horizontal(|ui| {
-                if ui.button("⚡ Dôme ON").clicked() {
-                    if let Err(err) = state.activate_dome() {
-                        *error = Some(err);
+                // Manuel
+                if ui.button("⚡ Activer").clicked() {
+                    match state.activate_dome() {
+                        Ok(()) => *info = Some("Dôme activé".to_string()),
+                        Err(err) => *error = Some(err),
                     }
                 }
-                if ui.button("↩ Annuler dôme").clicked() {
-                    if let Err(err) = state.rollback_dome() {
-                        *error = Some(err);
+                if ui.button("↩ Annuler").clicked() {
+                    match state.rollback_dome() {
+                        Ok(()) => *info = Some("Dôme annulé".to_string()),
+                        Err(err) => *error = Some(err),
                     }
                 }
+                ui.separator();
+                // Auto
+                ui.checkbox(&mut state.vm.auto_dome, "Auto (KPI)");
             });
+            if state.vm.auto_dome {
+                let status = if state.vm.kpi.self_overload {
+                    ("⚠ suspendu — SoulKernel en surcharge CPU", egui::Color32::from_rgb(210, 84, 84))
+                } else if state.vm.dome_active {
+                    ("dôme actif — surveille le KPI", egui::Color32::from_rgb(96, 168, 104))
+                } else {
+                    match state.vm.auto_dome_next_eval_s {
+                        Some(s) if s > 0 => (
+                            "en attente cooldown",
+                            egui::Color32::GRAY,
+                        ),
+                        _ => ("prêt — réévalue au prochain refresh", egui::Color32::from_rgb(96, 168, 104)),
+                    }
+                };
+                let mut label = egui::RichText::new(format!("Auto dôme : {}", status.0))
+                    .small()
+                    .color(status.1);
+                if let Some(s) = state.vm.auto_dome_next_eval_s.filter(|&s| s > 0) {
+                    label = egui::RichText::new(format!("Auto dôme : cooldown {}s", s))
+                        .small()
+                        .color(egui::Color32::GRAY);
+                }
+                ui.label(label);
+            }
+
+            ui.separator();
+
+            // ── SoulRAM ───────────────────────────────────────────────────────
+            ui.label(egui::RichText::new("SoulRAM").strong());
             ui.horizontal(|ui| {
-                if ui.button("🧠 SoulRAM ON").clicked() {
+                if ui.button("🧠 Activer").clicked() {
                     if let Err(err) = state.enable_soulram() {
                         *error = Some(err);
                     }
                 }
-                if ui.button("🧠 SoulRAM OFF").clicked() {
+                if ui.button("🧠 Désactiver").clicked() {
                     if let Err(err) = state.disable_soulram() {
                         *error = Some(err);
                     }
@@ -1619,10 +1666,9 @@ impl LiteApp {
             // Auto-cycle : re-applique SoulRAM dès que le cooldown est écoulé et sigma > 0.3.
             ui.checkbox(
                 &mut state.vm.auto_cycle_soulram,
-                "Auto-cycle SoulRAM (re-application automatique)",
+                "Auto-cycle (re-application automatique)",
             );
             if state.vm.auto_cycle_soulram {
-                // Show cycle cadence based on current workload mode.
                 let mode_hint = if soulkernel_core::workload_catalog::is_burst(
                     &state.vm.selected_workload,
                 ) {

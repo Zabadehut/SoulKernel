@@ -182,6 +182,12 @@ pub struct LiteViewModel {
     /// Durée du cooldown actif pour le prochain cycle (secondes), calculée au dernier refresh.
     pub next_cycle_in_s: Option<u64>,
 
+    // ── Dôme autonome ─────────────────────────────────────────────────────
+    /// Active la boucle KPI → dôme → rollback automatique.
+    pub auto_dome: bool,
+    /// Secondes restantes avant la prochaine réévaluation auto-dôme.
+    pub auto_dome_next_eval_s: Option<u64>,
+
     // ── KPI énergétique ───────────────────────────────────────────────────
     /// KPI calculé au dernier refresh : P(t) / CPU_utile × pénalité faults.
     pub kpi: KpiSnapshot,
@@ -207,6 +213,8 @@ pub struct LiteState {
     refresh_in_flight: bool,
     /// Instant de la dernière exécution d'une action auto-cycle (pour respecter le cooldown interne).
     last_auto_cycle: Option<Instant>,
+    /// Instant de la dernière évaluation auto-dôme (pour le cooldown de 30s).
+    last_auto_dome_eval: Option<Instant>,
 }
 
 struct LiteRefreshSnapshot {
@@ -341,6 +349,8 @@ impl LiteState {
                 auto_cycle_soulram: false,
                 last_auto_cycle_ms: None,
                 next_cycle_in_s: None,
+                auto_dome: false,
+                auto_dome_next_eval_s: None,
                 kpi: KpiSnapshot::default(),
                 kpi_lambda: kpi::LAMBDA_DEFAULT,
                 kpi_history: Vec::new(),
@@ -354,6 +364,7 @@ impl LiteState {
             refresh_rx: None,
             refresh_in_flight: false,
             last_auto_cycle: None,
+            last_auto_dome_eval: None,
         })
     }
 
@@ -369,11 +380,13 @@ impl LiteState {
         self.spawn_refresh_task();
 
         // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
-        // Re-applies SoulRAM trim when cooldown has elapsed and the machine is
-        // under non-trivial load. We check here (post-spawn, pre-apply) so the
-        // action uses the most recent metrics already in vm.
         if applied && self.vm.auto_cycle_soulram && self.vm.soulram_active {
             self.tick_auto_cycle_soulram();
+        }
+
+        // ── Auto-dôme KPI ─────────────────────────────────────────────────────
+        if applied && self.vm.auto_dome {
+            self.tick_auto_dome();
         }
 
         Ok(applied)
@@ -416,6 +429,55 @@ impl LiteState {
         self.last_auto_cycle = Some(Instant::now());
         self.vm.last_auto_cycle_ms = Some(soulkernel_core::audit::now_ms_local());
         self.vm.next_cycle_in_s = None; // just fired — cooldown reset
+    }
+
+    /// Boucle auto-dôme :
+    /// 1. Si SoulKernel lui-même est en surcharge → ne rien faire (éviter l'auto-sabotage).
+    /// 2. Cooldown 30s entre évaluations.
+    /// 3. KPI dégradé + garde ouverte + dôme inactif → activer le dôme.
+    /// 4. KPI sain + dôme actif → rollback (la machine n'en a plus besoin).
+    /// Le rollback sur KPI >20% post-action est déjà géré dans apply_refresh_snapshot.
+    fn tick_auto_dome(&mut self) {
+        const COOLDOWN_S: u64 = 30;
+
+        // ── Garde anti-auto-sabotage ─────────────────────────────────────────
+        if self.vm.kpi.self_overload {
+            self.vm.auto_dome_next_eval_s = Some(COOLDOWN_S);
+            return;
+        }
+
+        // ── Cooldown ─────────────────────────────────────────────────────────
+        let elapsed = self
+            .last_auto_dome_eval
+            .map(|t| t.elapsed().as_secs())
+            .unwrap_or(COOLDOWN_S + 1);
+        if elapsed < COOLDOWN_S {
+            self.vm.auto_dome_next_eval_s = Some(COOLDOWN_S - elapsed);
+            return;
+        }
+        self.vm.auto_dome_next_eval_s = None;
+        self.last_auto_dome_eval = Some(Instant::now());
+
+        let kpi = &self.vm.kpi;
+        let guard_ok = self.vm.formula.advanced_guard >= 0.85;
+
+        if !self.vm.dome_active {
+            // ── Activation ───────────────────────────────────────────────────
+            // Conditions : KPI dégradé (Inefficace ou tendance montante) + garde ouverte.
+            if kpi.should_act() && guard_ok {
+                let _ = self.activate_dome(); // erreurs non fatales en auto
+            }
+        } else {
+            // ── Désactivation si le KPI est revenu sain ───────────────────────
+            // Si le KPI est redevenu Efficace ou Modéré sans tendance dégradante,
+            // libérer les ressources : le dôme a fait son travail.
+            use soulkernel_core::kpi::KpiLabel;
+            let kpi_ok = matches!(kpi.label, KpiLabel::Efficient | KpiLabel::Moderate)
+                && kpi.trend.map(|d| d <= 0.5).unwrap_or(true);
+            if kpi_ok {
+                let _ = self.rollback_dome(); // rollback propre
+            }
+        }
     }
 
     pub fn refresh_now(&mut self) -> Result<(), String> {
@@ -566,6 +628,26 @@ impl LiteState {
         }
         // Ferme le pending KPI si une action était en attente de mesure après.
         self.vm.kpi_memory.close_pending(self.vm.kpi.kpi_penalized);
+
+        // ── Protection KPI post-action ────────────────────────────────────────
+        // Si le KPI a empiré de >20 % suite au dôme, on l'annule automatiquement.
+        if self.vm.dome_active {
+            if let (Some(prev), Some(curr)) = (prev_kpi, self.vm.kpi.kpi_penalized) {
+                if curr > prev * 1.20 && prev > 0.0 {
+                    // Le dôme dégrade le KPI — rollback silencieux.
+                    let _ = self.runtime.block_on(orchestrator::rollback(
+                        self.dome_snapshot.clone(),
+                        self.vm.target_pid,
+                    ));
+                    self.dome_snapshot = None;
+                    self.vm.dome_active = false;
+                    self.vm.last_actions.insert(
+                        0,
+                        format!("⚠ dôme annulé auto : KPI {prev:.1}→{curr:.1} W/%"),
+                    );
+                }
+            }
+        }
 
         Ok(())
     }

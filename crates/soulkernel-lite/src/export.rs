@@ -333,6 +333,8 @@ struct KpiExport {
     cpu_useful_pct: f64,
     cpu_overhead_pct: f64,
     cpu_system_pct: f64,
+    cpu_self_pct: f64,
+    self_overload: bool,
     /// Δ KPI* par rapport à la mesure précédente (positif = dégradation).
     trend: Option<f64>,
     /// Ratio d'actions ayant amélioré le KPI (mémoire d'apprentissage).
@@ -1033,6 +1035,8 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
                 cpu_useful_pct: k.cpu_useful_pct,
                 cpu_overhead_pct: k.cpu_overhead_pct,
                 cpu_system_pct: k.cpu_system_pct,
+                cpu_self_pct: k.cpu_self_pct,
+                self_overload: k.self_overload,
                 trend: k.trend,
                 reward_ratio: vm.kpi_memory.reward_ratio(),
             }

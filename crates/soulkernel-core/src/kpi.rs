@@ -21,6 +21,16 @@ pub const KPI_MODERATE_THRESHOLD: f64 = 12.0; // W/%
 /// Paramètre λ par défaut pour la pénalité de faults.
 pub const LAMBDA_DEFAULT: f64 = 0.5;
 
+/// Epsilon : plancher du CPU utile pour éviter /0 et KPI absurde.
+/// 5 % correspond à un travail minimal réaliste sur un poste actif.
+pub const CPU_USEFUL_EPSILON: f64 = 5.0;
+
+/// Top-N processus utiles retenus pour le calcul bottom-up.
+pub const CPU_USEFUL_TOP_N: usize = 5;
+
+/// CPU utile minimum par processus pour être retenu dans le top-N.
+pub const CPU_USEFUL_MIN_PCT: f64 = 2.0;
+
 /// Poids par défaut pour J(t).
 pub const ALPHA_DEFAULT: f64 = 0.60; // poids puissance/CPU
 pub const BETA_DEFAULT: f64 = 0.25; // poids faults mémoire
@@ -199,12 +209,16 @@ pub struct KpiSnapshot {
     pub objective_j: Option<f64>,
 
     pub cpu_total_pct: f64,
-    /// CPU attribué à du travail utile utilisateur.
+    /// CPU utile = somme des top-N processus utiles (bottom-up, ≥ ε).
     pub cpu_useful_pct: f64,
     /// CPU overhead critique (antivirus…) + doux (browser bg…) + self.
     pub cpu_overhead_pct: f64,
     /// CPU système noyau (svchost, dwm…) — exclu du calcul KPI.
     pub cpu_system_pct: f64,
+    /// CPU du propre processus SoulKernel (per-core, peut dépasser 100%).
+    pub cpu_self_pct: f64,
+    /// True si SoulKernel lui-même consomme plus de 50% CPU (auto-sabotage).
+    pub self_overload: bool,
 
     pub lambda: f64,
     pub label: KpiLabel,
@@ -244,6 +258,11 @@ pub fn compute(
     let mut cpu_system = 0.0f64;
     let mut cpu_self = 0.0f64;
 
+    // Bottom-up : accumule le CPU des processus utiles (top-N, seuil ≥ CPU_USEFUL_MIN_PCT).
+    // Robuste aux spikes d'overhead : on somme ce qui est utile au lieu de soustraire l'overhead
+    // d'un total normalisé différemment (sysinfo : process = per-core, total = système).
+    let mut cpu_useful_candidates: Vec<f64> = Vec::new();
+
     for proc_ in &processes.top_processes {
         if proc_.is_self_process || proc_.is_embedded_webview {
             cpu_self += proc_.cpu_usage_pct;
@@ -257,16 +276,33 @@ pub fn compute(
                 cpu_overhead += proc_.cpu_usage_pct;
             }
             _ => {
-                // Useful ou Idle : classifié par seuil CPU.
-                // On ne soustrait rien — contribue au CPU utile.
+                // Utile ou Idle — candidat pour le calcul bottom-up.
+                if proc_.cpu_usage_pct >= CPU_USEFUL_MIN_PCT {
+                    cpu_useful_candidates.push(proc_.cpu_usage_pct);
+                }
             }
         }
     }
-    // L'overhead inclut le propre processus SoulKernel (transparent pour le KPI).
+    // SoulKernel compte dans l'overhead, pas dans le travail utile.
     cpu_overhead += cpu_self;
 
-    // CPU utile = ce qui reste après overhead et système, minimum 1 % pour éviter /0.
-    let cpu_useful = (cpu_total - cpu_overhead - cpu_system).max(1.0);
+    // CPU utile bottom-up : somme des top-N processus utiles identifiés.
+    // Si aucun n'atteint le seuil (machine idle ou tout est overhead), repli sur
+    // cpu_total avec un plancher ε pour éviter KPI absurde.
+    cpu_useful_candidates.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let cpu_useful_bottomup: f64 = cpu_useful_candidates
+        .iter()
+        .take(CPU_USEFUL_TOP_N)
+        .sum();
+
+    let cpu_useful = if cpu_useful_bottomup > CPU_USEFUL_EPSILON {
+        cpu_useful_bottomup
+    } else {
+        // Repli : machine idle ou overhead total. On utilise cpu_total comme proxy.
+        cpu_total.max(CPU_USEFUL_EPSILON)
+    };
+
+    let self_overload = cpu_self > 50.0;
 
     // KPI de base (W/%)
     let kpi_basic = power.map(|p| p / cpu_useful);
@@ -309,6 +345,8 @@ pub fn compute(
         cpu_useful_pct: cpu_useful,
         cpu_overhead_pct: cpu_overhead,
         cpu_system_pct: cpu_system,
+        cpu_self_pct: cpu_self,
+        self_overload,
         lambda,
         label,
         trend,
