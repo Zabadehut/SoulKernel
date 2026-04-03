@@ -317,6 +317,28 @@ struct PowerComparisonExport {
     wall_sensor_available: bool,
 }
 
+/// KPI énergétique instantané : W / CPU_utile, avec pénalité faults et apprentissage.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+struct KpiExport {
+    /// KPI(t) = P(t) / CPU_utile — None si pas de source de puissance.
+    kpi_basic_w_per_pct: Option<f64>,
+    /// KPI*(t) = KPI × (1 + λ × Faults/10000) — pénalisé par le thrashing.
+    kpi_penalized_w_per_pct: Option<f64>,
+    /// J(t) normalisé [0,1] : α×KPI + β×Faults + γ×RAM_inactive.
+    objective_j: Option<f64>,
+    /// Label : "EFFICACE" | "MODÉRÉ" | "INEFFICACE" | "—"
+    label: &'static str,
+    cpu_total_pct: f64,
+    cpu_useful_pct: f64,
+    cpu_overhead_pct: f64,
+    cpu_system_pct: f64,
+    /// Δ KPI* par rapport à la mesure précédente (positif = dégradation).
+    trend: Option<f64>,
+    /// Ratio d'actions ayant amélioré le KPI (mémoire d'apprentissage).
+    reward_ratio: f64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 struct LiteJsonExport<'a> {
@@ -326,6 +348,7 @@ struct LiteJsonExport<'a> {
     period_label: Option<&'static str>,
     report: LiteReport<'a>,
     power_comparison: PowerComparisonExport,
+    kpi: KpiExport,
     raw_host_metrics: LiteRawHostMetricsExport<'a>,
     external_power: ExternalPowerExport<'a>,
     strict_evidence: StrictEvidenceExport<'a>,
@@ -997,6 +1020,21 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
                 confidence,
                 host_sensor_available: host.is_some(),
                 wall_sensor_available: wall.is_some(),
+            }
+        },
+        kpi: {
+            let k = &vm.kpi;
+            KpiExport {
+                kpi_basic_w_per_pct: k.kpi_basic,
+                kpi_penalized_w_per_pct: k.kpi_penalized,
+                objective_j: k.objective_j,
+                label: k.label.as_str(),
+                cpu_total_pct: k.cpu_total_pct,
+                cpu_useful_pct: k.cpu_useful_pct,
+                cpu_overhead_pct: k.cpu_overhead_pct,
+                cpu_system_pct: k.cpu_system_pct,
+                trend: k.trend,
+                reward_ratio: vm.kpi_memory.reward_ratio(),
             }
         },
         raw_host_metrics,

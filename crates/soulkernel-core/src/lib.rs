@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod benchmark;
+pub mod kpi;
 pub mod external_power;
 pub mod formula;
 pub mod inventory;

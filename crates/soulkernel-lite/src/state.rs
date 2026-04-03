@@ -10,6 +10,7 @@ use soulkernel_core::metrics::{self, ResourceState};
 use soulkernel_core::orchestrator;
 use soulkernel_core::platform::{self, PlatformInfo, PolicyMode, SoulRamBackendInfo};
 use soulkernel_core::processes::{self, ProcessObservedReport};
+use soulkernel_core::kpi::{self, KpiLearningMemory, KpiSnapshot};
 use soulkernel_core::telemetry::{
     MachineActivity, TelemetryIngestRequest, TelemetryState, TelemetrySummary,
 };
@@ -180,6 +181,16 @@ pub struct LiteViewModel {
     pub last_auto_cycle_ms: Option<u64>,
     /// Durée du cooldown actif pour le prochain cycle (secondes), calculée au dernier refresh.
     pub next_cycle_in_s: Option<u64>,
+
+    // ── KPI énergétique ───────────────────────────────────────────────────
+    /// KPI calculé au dernier refresh : P(t) / CPU_utile × pénalité faults.
+    pub kpi: KpiSnapshot,
+    /// λ (pénalité faults). Défaut : 0.5.
+    pub kpi_lambda: f64,
+    /// Historique glissant des 60 dernières valeurs KPI* pour le sparkline.
+    pub kpi_history: Vec<(u64, f64)>, // (ts_ms, kpi_penalized)
+    /// Mémoire d'apprentissage : enregistre l'effet des actions sur le KPI.
+    pub kpi_memory: KpiLearningMemory,
 }
 
 pub struct LiteState {
@@ -330,6 +341,10 @@ impl LiteState {
                 auto_cycle_soulram: false,
                 last_auto_cycle_ms: None,
                 next_cycle_in_s: None,
+                kpi: KpiSnapshot::default(),
+                kpi_lambda: kpi::LAMBDA_DEFAULT,
+                kpi_history: Vec::new(),
+                kpi_memory: KpiLearningMemory::default(),
             },
             dome_snapshot: None,
             last_refresh: Instant::now() - Duration::from_secs(10),
@@ -531,6 +546,27 @@ impl LiteState {
         } else {
             self.vm.manual_target_pid
         };
+
+        // ── KPI énergétique ───────────────────────────────────────────────────
+        let prev_kpi = self.vm.kpi.kpi_penalized;
+        self.vm.kpi = kpi::compute(
+            &self.vm.metrics,
+            &self.vm.process_report,
+            self.vm.kpi_lambda,
+            kpi::ALPHA_DEFAULT,
+            kpi::BETA_DEFAULT,
+            kpi::GAMMA_DEFAULT,
+            prev_kpi,
+        );
+        if let Some(kv) = self.vm.kpi.kpi_penalized {
+            self.vm.kpi_history.push((self.vm.now_ms, kv));
+            if self.vm.kpi_history.len() > 60 {
+                self.vm.kpi_history.remove(0);
+            }
+        }
+        // Ferme le pending KPI si une action était en attente de mesure après.
+        self.vm.kpi_memory.close_pending(self.vm.kpi.kpi_penalized);
+
         Ok(())
     }
 
@@ -563,6 +599,7 @@ impl LiteState {
         self.dome_snapshot = Some(baseline);
         self.vm.dome_active = true;
         self.vm.last_actions = result.actions;
+        self.vm.kpi_memory.open(now_ms_local(), "dome", self.vm.kpi.kpi_penalized);
         self.refresh_now()?;
         self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, "dome"));
         Ok(())
@@ -597,6 +634,7 @@ impl LiteState {
                 }
             })
             .collect();
+        self.vm.kpi_memory.open(now_ms_local(), "soulram", self.vm.kpi.kpi_penalized);
         self.refresh_now()?;
         self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, "soulram"));
         Ok(())

@@ -631,6 +631,93 @@ impl LiteApp {
                 }
             }
 
+            // ── KPI énergétique ───────────────────────────────────────────
+            {
+                use soulkernel_core::kpi::KpiLabel;
+                ui.separator();
+                let kpi = &vm.kpi;
+                let label_str = kpi.label.as_str();
+                let label_color = match kpi.label {
+                    KpiLabel::Efficient   => egui::Color32::from_rgb(96, 168, 104),
+                    KpiLabel::Moderate    => egui::Color32::from_rgb(214, 153, 58),
+                    KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
+                    KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
+                };
+                ui.horizontal_wrapped(|ui| {
+                    // KPI* valeur principale
+                    match kpi.kpi_penalized {
+                        Some(k) => Self::metric_badge(
+                            ui, "KPI énergétique",
+                            format!("{:.2} W/%  [{}]", k, label_str),
+                            label_color,
+                        ),
+                        None => Self::metric_badge(
+                            ui, "KPI énergétique",
+                            "N/A — aucun capteur puissance".to_string(),
+                            egui::Color32::DARK_GRAY,
+                        ),
+                    }
+                    // CPU utile vs overhead
+                    Self::metric_badge(
+                        ui, "CPU utile",
+                        format!("{:.1}%", kpi.cpu_useful_pct),
+                        Self::tone_for_ratio(1.0 - kpi.cpu_useful_pct / 100.0_f64.max(kpi.cpu_total_pct)),
+                    );
+                    if kpi.cpu_overhead_pct > 1.0 {
+                        Self::metric_badge(
+                            ui, "Overhead",
+                            format!("{:.1}%", kpi.cpu_overhead_pct),
+                            egui::Color32::from_rgb(214, 153, 58),
+                        );
+                    }
+                    // Faults / s
+                    if let Some(pf) = vm.metrics.raw.page_faults_per_sec {
+                        if pf > 0.0 {
+                            let faults_k = pf / 1000.0;
+                            let fault_color = if pf > 5000.0 {
+                                egui::Color32::from_rgb(210, 84, 84)
+                            } else if pf > 1500.0 {
+                                egui::Color32::from_rgb(214, 153, 58)
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            let warn = if pf > 5000.0 { " ⚠" } else { "" };
+                            Self::metric_badge(
+                                ui, "Faults mém.",
+                                format!("{:.0}k/s{}", faults_k, warn),
+                                fault_color,
+                            );
+                        }
+                    }
+                    // Tendance Δ KPI*
+                    if let Some(trend) = kpi.trend {
+                        let (trend_str, trend_color) = if trend > 1.0 {
+                            (format!("↑ +{:.2}", trend), egui::Color32::from_rgb(210, 84, 84))
+                        } else if trend < -1.0 {
+                            (format!("↓ {:.2}", trend), egui::Color32::from_rgb(96, 168, 104))
+                        } else {
+                            (format!("→ {:.2}", trend), egui::Color32::GRAY)
+                        };
+                        Self::metric_badge(ui, "Tendance", trend_str, trend_color);
+                    }
+                    // Ratio apprentissage
+                    let ratio = vm.kpi_memory.reward_ratio();
+                    if !vm.kpi_memory.records.is_empty() {
+                        Self::metric_badge(
+                            ui, "Actions efficaces",
+                            format!("{:.0}%", ratio * 100.0),
+                            if ratio >= 0.6 {
+                                egui::Color32::from_rgb(96, 168, 104)
+                            } else if ratio >= 0.4 {
+                                egui::Color32::from_rgb(214, 153, 58)
+                            } else {
+                                egui::Color32::from_rgb(210, 84, 84)
+                            },
+                        );
+                    }
+                });
+            }
+
             // ── Delta depuis dernière action ──────────────────────────────
             if let Some(delta) = &vm.host_impact {
                 ui.separator();
