@@ -1458,6 +1458,7 @@ impl LiteApp {
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_salt("processes_scroll")
+                .auto_shrink([false, false])
                 .max_height(260.0)
                 .show(ui, |ui| {
                     for proc_ in &state.vm.process_report.top_processes {
