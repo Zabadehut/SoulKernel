@@ -176,6 +176,20 @@ impl LiteApp {
                 },
             );
             Self::metric_badge(ui, "Statut", tension_label.to_string(), tension_color);
+            // KPI compact dans la barre principale
+            {
+                use soulkernel_core::kpi::KpiLabel;
+                let kpi_color = match vm.kpi.label {
+                    KpiLabel::Efficient   => egui::Color32::from_rgb(96, 168, 104),
+                    KpiLabel::Moderate    => egui::Color32::from_rgb(214, 153, 58),
+                    KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
+                    KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
+                };
+                let kpi_val = vm.kpi.kpi_penalized
+                    .map(|k| format!("{:.1} W/%", k))
+                    .unwrap_or_else(|| "KPI N/A".to_string());
+                Self::metric_badge(ui, "KPI", kpi_val, kpi_color);
+            }
         });
     }
 
@@ -568,22 +582,6 @@ impl LiteApp {
                     );
                 }
 
-                // ── Page faults/s (proxy pression mémoire) ────────────────
-                if let Some(pf) = vm.metrics.raw.page_faults_per_sec {
-                    let tone = if pf > 5000.0 {
-                        egui::Color32::from_rgb(210, 84, 84)
-                    } else if pf > 1500.0 {
-                        egui::Color32::from_rgb(214, 153, 58)
-                    } else {
-                        egui::Color32::from_rgb(96, 168, 104)
-                    };
-                    Self::metric_badge(
-                        ui,
-                        "Page faults",
-                        format!("{:.0}/s", pf),
-                        tone,
-                    );
-                }
             });
 
             // ── Auto-cycle status ─────────────────────────────────────────
@@ -1466,6 +1464,19 @@ impl LiteApp {
                     fmt::pct(vm.metrics.raw.cpu_pct),
                     fmt::gib_pair(vm.metrics.raw.mem_used_mb, vm.metrics.raw.mem_total_mb)
                 ));
+                {
+                    use soulkernel_core::kpi::KpiLabel;
+                    let kpi_str = vm.kpi.kpi_penalized
+                        .map(|k| format!("KPI {:.1} W/%  [{}]", k, vm.kpi.label.as_str()))
+                        .unwrap_or_else(|| "KPI —".to_string());
+                    let kpi_color = match vm.kpi.label {
+                        KpiLabel::Efficient   => egui::Color32::from_rgb(96, 168, 104),
+                        KpiLabel::Moderate    => egui::Color32::from_rgb(214, 153, 58),
+                        KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
+                        KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
+                    };
+                    ui.colored_label(kpi_color, kpi_str);
+                }
                 if vm.metrics.raw.gpu_pct.map_or(false, |g| g > 0.5) {
                     ui.label(format!(
                         "GPU {}  I/O R{:.1}/W{:.1} MB/s",
@@ -1659,6 +1670,11 @@ impl LiteApp {
                 ui.add(egui::Slider::new(&mut state.vm.sigma_max, 0.3..=0.95).text("Seuil (Σmax)"));
                 ui.add(egui::Slider::new(&mut state.vm.eta, 0.01..=0.5).text("Lissage (η)"));
                 ui.add(egui::Slider::new(&mut state.vm.soulram_percent, 5..=60).text("SoulRAM %"));
+                ui.add(
+                    egui::Slider::new(&mut state.vm.kpi_lambda, 0.0..=2.0)
+                        .step_by(0.05)
+                        .text("KPI λ (pénalité faults)"),
+                );
                 Self::tuning_summary(ui, &state.vm);
             });
 
@@ -1747,10 +1763,18 @@ impl LiteApp {
                 .show(ui, |ui| {
                     for proc_ in &state.vm.process_report.top_processes {
                         ui.horizontal_wrapped(|ui| {
-                            let name_color = if proc_.is_self_process || proc_.is_embedded_webview {
-                                egui::Color32::DARK_GRAY
+                            use soulkernel_core::kpi::{classify_by_name, ProcessClass};
+                            let class = if proc_.is_self_process || proc_.is_embedded_webview {
+                                None
                             } else {
-                                egui::Color32::WHITE
+                                classify_by_name(&proc_.name)
+                            };
+                            let name_color = match class {
+                                Some(ProcessClass::SystemKernel) => egui::Color32::DARK_GRAY,
+                                Some(ProcessClass::OverheadCritical) => egui::Color32::from_rgb(214, 153, 58),
+                                Some(ProcessClass::OverheadSoft) => egui::Color32::from_rgb(170, 130, 60),
+                                _ if proc_.is_self_process || proc_.is_embedded_webview => egui::Color32::DARK_GRAY,
+                                _ => egui::Color32::WHITE,
                             };
                             ui.label(egui::RichText::new(&proc_.name).strong().color(name_color));
                             ui.label(
@@ -1766,12 +1790,26 @@ impl LiteApp {
                             ui.label(
                                 egui::RichText::new(fmt::runtime_short(proc_.run_time_s))
                                     .small()
-                                    .color(egui::Color32::GRAY),
+                                    .color(egui::Color32::DARK_GRAY),
                             );
-                            if proc_.is_self_process {
-                                ui.label(egui::RichText::new("SoulKernel").small().color(egui::Color32::DARK_GRAY));
-                            } else if proc_.is_embedded_webview {
-                                ui.label(egui::RichText::new("UI").small().color(egui::Color32::DARK_GRAY));
+                            // Tag de classification KPI
+                            match class {
+                                Some(ProcessClass::OverheadCritical) => {
+                                    ui.label(egui::RichText::new("overhead-sec").small().color(egui::Color32::from_rgb(214, 153, 58)));
+                                }
+                                Some(ProcessClass::OverheadSoft) => {
+                                    ui.label(egui::RichText::new("overhead").small().color(egui::Color32::from_rgb(170, 130, 60)));
+                                }
+                                Some(ProcessClass::SystemKernel) => {
+                                    ui.label(egui::RichText::new("sys").small().color(egui::Color32::DARK_GRAY));
+                                }
+                                _ if proc_.is_self_process => {
+                                    ui.label(egui::RichText::new("SoulKernel").small().color(egui::Color32::DARK_GRAY));
+                                }
+                                _ if proc_.is_embedded_webview => {
+                                    ui.label(egui::RichText::new("UI").small().color(egui::Color32::DARK_GRAY));
+                                }
+                                _ => {}
                             }
                         });
                     }
@@ -1779,21 +1817,6 @@ impl LiteApp {
         });
     }
 
-    fn recent_actions_panel(ui: &mut egui::Ui, actions: &[String]) {
-        ui.group(|ui| {
-            Self::section_title(
-                ui,
-                "Dernières actions",
-                "Historique court des actions appliquées par SoulKernel.",
-            );
-            for action in actions {
-                ui.label(action);
-            }
-            if actions.is_empty() {
-                ui.label("Aucune action récente.");
-            }
-        });
-    }
 }
 
 impl eframe::App for LiteApp {
@@ -1874,8 +1897,6 @@ impl eframe::App for LiteApp {
                                 &mut self.error,
                                 &mut self.info,
                             );
-                            columns[1].add_space(8.0);
-                            Self::recent_actions_panel(&mut columns[1], &state.vm.last_actions);
                             columns[1].add_space(8.0);
                             Self::hud_panel(&mut columns[1], state);
                         });
