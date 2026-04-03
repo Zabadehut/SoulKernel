@@ -129,6 +129,21 @@ pub struct BenchmarkSummary {
     /// Score composite pour gain net sans régression ressource.
     #[serde(default)]
     pub efficiency_score: Option<f64>,
+    /// True measured OFF efficiency from useful output and measured power.
+    #[serde(default)]
+    pub measured_efficiency_off: Option<crate::formula::MeasuredEfficiency>,
+    /// True measured ON efficiency from useful output and measured power.
+    #[serde(default)]
+    pub measured_efficiency_on: Option<crate::formula::MeasuredEfficiency>,
+    /// Positive when ON improves useful work per Watt.
+    #[serde(default)]
+    pub gain_utility_per_watt_pct: Option<f64>,
+    /// Positive when ON reduces kWh per useful output.
+    #[serde(default)]
+    pub gain_kwh_per_utility_pct: Option<f64>,
+    /// Positive when ON reduces instantaneous Watts per useful-rate.
+    #[serde(default)]
+    pub gain_watts_per_utility_rate_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +430,31 @@ pub fn compute_summary(samples: &[BenchmarkSample]) -> BenchmarkSummary {
     let power_on = values_after_by_phase(samples, BenchmarkPhase::On, |s| s.power_after_watts);
     let gain_power_median_pct = gain_pct_lower_is_better(&power_off, &power_on, 1.0);
 
+    let measured_efficiency_off = median_off_ms.and_then(|off_ms| {
+        median_f64(&power_off).and_then(|off_watts| {
+            crate::formula::compute_measured_efficiency(crate::formula::MeasuredEfficiencyInput {
+                useful_output: 1.0,
+                quality_factor: Some(1.0),
+                avg_power_watts: off_watts,
+                duration_s: off_ms / 1000.0,
+            })
+        })
+    });
+    let measured_efficiency_on = median_on_ms.and_then(|on_ms| {
+        median_f64(&power_on).and_then(|on_watts| {
+            crate::formula::compute_measured_efficiency(crate::formula::MeasuredEfficiencyInput {
+                useful_output: 1.0,
+                quality_factor: Some(1.0),
+                avg_power_watts: on_watts,
+                duration_s: on_ms / 1000.0,
+            })
+        })
+    });
+    let measured_comparison = measured_efficiency_off
+        .clone()
+        .zip(measured_efficiency_on.clone())
+        .map(|(off, on)| crate::formula::compare_measured_efficiency(off, on));
+
     let sigma_off =
         values_after_by_phase(samples, BenchmarkPhase::Off, |s| s.sigma_effective_after);
     let sigma_on = values_after_by_phase(samples, BenchmarkPhase::On, |s| s.sigma_effective_after);
@@ -455,6 +495,17 @@ pub fn compute_summary(samples: &[BenchmarkSample]) -> BenchmarkSummary {
         gain_cpu_temp_median_pct,
         gain_gpu_temp_median_pct,
         efficiency_score,
+        measured_efficiency_off,
+        measured_efficiency_on,
+        gain_utility_per_watt_pct: measured_comparison
+            .as_ref()
+            .map(|c| c.gain_utility_per_watt_pct),
+        gain_kwh_per_utility_pct: measured_comparison
+            .as_ref()
+            .map(|c| c.gain_kwh_per_utility_pct),
+        gain_watts_per_utility_rate_pct: measured_comparison
+            .as_ref()
+            .map(|c| c.gain_watts_per_utility_rate_pct),
     }
 }
 

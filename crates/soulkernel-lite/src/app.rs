@@ -1091,7 +1091,51 @@ impl LiteApp {
                             .unwrap_or_else(|| "N/A".to_string()),
                         egui::Color32::LIGHT_BLUE,
                     );
+                    Self::metric_badge(
+                        ui,
+                        "U/W",
+                        session
+                            .summary
+                            .gain_utility_per_watt_pct
+                            .map(|v| format!("{v:+.1}%"))
+                            .unwrap_or_else(|| "N/A".to_string()),
+                        if session.summary.gain_utility_per_watt_pct.unwrap_or(0.0) >= 0.0 {
+                            egui::Color32::from_rgb(96, 168, 104)
+                        } else {
+                            egui::Color32::from_rgb(210, 84, 84)
+                        },
+                    );
+                    Self::metric_badge(
+                        ui,
+                        "kWh/U",
+                        session
+                            .summary
+                            .gain_kwh_per_utility_pct
+                            .map(|v| format!("{v:+.1}%"))
+                            .unwrap_or_else(|| "N/A".to_string()),
+                        if session.summary.gain_kwh_per_utility_pct.unwrap_or(0.0) >= 0.0 {
+                            egui::Color32::from_rgb(96, 168, 104)
+                        } else {
+                            egui::Color32::from_rgb(210, 84, 84)
+                        },
+                    );
                 });
+                if let (Some(off), Some(on)) = (
+                    session.summary.measured_efficiency_off.as_ref(),
+                    session.summary.measured_efficiency_on.as_ref(),
+                ) {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Mesuré: OFF {:.4} U/W → ON {:.4} U/W  ·  OFF {:.6} kWh/U → ON {:.6} kWh/U",
+                            off.utility_per_watt,
+                            on.utility_per_watt,
+                            off.kwh_per_utility,
+                            on.kwh_per_utility
+                        ))
+                        .small()
+                        .color(egui::Color32::GRAY),
+                    );
+                }
             }
             if let Some(history) = &state.vm.benchmark_history {
                 if history.sessions.len() > 1 {

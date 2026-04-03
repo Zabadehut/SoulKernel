@@ -1,10 +1,20 @@
 //! formula.rs — Pure mathematics engine
 //!
-//! Implements the unified formula:
+//! Implements two complementary layers:
+//!
+//! 1. A real-time dome decision score:
 //!
 //!   D*[τ₀,τ₁] = max_P [ ∫ π(t) dt  −  C_setup  −  C_rollback ]
 //!
 //!   where  π(t) = (𝒲 · r(t)) · ∏_k (1−ε_k)^α_k · e^{−κΣ(t)}
+//!
+//! 2. A measured efficiency KPI for benchmarks / reports:
+//!
+//!   Utility-per-Watt      = (U / t) / P
+//!   Energy-per-Utility   = E / U
+//!
+//! The first answers "should we enable the dome now?"
+//! The second answers "did ON actually improve useful work per watt?"
 
 use crate::metrics::ResourceState;
 use serde::{Deserialize, Serialize};
@@ -56,6 +66,60 @@ pub struct FormulaResult {
     pub advanced_guard: f64,
     /// Effective sigma after advanced penalties.
     pub sigma_effective: f64,
+}
+
+/// Measured efficiency input for one completed task / benchmark sample.
+/// `useful_output` is generic: completed task count, work units, rows processed, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeasuredEfficiencyInput {
+    /// Useful output U over the measured window. Must be > 0.
+    pub useful_output: f64,
+    /// Optional quality/reliability multiplier η in [0,1]. Defaults to 1.
+    pub quality_factor: Option<f64>,
+    /// Average power over the measured window in Watts. Must be > 0.
+    pub avg_power_watts: f64,
+    /// Measured duration in seconds. Must be > 0.
+    pub duration_s: f64,
+}
+
+/// True measured efficiency KPI derived from useful output and measured power.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeasuredEfficiency {
+    /// Raw useful output U.
+    pub useful_output: f64,
+    /// Quality-adjusted useful output U × η.
+    pub effective_utility: f64,
+    /// Applied η factor.
+    pub quality_factor: f64,
+    /// Average power P in Watts.
+    pub avg_power_watts: f64,
+    /// Window duration in seconds.
+    pub duration_s: f64,
+    /// Energy E in kWh over the window.
+    pub energy_kwh: f64,
+    /// Useful output rate U/t.
+    pub utility_rate_per_s: f64,
+    /// Main KPI: ((U × η) / t) / P.
+    pub utility_per_watt: f64,
+    /// Inverse instantaneous KPI: P / ((U × η) / t).
+    pub watts_per_utility_rate: f64,
+    /// Cycle KPI: (U × η) / E.
+    pub utility_per_kwh: f64,
+    /// Inverse cycle KPI: E / (U × η).
+    pub kwh_per_utility: f64,
+}
+
+/// Measured OFF vs ON comparison.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeasuredEfficiencyComparison {
+    pub off: MeasuredEfficiency,
+    pub on: MeasuredEfficiency,
+    /// Positive when ON improves useful work per Watt.
+    pub gain_utility_per_watt_pct: f64,
+    /// Positive when ON reduces energy per useful output.
+    pub gain_kwh_per_utility_pct: f64,
+    /// Positive when ON reduces instantaneous Watts per useful-rate.
+    pub gain_watts_per_utility_rate_pct: f64,
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -121,6 +185,76 @@ pub fn compute(state: &ResourceState, profile: &WorkloadProfile, kappa: f64) -> 
         opportunity,
         advanced_guard,
         sigma_effective,
+    }
+}
+
+/// Computes a true measured efficiency KPI from useful output and measured power.
+pub fn compute_measured_efficiency(input: MeasuredEfficiencyInput) -> Option<MeasuredEfficiency> {
+    if !input.useful_output.is_finite()
+        || !input.avg_power_watts.is_finite()
+        || !input.duration_s.is_finite()
+    {
+        return None;
+    }
+    if input.useful_output <= 0.0 || input.avg_power_watts <= 0.0 || input.duration_s <= 0.0 {
+        return None;
+    }
+
+    let quality_factor = input
+        .quality_factor
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
+    let effective_utility = input.useful_output * quality_factor;
+    if effective_utility <= 0.0 {
+        return None;
+    }
+
+    let energy_kwh = input.avg_power_watts * input.duration_s / 3_600_000.0;
+    if energy_kwh <= 0.0 {
+        return None;
+    }
+
+    let utility_rate_per_s = effective_utility / input.duration_s;
+    let utility_per_watt = utility_rate_per_s / input.avg_power_watts;
+    let watts_per_utility_rate = input.avg_power_watts / utility_rate_per_s;
+    let utility_per_kwh = effective_utility / energy_kwh;
+    let kwh_per_utility = energy_kwh / effective_utility;
+
+    Some(MeasuredEfficiency {
+        useful_output: input.useful_output,
+        effective_utility,
+        quality_factor,
+        avg_power_watts: input.avg_power_watts,
+        duration_s: input.duration_s,
+        energy_kwh,
+        utility_rate_per_s,
+        utility_per_watt,
+        watts_per_utility_rate,
+        utility_per_kwh,
+        kwh_per_utility,
+    })
+}
+
+/// Compares true measured efficiency OFF vs ON.
+pub fn compare_measured_efficiency(
+    off: MeasuredEfficiency,
+    on: MeasuredEfficiency,
+) -> MeasuredEfficiencyComparison {
+    let gain_utility_per_watt_pct =
+        ((on.utility_per_watt - off.utility_per_watt) / off.utility_per_watt) * 100.0;
+    let gain_kwh_per_utility_pct =
+        ((off.kwh_per_utility - on.kwh_per_utility) / off.kwh_per_utility) * 100.0;
+    let gain_watts_per_utility_rate_pct = ((off.watts_per_utility_rate
+        - on.watts_per_utility_rate)
+        / off.watts_per_utility_rate)
+        * 100.0;
+
+    MeasuredEfficiencyComparison {
+        off,
+        on,
+        gain_utility_per_watt_pct,
+        gain_kwh_per_utility_pct,
+        gain_watts_per_utility_rate_pct,
     }
 }
 
@@ -391,5 +525,44 @@ mod tests {
         for (i, dw) in result.dimension_weights.iter().enumerate() {
             assert!(*dw >= 0.0, "dimension_weight[{}] must be ≥ 0", i);
         }
+    }
+
+    #[test]
+    fn measured_efficiency_computes_true_u_over_p_and_e_over_u() {
+        let eff = compute_measured_efficiency(MeasuredEfficiencyInput {
+            useful_output: 1.0,
+            quality_factor: Some(1.0),
+            avg_power_watts: 100.0,
+            duration_s: 10.0,
+        })
+        .expect("efficiency");
+
+        assert!((eff.energy_kwh - (1000.0 / 3_600_000.0)).abs() < 1e-12);
+        assert!((eff.utility_rate_per_s - 0.1).abs() < 1e-12);
+        assert!((eff.utility_per_watt - 0.001).abs() < 1e-12);
+        assert!((eff.kwh_per_utility - eff.energy_kwh).abs() < 1e-12);
+    }
+
+    #[test]
+    fn measured_efficiency_comparison_is_positive_when_on_uses_less_energy() {
+        let off = compute_measured_efficiency(MeasuredEfficiencyInput {
+            useful_output: 1.0,
+            quality_factor: Some(1.0),
+            avg_power_watts: 120.0,
+            duration_s: 10.0,
+        })
+        .expect("off");
+        let on = compute_measured_efficiency(MeasuredEfficiencyInput {
+            useful_output: 1.0,
+            quality_factor: Some(1.0),
+            avg_power_watts: 90.0,
+            duration_s: 8.0,
+        })
+        .expect("on");
+
+        let cmp = compare_measured_efficiency(off, on);
+        assert!(cmp.gain_utility_per_watt_pct > 0.0);
+        assert!(cmp.gain_kwh_per_utility_pct > 0.0);
+        assert!(cmp.gain_watts_per_utility_rate_pct > 0.0);
     }
 }

@@ -192,6 +192,11 @@ struct BenchmarkEvidence {
     gain_cpu_median_pct: Option<f64>,
     gain_mem_median_pct: Option<f64>,
     gain_sigma_median_pct: Option<f64>,
+    measured_efficiency_off: Option<soulkernel_core::formula::MeasuredEfficiency>,
+    measured_efficiency_on: Option<soulkernel_core::formula::MeasuredEfficiency>,
+    gain_utility_per_watt_pct: Option<f64>,
+    gain_kwh_per_utility_pct: Option<f64>,
+    gain_watts_per_utility_rate_pct: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -609,6 +614,11 @@ fn build_strict_evidence_export<'a>(
             gain_cpu_median_pct: session.summary.gain_cpu_median_pct,
             gain_mem_median_pct: session.summary.gain_mem_median_pct,
             gain_sigma_median_pct: session.summary.gain_sigma_median_pct,
+            measured_efficiency_off: session.summary.measured_efficiency_off.clone(),
+            measured_efficiency_on: session.summary.measured_efficiency_on.clone(),
+            gain_utility_per_watt_pct: session.summary.gain_utility_per_watt_pct,
+            gain_kwh_per_utility_pct: session.summary.gain_kwh_per_utility_pct,
+            gain_watts_per_utility_rate_pct: session.summary.gain_watts_per_utility_rate_pct,
         });
 
     StrictEvidenceExport {
