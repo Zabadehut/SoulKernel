@@ -653,6 +653,11 @@ impl LiteApp {
                 }
 
                 ui.horizontal_wrapped(|ui| {
+                    let cpu_out_of_scope = (kpi.cpu_total_pct
+                        - kpi.cpu_useful_pct
+                        - kpi.cpu_overhead_pct
+                        - kpi.cpu_system_pct)
+                        .max(0.0);
                     // KPI* valeur principale
                     match kpi.kpi_penalized {
                         Some(k) => Self::metric_badge(
@@ -666,9 +671,9 @@ impl LiteApp {
                             egui::Color32::DARK_GRAY,
                         ),
                     }
-                    // CPU utile vs overhead
+                    // CPU utile retenu par le KPI (somme bottom-up des top-N processus utiles).
                     Self::metric_badge(
-                        ui, "CPU utile",
+                        ui, "CPU utile (top-N)",
                         format!("{:.1}%", kpi.cpu_useful_pct),
                         Self::tone_for_ratio(1.0 - kpi.cpu_useful_pct / 100.0_f64.max(kpi.cpu_total_pct)),
                     );
@@ -677,6 +682,13 @@ impl LiteApp {
                             ui, "Overhead",
                             format!("{:.1}%", kpi.cpu_overhead_pct),
                             egui::Color32::from_rgb(214, 153, 58),
+                        );
+                    }
+                    if cpu_out_of_scope > 1.0 {
+                        Self::metric_badge(
+                            ui, "CPU hors KPI",
+                            format!("{:.1}%", cpu_out_of_scope),
+                            egui::Color32::GRAY,
                         );
                     }
                     // Faults / s
@@ -1930,6 +1942,14 @@ impl eframe::App for LiteApp {
 
         if let Err(err) = state.refresh_if_needed() {
             self.error = Some(err);
+        }
+
+        // Nettoie les messages d'info périmés quand l'état réel du dôme a changé.
+        if matches!(self.info.as_deref(), Some("Dôme activé")) && !state.vm.dome_active {
+            self.info = None;
+        }
+        if matches!(self.info.as_deref(), Some("Dôme annulé")) && state.vm.dome_active {
+            self.info = None;
         }
 
         let state_vm = &state.vm;
