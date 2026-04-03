@@ -173,6 +173,13 @@ pub struct LiteViewModel {
     pub show_hud: bool,
     /// Impact HOST mesuré lors de la dernière activation dôme ou SoulRAM.
     pub host_impact: Option<HostImpactDelta>,
+    /// Ré-applique SoulRAM automatiquement dès que le cooldown est écoulé et que
+    /// sigma > 0.3 (machine non totalement idle). Désactivé par défaut.
+    pub auto_cycle_soulram: bool,
+    /// Horodatage ms de la dernière exécution auto-cycle (pour affichage "prochain dans Xs").
+    pub last_auto_cycle_ms: Option<u64>,
+    /// Durée du cooldown actif pour le prochain cycle (secondes), calculée au dernier refresh.
+    pub next_cycle_in_s: Option<u64>,
 }
 
 pub struct LiteState {
@@ -187,6 +194,8 @@ pub struct LiteState {
     external_bridge_child: Option<Child>,
     refresh_rx: Option<Receiver<Result<LiteRefreshSnapshot, String>>>,
     refresh_in_flight: bool,
+    /// Instant de la dernière exécution d'une action auto-cycle (pour respecter le cooldown interne).
+    last_auto_cycle: Option<Instant>,
 }
 
 struct LiteRefreshSnapshot {
@@ -318,6 +327,9 @@ impl LiteState {
                 benchmark_history: Some(benchmark_history),
                 show_hud: false,
                 host_impact: None,
+                auto_cycle_soulram: false,
+                last_auto_cycle_ms: None,
+                next_cycle_in_s: None,
             },
             dome_snapshot: None,
             last_refresh: Instant::now() - Duration::from_secs(10),
@@ -326,6 +338,7 @@ impl LiteState {
             external_bridge_child: None,
             refresh_rx: None,
             refresh_in_flight: false,
+            last_auto_cycle: None,
         })
     }
 
@@ -339,7 +352,55 @@ impl LiteState {
         }
         self.last_refresh = Instant::now();
         self.spawn_refresh_task();
+
+        // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
+        // Re-applies SoulRAM trim when cooldown has elapsed and the machine is
+        // under non-trivial load. We check here (post-spawn, pre-apply) so the
+        // action uses the most recent metrics already in vm.
+        if applied && self.vm.auto_cycle_soulram && self.vm.soulram_active {
+            self.tick_auto_cycle_soulram();
+        }
+
         Ok(applied)
+    }
+
+    /// Checks whether SoulRAM should be re-applied automatically and fires it
+    /// if conditions are met. Updates `vm.next_cycle_in_s` on every call.
+    fn tick_auto_cycle_soulram(&mut self) {
+        let profile = self.selected_profile();
+        let sigma = self.vm.metrics.sigma;
+
+        // Compute remaining cooldown to display in UI.
+        let (allow, _notes) =
+            soulkernel_core::memory_policy::allow_global_trim(Some(&profile));
+
+        if !allow {
+            // Estimate remaining cooldown from last_auto_cycle timestamp.
+            let mode = soulkernel_core::memory_policy::dome_mode_for_profile(&profile);
+            let cd_s = match mode {
+                soulkernel_core::memory_policy::MemoryDomeMode::Burst => 180u64,
+                soulkernel_core::memory_policy::MemoryDomeMode::Sustain => 900u64,
+            };
+            let elapsed = self
+                .last_auto_cycle
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(cd_s);
+            self.vm.next_cycle_in_s = Some(cd_s.saturating_sub(elapsed));
+            return;
+        }
+
+        // Cooldown cleared — only fire when the machine is under meaningful load
+        // (sigma > 0.3) to avoid pointless churn at idle.
+        if sigma < 0.30 {
+            self.vm.next_cycle_in_s = None; // "idle, aucun cycle nécessaire"
+            return;
+        }
+
+        // Fire.
+        let _ = self.enable_soulram(); // errors are non-fatal for auto-cycle
+        self.last_auto_cycle = Some(Instant::now());
+        self.vm.last_auto_cycle_ms = Some(soulkernel_core::audit::now_ms_local());
+        self.vm.next_cycle_in_s = None; // just fired — cooldown reset
     }
 
     pub fn refresh_now(&mut self) -> Result<(), String> {

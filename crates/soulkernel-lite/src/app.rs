@@ -586,6 +586,51 @@ impl LiteApp {
                 }
             });
 
+            // ── Auto-cycle status ─────────────────────────────────────────
+            if vm.soulram_active {
+                ui.separator();
+                if vm.auto_cycle_soulram {
+                    match vm.next_cycle_in_s {
+                        Some(0) | None => {
+                            if let Some(last_ms) = vm.last_auto_cycle_ms {
+                                let age = vm.now_ms.saturating_sub(last_ms) / 1000;
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Auto-cycle SoulRAM actif — dernier cycle il y a {age}s"
+                                    ))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(96, 168, 104)),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("Auto-cycle SoulRAM actif — en attente de charge")
+                                        .small()
+                                        .color(egui::Color32::GRAY),
+                                );
+                            }
+                        }
+                        Some(remaining) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Auto-cycle SoulRAM — prochain cycle dans {}",
+                                    crate::fmt::runtime_short(remaining)
+                                ))
+                                .small()
+                                .color(egui::Color32::GRAY),
+                            );
+                        }
+                    }
+                } else {
+                    ui.label(
+                        egui::RichText::new(
+                            "SoulRAM actif — auto-cycle désactivé (one-shot). Activer dans Commandes.",
+                        )
+                        .small()
+                        .color(egui::Color32::DARK_GRAY),
+                    );
+                }
+            }
+
             // ── Delta depuis dernière action ──────────────────────────────
             if let Some(delta) = &vm.host_impact {
                 ui.separator();
@@ -1321,18 +1366,59 @@ impl LiteApp {
             // ── Cible ─────────────────────────────────────────────────────────
             ui.checkbox(&mut state.vm.auto_target, "Cible automatique");
             if !state.vm.auto_target {
+                // Selected text: show group name if multi-instance, else PID.
+                let selected_label = state.vm.manual_target_pid.map(|pid| {
+                    // Check if this PID belongs to a multi-instance group.
+                    let name = state
+                        .vm
+                        .process_report
+                        .top_processes
+                        .iter()
+                        .find(|p| p.pid == pid)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("");
+                    let count = state
+                        .vm
+                        .process_report
+                        .groups
+                        .iter()
+                        .find(|g| g.top_pid == pid)
+                        .map(|g| g.instance_count)
+                        .unwrap_or(1);
+                    if count > 1 {
+                        format!("{name} ×{count}")
+                    } else {
+                        format!("PID {pid}")
+                    }
+                }).unwrap_or_else(|| "aucune".to_string());
+
                 egui::ComboBox::from_label("Cible manuelle")
-                    .selected_text(
-                        state
-                            .vm
-                            .manual_target_pid
-                            .map(|pid| format!("PID {pid}"))
-                            .unwrap_or_else(|| "aucune".to_string()),
-                    )
+                    .selected_text(selected_label)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut state.vm.manual_target_pid, None, "aucune");
+                        // Show groups with multiple instances first (top targets).
+                        let multi_groups: Vec<_> = state
+                            .vm
+                            .process_report
+                            .groups
+                            .iter()
+                            .filter(|g| g.instance_count > 1 && g.total_cpu_pct >= 0.1)
+                            .collect();
+                        if !multi_groups.is_empty() {
+                            ui.separator();
+                            ui.label(egui::RichText::new("— Applications (plusieurs instances) —").small().color(egui::Color32::GRAY));
+                            for g in multi_groups {
+                                ui.selectable_value(
+                                    &mut state.vm.manual_target_pid,
+                                    Some(g.top_pid),
+                                    format!("{} ×{}  {:.1}%  {}", g.name, g.instance_count, g.total_cpu_pct, fmt::mib_from_kb(g.total_memory_kb)),
+                                );
+                            }
+                            ui.separator();
+                            ui.label(egui::RichText::new("— Processus individuels —").small().color(egui::Color32::GRAY));
+                        }
                         for proc_ in &state.vm.process_report.top_processes {
-                            if proc_.is_self_process {
+                            if proc_.is_self_process || proc_.is_embedded_webview {
                                 continue;
                             }
                             ui.selectable_value(
@@ -1388,6 +1474,26 @@ impl LiteApp {
                     }
                 }
             });
+            // Auto-cycle : re-applique SoulRAM dès que le cooldown est écoulé et sigma > 0.3.
+            ui.checkbox(
+                &mut state.vm.auto_cycle_soulram,
+                "Auto-cycle SoulRAM (re-application automatique)",
+            );
+            if state.vm.auto_cycle_soulram {
+                // Show cycle cadence based on current workload mode.
+                let mode_hint = if soulkernel_core::workload_catalog::is_burst(
+                    &state.vm.selected_workload,
+                ) {
+                    "Burst : cycle toutes les ~3 min"
+                } else {
+                    "Sustain : cycle toutes les ~15 min"
+                };
+                ui.label(
+                    egui::RichText::new(mode_hint)
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
+            }
             ui.horizontal(|ui| {
                 if ui.button("Actualiser").clicked() {
                     if let Err(err) = state.refresh_now() {
@@ -1436,78 +1542,108 @@ impl LiteApp {
     }
 
     fn processes_panel(ui: &mut egui::Ui, state: &LiteState) {
+        let summary = &state.vm.process_report.summary;
         ui.group(|ui| {
             Self::section_title(
                 ui,
                 "Processus observés",
-                "Qui consomme quoi — les plus actifs en ce moment.",
+                "Actifs en ce moment — groupés par application, puis détail.",
             );
-            // Own overhead — informational, dimmed
+
+            // ── Alertes ────────────────────────────────────────────────────────
+            if summary.bridge_python_count > 1 {
+                ui.colored_label(
+                    egui::Color32::from_rgb(214, 153, 58),
+                    format!(
+                        "⚠ {} processus Python bridge actifs — accumulation probable. Arrêter et redémarrer le bridge.",
+                        summary.bridge_python_count
+                    ),
+                );
+            }
+            if summary.memory_compression_active {
+                ui.label(
+                    egui::RichText::new("Memory Compression actif (SoulRAM opérationnel)")
+                        .small()
+                        .color(egui::Color32::from_rgb(96, 168, 104)),
+                );
+            }
+
+            // ── En-tête ────────────────────────────────────────────────────────
             ui.label(
                 egui::RichText::new(format!(
-                    "{} processus  ·  SoulKernel {:.1}% CPU / {}  ·  UI {:.1}% / {}",
-                    state.vm.process_report.summary.process_count,
-                    state.vm.process_report.summary.self_cpu_usage_pct,
-                    fmt::mib_from_kb(state.vm.process_report.summary.self_memory_kb),
-                    state.vm.process_report.summary.webview_cpu_usage_pct,
-                    fmt::mib_from_kb(state.vm.process_report.summary.webview_memory_kb),
+                    "{} processus  ·  SoulKernel {:.1}% / {}  ·  UI {:.1}% / {}",
+                    summary.process_count,
+                    summary.self_cpu_usage_pct,
+                    fmt::mib_from_kb(summary.self_memory_kb),
+                    summary.webview_cpu_usage_pct,
+                    fmt::mib_from_kb(summary.webview_memory_kb),
                 ))
                 .small()
                 .color(egui::Color32::GRAY),
             );
             ui.separator();
-            egui::Frame::new()
-                .stroke(egui::Stroke::new(1.0, egui::Color32::DARK_GRAY))
-                .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(8, 8))
+
+            // ── Vue groupée — applications avec plusieurs instances ou CPU notable ──
+            let notable_groups: Vec<_> = state
+                .vm
+                .process_report
+                .groups
+                .iter()
+                .filter(|g| g.instance_count > 1 || g.total_cpu_pct >= 0.5)
+                .take(10)
+                .collect();
+            if !notable_groups.is_empty() {
+                for g in &notable_groups {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(egui::RichText::new(&g.name).strong());
+                        if g.instance_count > 1 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(214, 153, 58),
+                                format!("×{}", g.instance_count),
+                            );
+                        }
+                        ui.label(format!("{:.1}%", g.total_cpu_pct));
+                        ui.label(fmt::mib_from_kb(g.total_memory_kb));
+                    });
+                }
+                ui.separator();
+            }
+
+            // ── Détail individuel (top processus actifs) ──────────────────────
+            egui::ScrollArea::vertical()
+                .id_salt("processes_scroll")
+                .max_height(200.0)
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("processes_scroll")
-                        .auto_shrink([false, false])
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                        .max_height(260.0)
-                        .show(ui, |ui| {
-                            for proc_ in &state.vm.process_report.top_processes {
-                                ui.horizontal_wrapped(|ui| {
-                                    let name_color = if proc_.is_self_process {
-                                        egui::Color32::DARK_GRAY
-                                    } else if proc_.is_embedded_webview {
-                                        egui::Color32::DARK_GRAY
-                                    } else {
-                                        egui::Color32::WHITE
-                                    };
-                                    ui.label(egui::RichText::new(&proc_.name).strong().color(name_color));
-                                    ui.label(
-                                        egui::RichText::new(format!("#{}", proc_.pid))
-                                            .small()
-                                            .color(egui::Color32::DARK_GRAY),
-                                    );
-                                    ui.label(fmt::pct(proc_.cpu_usage_pct));
-                                    ui.label(fmt::mib_from_kb(proc_.memory_kb));
-                                    if proc_.disk_read_bytes > 0 || proc_.disk_written_bytes > 0 {
-                                        ui.label(fmt::io_pair(proc_.disk_read_bytes, proc_.disk_written_bytes));
-                                    }
-                                    ui.label(
-                                        egui::RichText::new(fmt::runtime_short(proc_.run_time_s))
-                                            .small()
-                                            .color(egui::Color32::GRAY),
-                                    );
-                                    if proc_.is_self_process {
-                                        ui.label(
-                                            egui::RichText::new("SoulKernel")
-                                                .small()
-                                                .color(egui::Color32::DARK_GRAY),
-                                        );
-                                    } else if proc_.is_embedded_webview {
-                                        ui.label(
-                                            egui::RichText::new("UI")
-                                                .small()
-                                                .color(egui::Color32::DARK_GRAY),
-                                        );
-                                    }
-                                });
+                    for proc_ in &state.vm.process_report.top_processes {
+                        ui.horizontal_wrapped(|ui| {
+                            let name_color = if proc_.is_self_process || proc_.is_embedded_webview {
+                                egui::Color32::DARK_GRAY
+                            } else {
+                                egui::Color32::WHITE
+                            };
+                            ui.label(egui::RichText::new(&proc_.name).strong().color(name_color));
+                            ui.label(
+                                egui::RichText::new(format!("#{}", proc_.pid))
+                                    .small()
+                                    .color(egui::Color32::DARK_GRAY),
+                            );
+                            ui.label(fmt::pct(proc_.cpu_usage_pct));
+                            ui.label(fmt::mib_from_kb(proc_.memory_kb));
+                            if proc_.disk_read_bytes > 0 || proc_.disk_written_bytes > 0 {
+                                ui.label(fmt::io_pair(proc_.disk_read_bytes, proc_.disk_written_bytes));
+                            }
+                            ui.label(
+                                egui::RichText::new(fmt::runtime_short(proc_.run_time_s))
+                                    .small()
+                                    .color(egui::Color32::GRAY),
+                            );
+                            if proc_.is_self_process {
+                                ui.label(egui::RichText::new("SoulKernel").small().color(egui::Color32::DARK_GRAY));
+                            } else if proc_.is_embedded_webview {
+                                ui.label(egui::RichText::new("UI").small().color(egui::Color32::DARK_GRAY));
                             }
                         });
+                    }
                 });
         });
     }
