@@ -468,14 +468,17 @@ impl LiteState {
                 let _ = self.activate_dome(); // erreurs non fatales en auto
             }
         } else {
-            // ── Désactivation si le KPI est revenu sain ───────────────────────
-            // Si le KPI est redevenu Efficace ou Modéré sans tendance dégradante,
-            // libérer les ressources : le dôme a fait son travail.
+            // ── Désactivation si le KPI est revenu efficace ───────────────────
+            // On ne rollback que sur Efficient (pas Moderate) : si le KPI est
+            // encore Modéré, le dôme travaille encore — le retirer relancerait
+            // immédiatement un nouveau cycle (ping-pong Modéré ↔ Inefficace).
+            // Tendance stable ou décroissante requise pour éviter un rollback
+            // alors que le KPI est en train de s'améliorer.
             use soulkernel_core::kpi::KpiLabel;
-            let kpi_ok = matches!(kpi.label, KpiLabel::Efficient | KpiLabel::Moderate)
-                && kpi.trend.map(|d| d <= 0.5).unwrap_or(true);
-            if kpi_ok {
-                let _ = self.rollback_dome(); // rollback propre
+            let kpi_stable = matches!(kpi.label, KpiLabel::Efficient)
+                && kpi.trend.map(|d| d <= 0.0).unwrap_or(true);
+            if kpi_stable {
+                let _ = self.rollback_dome();
             }
         }
     }
