@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sysinfo::{get_current_pid, ProcessRefreshKind, ProcessStatus, RefreshKind, System};
+use sysinfo::{get_current_pid, CpuRefreshKind, ProcessRefreshKind, ProcessStatus, RefreshKind, System};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSample {
@@ -84,14 +84,17 @@ fn group_key(name: &str) -> String {
 
 pub fn collect_observed_report(top_n: usize) -> ProcessObservedReport {
     let mut sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(
-            ProcessRefreshKind::new()
-                .with_memory()
-                .with_cpu()
-                .with_disk_usage(),
-        ),
+        RefreshKind::new()
+            .with_cpu(CpuRefreshKind::new().with_cpu_usage())
+            .with_processes(
+                ProcessRefreshKind::new()
+                    .with_memory()
+                    .with_cpu()
+                    .with_disk_usage(),
+            ),
     );
     sys.refresh_processes();
+    let logical_cores = sys.cpus().len().max(1) as f64;
 
     let self_pid = get_current_pid().ok();
     let mut all_samples: Vec<ProcessSample> = Vec::with_capacity(sys.processes().len());
@@ -102,7 +105,9 @@ pub fn collect_observed_report(top_n: usize) -> ProcessObservedReport {
         let status = status_label(proc_.status());
         let is_self = Some(*pid) == self_pid;
         let is_webview = is_embedded_webview_name(&name);
-        let cpu_usage_pct = (proc_.cpu_usage() as f64).max(0.0);
+        // sysinfo process CPU is per-core and can exceed 100 on multi-core machines.
+        // Normalize it to the same 0..100 system-wide scale used by metrics.raw.cpu_pct.
+        let cpu_usage_pct = ((proc_.cpu_usage() as f64).max(0.0) / logical_cores).max(0.0);
         let memory_kb = proc_.memory() / 1024;
         let du = proc_.disk_usage();
 
