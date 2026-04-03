@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod benchmark;
+pub mod device_profile;
 pub mod kpi;
 pub mod external_power;
 pub mod formula;

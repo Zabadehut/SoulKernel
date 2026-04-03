@@ -10,6 +10,7 @@ use soulkernel_core::metrics::{self, ResourceState};
 use soulkernel_core::orchestrator;
 use soulkernel_core::platform::{self, PlatformInfo, PolicyMode, SoulRamBackendInfo};
 use soulkernel_core::processes::{self, ProcessObservedReport};
+use soulkernel_core::device_profile::DeviceProfile;
 use soulkernel_core::kpi::{self, KpiLearningMemory, KpiSnapshot};
 use soulkernel_core::telemetry::{
     MachineActivity, TelemetryIngestRequest, TelemetryState, TelemetrySummary,
@@ -188,6 +189,10 @@ pub struct LiteViewModel {
     /// Secondes restantes avant la prochaine réévaluation auto-dôme.
     pub auto_dome_next_eval_s: Option<u64>,
 
+    // ── Profil appareil ───────────────────────────────────────────────────
+    /// Profil courant : définit les seuils KPI et si les actions sont autorisées.
+    pub device_profile: DeviceProfile,
+
     // ── KPI énergétique ───────────────────────────────────────────────────
     /// KPI calculé au dernier refresh : P(t) / CPU_utile × pénalité faults.
     pub kpi: KpiSnapshot,
@@ -351,8 +356,9 @@ impl LiteState {
                 next_cycle_in_s: None,
                 auto_dome: false,
                 auto_dome_next_eval_s: None,
+                device_profile: DeviceProfile::pc(),
                 kpi: KpiSnapshot::default(),
-                kpi_lambda: kpi::LAMBDA_DEFAULT,
+                kpi_lambda: DeviceProfile::pc().kpi_lambda_default,
                 kpi_history: Vec::new(),
                 kpi_memory: KpiLearningMemory::default(),
             },
@@ -370,7 +376,9 @@ impl LiteState {
 
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
         let applied = self.apply_pending_refresh()?;
-        if self.last_refresh.elapsed() < Duration::from_secs(5) {
+        if self.last_refresh.elapsed()
+            < Duration::from_secs(self.vm.device_profile.lite_refresh_min_s)
+        {
             return Ok(applied);
         }
         if self.refresh_in_flight {
@@ -395,6 +403,11 @@ impl LiteState {
     /// Checks whether SoulRAM should be re-applied automatically and fires it
     /// if conditions are met. Updates `vm.next_cycle_in_s` on every call.
     fn tick_auto_cycle_soulram(&mut self) {
+        // Profil : monitoring seul → aucune action autorisée.
+        if !self.vm.device_profile.can_act {
+            return;
+        }
+
         let profile = self.selected_profile();
         let sigma = self.vm.metrics.sigma;
 
@@ -406,8 +419,12 @@ impl LiteState {
             // Estimate remaining cooldown from last_auto_cycle timestamp.
             let mode = soulkernel_core::memory_policy::dome_mode_for_profile(&profile);
             let cd_s = match mode {
-                soulkernel_core::memory_policy::MemoryDomeMode::Burst => 180u64,
-                soulkernel_core::memory_policy::MemoryDomeMode::Sustain => 900u64,
+                soulkernel_core::memory_policy::MemoryDomeMode::Burst => {
+                    self.vm.device_profile.soulram_burst_cooldown_s
+                }
+                soulkernel_core::memory_policy::MemoryDomeMode::Sustain => {
+                    self.vm.device_profile.soulram_sustain_cooldown_s
+                }
             };
             let elapsed = self
                 .last_auto_cycle
@@ -419,7 +436,7 @@ impl LiteState {
 
         // Cooldown cleared — only fire when the machine is under meaningful load
         // (sigma > 0.3) to avoid pointless churn at idle.
-        if sigma < 0.30 {
+        if sigma < self.vm.device_profile.soulram_idle_sigma_min {
             self.vm.next_cycle_in_s = None; // "idle, aucun cycle nécessaire"
             return;
         }
@@ -438,11 +455,16 @@ impl LiteState {
     /// 4. KPI sain + dôme actif → rollback (la machine n'en a plus besoin).
     /// Le rollback sur KPI >20% post-action est déjà géré dans apply_refresh_snapshot.
     fn tick_auto_dome(&mut self) {
-        const COOLDOWN_S: u64 = 30;
+        let cooldown_s = self.vm.device_profile.auto_dome_cooldown_s;
+
+        // ── Profil : monitoring seul → aucune action autorisée ────────────────
+        if !self.vm.device_profile.can_act {
+            return;
+        }
 
         // ── Garde anti-auto-sabotage ─────────────────────────────────────────
         if self.vm.kpi.self_overload {
-            self.vm.auto_dome_next_eval_s = Some(COOLDOWN_S);
+            self.vm.auto_dome_next_eval_s = Some(cooldown_s);
             return;
         }
 
@@ -450,21 +472,21 @@ impl LiteState {
         let elapsed = self
             .last_auto_dome_eval
             .map(|t| t.elapsed().as_secs())
-            .unwrap_or(COOLDOWN_S + 1);
-        if elapsed < COOLDOWN_S {
-            self.vm.auto_dome_next_eval_s = Some(COOLDOWN_S - elapsed);
+            .unwrap_or(cooldown_s + 1);
+        if elapsed < cooldown_s {
+            self.vm.auto_dome_next_eval_s = Some(cooldown_s - elapsed);
             return;
         }
         self.vm.auto_dome_next_eval_s = None;
         self.last_auto_dome_eval = Some(Instant::now());
 
         let kpi = &self.vm.kpi;
-        let guard_ok = self.vm.formula.advanced_guard >= 0.85;
+        let guard_ok = self.vm.formula.advanced_guard >= self.vm.device_profile.auto_dome_guard_min;
 
         if !self.vm.dome_active {
             // ── Activation ───────────────────────────────────────────────────
             // Conditions : KPI dégradé (Inefficace ou tendance montante) + garde ouverte.
-            if kpi.should_act() && guard_ok {
+            if kpi.should_act_with_profile(&self.vm.device_profile) && guard_ok {
                 let _ = self.activate_dome(); // erreurs non fatales en auto
             }
         } else {
@@ -476,7 +498,10 @@ impl LiteState {
             // alors que le KPI est en train de s'améliorer.
             use soulkernel_core::kpi::KpiLabel;
             let kpi_stable = matches!(kpi.label, KpiLabel::Efficient)
-                && kpi.trend.map(|d| d <= 0.0).unwrap_or(true);
+                && kpi
+                    .trend
+                    .map(|d| d <= self.vm.device_profile.auto_dome_rollback_trend_max)
+                    .unwrap_or(true);
             if kpi_stable {
                 let _ = self.rollback_dome();
             }
@@ -486,8 +511,10 @@ impl LiteState {
     pub fn refresh_now(&mut self) -> Result<(), String> {
         // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
         // Les process/inventory seront rafraîchis par le prochain cycle périodique.
-        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(20);
-        let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(60);
+        let refresh_processes = self.last_process_refresh.elapsed()
+            >= Duration::from_secs(self.vm.device_profile.process_refresh_s);
+        let refresh_inventory = self.last_inventory_refresh.elapsed()
+            >= Duration::from_secs(self.vm.device_profile.inventory_refresh_s);
         let snapshot = Self::collect_refresh_snapshot(
             self.selected_profile(),
             self.vm.kappa,
@@ -504,8 +531,10 @@ impl LiteState {
     fn spawn_refresh_task(&mut self) {
         let profile = self.selected_profile();
         let kappa = self.vm.kappa;
-        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(20);
-        let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(60);
+        let refresh_processes = self.last_process_refresh.elapsed()
+            >= Duration::from_secs(self.vm.device_profile.process_refresh_s);
+        let refresh_inventory = self.last_inventory_refresh.elapsed()
+            >= Duration::from_secs(self.vm.device_profile.inventory_refresh_s);
         let (tx, rx) = mpsc::channel();
         self.refresh_rx = Some(rx);
         self.refresh_in_flight = true;
@@ -625,10 +654,11 @@ impl LiteState {
         self.vm.kpi = kpi::compute(
             &self.vm.metrics,
             &self.vm.process_report,
+            &self.vm.device_profile,
             self.vm.kpi_lambda,
-            kpi::ALPHA_DEFAULT,
-            kpi::BETA_DEFAULT,
-            kpi::GAMMA_DEFAULT,
+            self.vm.device_profile.kpi_alpha,
+            self.vm.device_profile.kpi_beta,
+            self.vm.device_profile.kpi_gamma,
             prev_kpi,
         );
         if let Some(kv) = self.vm.kpi.kpi_penalized {
@@ -644,7 +674,9 @@ impl LiteState {
         // Si le KPI a empiré de >20 % suite au dôme, on l'annule automatiquement.
         if self.vm.dome_active {
             if let (Some(prev), Some(curr)) = (prev_kpi, self.vm.kpi.kpi_penalized) {
-                if curr > prev * 1.20 && prev > 0.0 {
+                if curr > prev * self.vm.device_profile.kpi_post_action_rollback_ratio
+                    && prev > 0.0
+                {
                     // Le dôme dégrade le KPI — rollback silencieux.
                     let _ = self.runtime.block_on(orchestrator::rollback(
                         self.dome_snapshot.clone(),

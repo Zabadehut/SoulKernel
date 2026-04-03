@@ -7,34 +7,10 @@
 //! Le but : minimiser les watts par unité de calcul réellement utile.
 //! Ni la RAM seule, ni le CPU brut — l'efficacité énergétique du travail fait.
 
+use crate::device_profile::{DeviceProfile, ProcessRuleClass};
 use crate::metrics::ResourceState;
 use crate::processes::ProcessObservedReport;
 use serde::{Deserialize, Serialize};
-
-// ─── Seuils KPI ──────────────────────────────────────────────────────────────
-
-/// En dessous : système efficace.
-pub const KPI_EFFICIENT_THRESHOLD: f64 = 5.0; // W/%
-/// En dessous : acceptable. Au-dessus : inefficace.
-pub const KPI_MODERATE_THRESHOLD: f64 = 12.0; // W/%
-
-/// Paramètre λ par défaut pour la pénalité de faults.
-pub const LAMBDA_DEFAULT: f64 = 0.5;
-
-/// Epsilon : plancher du CPU utile pour éviter /0 et KPI absurde.
-/// 5 % correspond à un travail minimal réaliste sur un poste actif.
-pub const CPU_USEFUL_EPSILON: f64 = 5.0;
-
-/// Top-N processus utiles retenus pour le calcul bottom-up.
-pub const CPU_USEFUL_TOP_N: usize = 5;
-
-/// CPU utile minimum par processus pour être retenu dans le top-N.
-pub const CPU_USEFUL_MIN_PCT: f64 = 2.0;
-
-/// Poids par défaut pour J(t).
-pub const ALPHA_DEFAULT: f64 = 0.60; // poids puissance/CPU
-pub const BETA_DEFAULT: f64 = 0.25; // poids faults mémoire
-pub const GAMMA_DEFAULT: f64 = 0.15; // poids RAM inactive
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -83,120 +59,13 @@ impl ProcessClass {
     }
 }
 
-/// Classifie un processus par son nom (sans `.exe`, case-insensitive).
-/// Aucun hardcoding OS-specific : patterns portables Windows/Linux/macOS.
-pub fn classify_by_name(raw_name: &str) -> Option<ProcessClass> {
-    let n = raw_name
-        .trim_end_matches(".exe")
-        .trim_end_matches(".app")
-        .to_ascii_lowercase();
-    let n = n.as_str();
-
-    // ── Kernel / OS backbone ──────────────────────────────────────────────
-    // Windows + Linux + macOS noyau — ni overhead ni utile
-    if matches!(
-        n,
-        "system"
-            | "registry"
-            | "memory compression"
-            | "memcompression"
-            | "secure system"
-            | "system interrupts"
-            | "interruptions système"
-            | "hal"
-            | "dwm"
-            | "csrss"
-            | "wininit"
-            | "winlogon"
-            | "smss"
-            | "services"
-            | "lsass"
-            | "lsaiso"
-            | "fontdrvhost"
-            | "sihost"
-            | "ntoskrnl"
-            | "idle"
-            // Linux kernel threads
-            | "kthreadd"
-            | "kworker"
-            | "ksoftirqd"
-            | "rcu_sched"
-            | "migration"
-            // macOS launchd / kernel
-            | "launchd"
-            | "kernel_task"
-    ) {
-        return Some(ProcessClass::SystemKernel);
+pub fn classify_by_name(profile: &DeviceProfile, raw_name: &str) -> Option<ProcessClass> {
+    match profile.classify_process_name(raw_name) {
+        Some(ProcessRuleClass::SystemKernel) => Some(ProcessClass::SystemKernel),
+        Some(ProcessRuleClass::OverheadCritical) => Some(ProcessClass::OverheadCritical),
+        Some(ProcessRuleClass::OverheadSoft) => Some(ProcessClass::OverheadSoft),
+        None => None,
     }
-    // svchost on Windows — système pur
-    if n.starts_with("svchost") {
-        return Some(ProcessClass::SystemKernel);
-    }
-    // Linux/macOS runtime brokers
-    if matches!(n, "runtimebroker" | "backgroundtaskhost") {
-        return Some(ProcessClass::SystemKernel);
-    }
-
-    // ── Overhead critique — sécurité / antivirus ──────────────────────────
-    // Peut être dômé (IO priority ↓, affinité réduite), jamais tué.
-    if matches!(
-        n,
-        "msmpeng"               // Windows Defender antimalware
-            | "nissrv"          // Network Inspection Service
-            | "mpdefendercoreservice"
-            | "securityhealthservice"
-            | "mpcmdrun"
-            | "mpschdutil"
-            | "antimalware service executable"
-            // Linux equivalents
-            | "clamd"
-            | "freshclam"
-            | "avahi-daemon"
-            // macOS
-            | "mdworker_shared"
-            | "mds_stores"
-            | "trustd"
-    ) {
-        return Some(ProcessClass::OverheadCritical);
-    }
-
-    // ── Overhead doux — browser background, indexation, sync ─────────────
-    if n.starts_with("msedge") || n.starts_with("msedgewebview") {
-        return Some(ProcessClass::OverheadSoft);
-    }
-    if n.starts_with("chrome") || n.starts_with("chromium") {
-        return Some(ProcessClass::OverheadSoft);
-    }
-    if n.starts_with("firefox") {
-        return Some(ProcessClass::OverheadSoft);
-    }
-    if n.contains("update") || n.contains("updater") || n.contains("autoupdate") {
-        return Some(ProcessClass::OverheadSoft);
-    }
-    if matches!(
-        n,
-        "searchindexer"
-            | "searchhost"
-            | "wmiprvse"
-            | "onedrive"
-            | "onedrive.sync.service"
-            | "teams"
-            | "ms-teams"
-            | "outlook"
-            | "olk"
-            // Linux
-            | "tracker"
-            | "tracker-miner-fs"
-            | "zeitgeist-daemon"
-            // macOS
-            | "spotlight"
-            | "mds"
-    ) {
-        return Some(ProcessClass::OverheadSoft);
-    }
-
-    // Aucune règle sur le nom → sera classifié par CPU dans compute()
-    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -228,16 +97,21 @@ pub struct KpiSnapshot {
 
 impl KpiSnapshot {
     /// Vrai si le KPI se dégrade (ou est déjà inefficace) et mérite une action.
-    pub fn should_act(&self) -> bool {
+    pub fn should_act_with_profile(&self, profile: &DeviceProfile) -> bool {
         matches!(self.label, KpiLabel::Inefficient)
-            || self.trend.map(|d| d > 1.0).unwrap_or(false)
+            || self
+                .trend
+                .map(|d| d > profile.kpi_trend_degrade_threshold)
+                .unwrap_or(false)
     }
 }
 
-/// Calcule le KPI à partir des métriques live et du rapport processus.
+/// Calcule le KPI à partir des métriques live, du rapport processus et du profil appareil.
+/// Le profil définit les seuils bottom-up (epsilon, top_n, min_pct) — universels par classe.
 pub fn compute(
     metrics: &ResourceState,
     processes: &ProcessObservedReport,
+    profile: &DeviceProfile,
     lambda: f64,
     alpha: f64,
     beta: f64,
@@ -268,7 +142,7 @@ pub fn compute(
             cpu_self += proc_.cpu_usage_pct;
             continue;
         }
-        match classify_by_name(&proc_.name) {
+        match classify_by_name(profile, &proc_.name) {
             Some(ProcessClass::SystemKernel) => {
                 cpu_system += proc_.cpu_usage_pct;
             }
@@ -277,7 +151,7 @@ pub fn compute(
             }
             _ => {
                 // Utile ou Idle — candidat pour le calcul bottom-up.
-                if proc_.cpu_usage_pct >= CPU_USEFUL_MIN_PCT {
+                if proc_.cpu_usage_pct >= profile.cpu_useful_min_pct {
                     cpu_useful_candidates.push(proc_.cpu_usage_pct);
                 }
             }
@@ -292,31 +166,31 @@ pub fn compute(
     cpu_useful_candidates.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     let cpu_useful_bottomup: f64 = cpu_useful_candidates
         .iter()
-        .take(CPU_USEFUL_TOP_N)
+        .take(profile.cpu_useful_top_n)
         .sum();
 
-    let cpu_useful = if cpu_useful_bottomup > CPU_USEFUL_EPSILON {
+    let cpu_useful = if cpu_useful_bottomup > profile.cpu_useful_epsilon {
         cpu_useful_bottomup
     } else {
         // Repli : machine idle ou overhead total. On utilise cpu_total comme proxy.
-        cpu_total.max(CPU_USEFUL_EPSILON)
+        cpu_total.max(profile.cpu_useful_epsilon)
     };
 
-    let self_overload = cpu_self > 50.0;
+    let self_overload = cpu_self > profile.kpi_self_overload_pct;
 
     // KPI de base (W/%)
     let kpi_basic = power.map(|p| p / cpu_useful);
 
     // Pénalité faults mémoire
     let faults = metrics.raw.page_faults_per_sec.unwrap_or(0.0);
-    let fault_penalty = 1.0 + lambda * (faults / 10_000.0);
+    let fault_penalty = 1.0 + lambda * (faults / profile.kpi_fault_penalty_divisor);
     let kpi_penalized = kpi_basic.map(|k| (k * fault_penalty).max(0.0));
 
     // J(t) normalisé [0, 1]
     // Chaque composante est ramenée à [0,1] avec des plafonds raisonnables.
     let objective_j = kpi_penalized.map(|kpi| {
-        let kpi_norm = (kpi / 20.0).clamp(0.0, 1.0); // 20 W/% = pire cas pratique
-        let faults_norm = (faults / 30_000.0).clamp(0.0, 1.0);
+        let kpi_norm = (kpi / profile.kpi_norm_max).clamp(0.0, 1.0);
+        let faults_norm = (faults / profile.kpi_faults_norm_max).clamp(0.0, 1.0);
         let ram_inactive = if metrics.raw.mem_total_mb > 0 {
             1.0 - (metrics.raw.mem_used_mb as f64 / metrics.raw.mem_total_mb as f64)
         } else {
@@ -327,8 +201,8 @@ pub fn compute(
 
     let label = match kpi_penalized {
         None => KpiLabel::Unknown,
-        Some(k) if k < KPI_EFFICIENT_THRESHOLD => KpiLabel::Efficient,
-        Some(k) if k < KPI_MODERATE_THRESHOLD => KpiLabel::Moderate,
+        Some(k) if k < profile.kpi_efficient_threshold => KpiLabel::Efficient,
+        Some(k) if k < profile.kpi_moderate_threshold => KpiLabel::Moderate,
         Some(_) => KpiLabel::Inefficient,
     };
 

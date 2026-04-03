@@ -1651,7 +1651,10 @@ impl LiteApp {
                                 state.vm.kpi.label.as_str(),
                                 state.vm.formula.advanced_guard * 100.0
                             ),
-                            if state.vm.kpi.should_act() && state.vm.formula.advanced_guard >= 0.85 {
+                            if state.vm.kpi.should_act_with_profile(&state.vm.device_profile)
+                                && state.vm.formula.advanced_guard
+                                    >= state.vm.device_profile.auto_dome_guard_min
+                            {
                                 egui::Color32::from_rgb(214, 153, 58) // va activer
                             } else {
                                 egui::Color32::GRAY
@@ -1713,6 +1716,31 @@ impl LiteApp {
 
             // ── Réglages avancés ──────────────────────────────────────────────
             ui.collapsing("Réglages avancés", |ui| {
+                // Profil appareil
+                egui::ComboBox::from_label("Profil appareil")
+                    .selected_text(state.vm.device_profile.label)
+                    .show_ui(ui, |ui| {
+                        for p in soulkernel_core::device_profile::DeviceProfile::list_all() {
+                            let label = p.label;
+                            let id = p.id;
+                            let selected = state.vm.device_profile.id == id;
+                            if ui.selectable_label(selected, format!(
+                                "{} — {}",
+                                label,
+                                if p.can_act { "actions activées" } else { "monitoring seul" }
+                            )).clicked() {
+                                state.vm.device_profile = p;
+                                state.vm.kpi_lambda = state.vm.device_profile.kpi_lambda_default;
+                            }
+                        }
+                    });
+                if !state.vm.device_profile.can_act {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(214, 153, 58),
+                        "Monitoring seul — dôme et SoulRAM désactivés.",
+                    );
+                }
+                ui.separator();
                 egui::ComboBox::from_label("Politique")
                     .selected_text(state.vm.policy_mode.as_name())
                     .show_ui(ui, |ui| {
@@ -1828,7 +1856,7 @@ impl LiteApp {
                             let class = if proc_.is_self_process || proc_.is_embedded_webview {
                                 None
                             } else {
-                                classify_by_name(&proc_.name)
+                                classify_by_name(&state.vm.device_profile, &proc_.name)
                             };
                             let name_color = match class {
                                 Some(ProcessClass::SystemKernel) => egui::Color32::DARK_GRAY,
