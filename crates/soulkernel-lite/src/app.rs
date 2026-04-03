@@ -1603,48 +1603,63 @@ impl LiteApp {
             ui.separator();
 
             // ── Dôme ─────────────────────────────────────────────────────────
-            ui.label(egui::RichText::new("Dôme").strong());
             ui.horizontal(|ui| {
-                // Manuel
-                if ui.button("⚡ Activer").clicked() {
+                ui.label(egui::RichText::new("Dôme").strong());
+                // État visible en permanence, pas seulement en mode auto.
+                Self::status_chip(ui, if state.vm.dome_active { "ACTIF" } else { "inactif" }, state.vm.dome_active);
+            });
+            ui.horizontal(|ui| {
+                // "Activer" grisé si déjà actif, "Annuler" grisé si inactif.
+                if ui.add_enabled(!state.vm.dome_active, egui::Button::new("⚡ Activer")).clicked() {
                     match state.activate_dome() {
                         Ok(()) => *info = Some("Dôme activé".to_string()),
                         Err(err) => *error = Some(err),
                     }
                 }
-                if ui.button("↩ Annuler").clicked() {
+                if ui.add_enabled(state.vm.dome_active, egui::Button::new("↩ Annuler")).clicked() {
                     match state.rollback_dome() {
                         Ok(()) => *info = Some("Dôme annulé".to_string()),
                         Err(err) => *error = Some(err),
                     }
                 }
                 ui.separator();
-                // Auto
                 ui.checkbox(&mut state.vm.auto_dome, "Auto (KPI)");
             });
             if state.vm.auto_dome {
-                let status = if state.vm.kpi.self_overload {
-                    ("⚠ suspendu — SoulKernel en surcharge CPU", egui::Color32::from_rgb(210, 84, 84))
+                let (auto_label, auto_color) = if state.vm.kpi.self_overload {
+                    (
+                        format!("⚠ suspendu — SoulKernel {:.0}% CPU", state.vm.kpi.cpu_self_pct),
+                        egui::Color32::from_rgb(210, 84, 84),
+                    )
                 } else if state.vm.dome_active {
-                    ("dôme actif — surveille le KPI", egui::Color32::from_rgb(96, 168, 104))
+                    (
+                        format!(
+                            "actif — KPI {:.1} W/% [{}]",
+                            state.vm.kpi.kpi_penalized.unwrap_or(0.0),
+                            state.vm.kpi.label.as_str()
+                        ),
+                        egui::Color32::from_rgb(96, 168, 104),
+                    )
                 } else {
                     match state.vm.auto_dome_next_eval_s {
                         Some(s) if s > 0 => (
-                            "en attente cooldown",
+                            format!("cooldown {}s — KPI {}", s, state.vm.kpi.label.as_str()),
                             egui::Color32::GRAY,
                         ),
-                        _ => ("prêt — réévalue au prochain refresh", egui::Color32::from_rgb(96, 168, 104)),
+                        _ => (
+                            format!("prêt — KPI {} / garde {:.0}%",
+                                state.vm.kpi.label.as_str(),
+                                state.vm.formula.advanced_guard * 100.0
+                            ),
+                            if state.vm.kpi.should_act() && state.vm.formula.advanced_guard >= 0.85 {
+                                egui::Color32::from_rgb(214, 153, 58) // va activer
+                            } else {
+                                egui::Color32::GRAY
+                            },
+                        ),
                     }
                 };
-                let mut label = egui::RichText::new(format!("Auto dôme : {}", status.0))
-                    .small()
-                    .color(status.1);
-                if let Some(s) = state.vm.auto_dome_next_eval_s.filter(|&s| s > 0) {
-                    label = egui::RichText::new(format!("Auto dôme : cooldown {}s", s))
-                        .small()
-                        .color(egui::Color32::GRAY);
-                }
-                ui.label(label);
+                ui.label(egui::RichText::new(format!("↳ {auto_label}")).small().color(auto_color));
             }
 
             ui.separator();
