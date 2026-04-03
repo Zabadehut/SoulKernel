@@ -1456,51 +1456,58 @@ impl LiteApp {
                 .color(egui::Color32::GRAY),
             );
             ui.separator();
-            egui::ScrollArea::vertical()
-                .id_salt("processes_scroll")
-                .auto_shrink([false, false])
-                .max_height(260.0)
+            egui::Frame::new()
+                .stroke(egui::Stroke::new(1.0, egui::Color32::DARK_GRAY))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(8, 8))
                 .show(ui, |ui| {
-                    for proc_ in &state.vm.process_report.top_processes {
-                        ui.horizontal_wrapped(|ui| {
-                            let name_color = if proc_.is_self_process {
-                                egui::Color32::DARK_GRAY
-                            } else if proc_.is_embedded_webview {
-                                egui::Color32::DARK_GRAY
-                            } else {
-                                egui::Color32::WHITE
-                            };
-                            ui.label(egui::RichText::new(&proc_.name).strong().color(name_color));
-                            ui.label(
-                                egui::RichText::new(format!("#{}", proc_.pid))
-                                    .small()
-                                    .color(egui::Color32::DARK_GRAY),
-                            );
-                            ui.label(fmt::pct(proc_.cpu_usage_pct));
-                            ui.label(fmt::mib_from_kb(proc_.memory_kb));
-                            if proc_.disk_read_bytes > 0 || proc_.disk_written_bytes > 0 {
-                                ui.label(fmt::io_pair(proc_.disk_read_bytes, proc_.disk_written_bytes));
-                            }
-                            ui.label(
-                                egui::RichText::new(fmt::runtime_short(proc_.run_time_s))
-                                    .small()
-                                    .color(egui::Color32::GRAY),
-                            );
-                            if proc_.is_self_process {
-                                ui.label(
-                                    egui::RichText::new("SoulKernel")
-                                        .small()
-                                        .color(egui::Color32::DARK_GRAY),
-                                );
-                            } else if proc_.is_embedded_webview {
-                                ui.label(
-                                    egui::RichText::new("UI")
-                                        .small()
-                                        .color(egui::Color32::DARK_GRAY),
-                                );
+                    egui::ScrollArea::vertical()
+                        .id_salt("processes_scroll")
+                        .auto_shrink([false, false])
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                        .max_height(260.0)
+                        .show(ui, |ui| {
+                            for proc_ in &state.vm.process_report.top_processes {
+                                ui.horizontal_wrapped(|ui| {
+                                    let name_color = if proc_.is_self_process {
+                                        egui::Color32::DARK_GRAY
+                                    } else if proc_.is_embedded_webview {
+                                        egui::Color32::DARK_GRAY
+                                    } else {
+                                        egui::Color32::WHITE
+                                    };
+                                    ui.label(egui::RichText::new(&proc_.name).strong().color(name_color));
+                                    ui.label(
+                                        egui::RichText::new(format!("#{}", proc_.pid))
+                                            .small()
+                                            .color(egui::Color32::DARK_GRAY),
+                                    );
+                                    ui.label(fmt::pct(proc_.cpu_usage_pct));
+                                    ui.label(fmt::mib_from_kb(proc_.memory_kb));
+                                    if proc_.disk_read_bytes > 0 || proc_.disk_written_bytes > 0 {
+                                        ui.label(fmt::io_pair(proc_.disk_read_bytes, proc_.disk_written_bytes));
+                                    }
+                                    ui.label(
+                                        egui::RichText::new(fmt::runtime_short(proc_.run_time_s))
+                                            .small()
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    if proc_.is_self_process {
+                                        ui.label(
+                                            egui::RichText::new("SoulKernel")
+                                                .small()
+                                                .color(egui::Color32::DARK_GRAY),
+                                        );
+                                    } else if proc_.is_embedded_webview {
+                                        ui.label(
+                                            egui::RichText::new("UI")
+                                                .small()
+                                                .color(egui::Color32::DARK_GRAY),
+                                        );
+                                    }
+                                });
                             }
                         });
-                    }
                 });
         });
     }
