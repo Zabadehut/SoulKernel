@@ -1879,9 +1879,9 @@ impl eframe::App for LiteApp {
         };
 
         let repaint_ms = if state.vm.show_hud || state.is_refresh_in_flight() {
-            250
+            500
         } else {
-            1000
+            2000
         };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
 

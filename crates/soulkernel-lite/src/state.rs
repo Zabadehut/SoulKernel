@@ -370,7 +370,7 @@ impl LiteState {
 
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
         let applied = self.apply_pending_refresh()?;
-        if self.last_refresh.elapsed() < Duration::from_secs(2) {
+        if self.last_refresh.elapsed() < Duration::from_secs(5) {
             return Ok(applied);
         }
         if self.refresh_in_flight {
@@ -481,8 +481,16 @@ impl LiteState {
     }
 
     pub fn refresh_now(&mut self) -> Result<(), String> {
-        let snapshot =
-            Self::collect_refresh_snapshot(self.selected_profile(), self.vm.kappa, true, true)?;
+        // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
+        // Les process/inventory seront rafraîchis par le prochain cycle périodique.
+        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(20);
+        let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(60);
+        let snapshot = Self::collect_refresh_snapshot(
+            self.selected_profile(),
+            self.vm.kappa,
+            refresh_processes,
+            refresh_inventory,
+        )?;
         self.apply_refresh_snapshot(snapshot)?;
         self.refresh_in_flight = false;
         self.refresh_rx = None;
@@ -493,8 +501,8 @@ impl LiteState {
     fn spawn_refresh_task(&mut self) {
         let profile = self.selected_profile();
         let kappa = self.vm.kappa;
-        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(8);
-        let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(15);
+        let refresh_processes = self.last_process_refresh.elapsed() >= Duration::from_secs(20);
+        let refresh_inventory = self.last_inventory_refresh.elapsed() >= Duration::from_secs(60);
         let (tx, rx) = mpsc::channel();
         self.refresh_rx = Some(rx);
         self.refresh_in_flight = true;
