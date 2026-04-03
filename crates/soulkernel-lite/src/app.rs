@@ -1,6 +1,6 @@
 use crate::export;
 use crate::fmt;
-use crate::state::{LiteState, LiteViewModel};
+use crate::state::{HostImpactDelta, LiteState, LiteViewModel};
 use eframe::egui;
 
 pub struct LiteApp {
@@ -79,17 +79,29 @@ impl LiteApp {
 
     fn top_bar(ui: &mut egui::Ui, vm: &LiteViewModel) {
         ui.horizontal_wrapped(|ui| {
-            ui.heading("SoulKernel Lite");
+            ui.heading("SoulKernel");
             ui.separator();
             ui.label(format!("OS {}", vm.platform_info.os));
             ui.separator();
-            Self::status_chip(ui, "Dome actif", vm.dome_active);
-            Self::status_chip(ui, "SoulRAM actif", vm.soulram_active);
-            Self::status_chip(ui, "Source externe fraîche", vm.external_status.is_fresh);
+            Self::status_chip(ui, "Dome", vm.dome_active);
+            Self::status_chip(ui, "SoulRAM", vm.soulram_active);
             ui.separator();
-            ui.label(format!("Sigma {:.3}", vm.metrics.sigma));
+            // Puissance : la vraie valeur, pas une formule
+            let power = vm.metrics.raw.host_power_watts
+                .or_else(|| vm.metrics.raw.wall_power_watts)
+                .or_else(|| if vm.external_status.is_fresh { vm.external_status.last_watts } else { None });
+            ui.label(format!("Puissance {}", fmt::watts(power)));
             ui.separator();
-            ui.label(format!("π {:.3}", vm.formula.pi));
+            // RAM : % d'utilisation direct
+            if vm.metrics.raw.mem_total_mb > 0 {
+                let pct = vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64 * 100.0;
+                ui.colored_label(
+                    Self::tone_for_ratio(pct / 100.0),
+                    format!("RAM {:.0}%", pct),
+                );
+            }
+            ui.separator();
+            ui.label(format!("CPU {}", fmt::pct(vm.metrics.raw.cpu_pct)));
             ui.separator();
             ui.label(format!("Workload {}", vm.selected_workload));
         });
@@ -443,6 +455,194 @@ impl LiteApp {
         ui.label(body);
     }
 
+    /// Panneau principal : ce que SoulKernel fait concrètement sur ce HOST.
+    /// Pas de formules : puissance, RAM, page faults, et delta depuis la dernière action.
+    fn host_impact_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
+        ui.group(|ui| {
+            Self::section_title(
+                ui,
+                "Impact HOST",
+                "Ce que SoulKernel mesure et canalisé sur cette machine.",
+            );
+
+            // ── Puissance live ──────────────────────────────────────────────
+            let host_w = vm.metrics.raw.host_power_watts;
+            let wall_w = vm.metrics.raw.wall_power_watts.or_else(|| {
+                if vm.external_status.is_fresh { vm.external_status.last_watts } else { None }
+            });
+            let power_src = vm.metrics.raw.host_power_watts_source.as_deref()
+                .or(vm.metrics.raw.wall_power_watts_source.as_deref())
+                .unwrap_or(if vm.external_status.is_fresh && wall_w.is_some() {
+                    "Meross"
+                } else {
+                    "aucun capteur"
+                });
+
+            ui.horizontal_wrapped(|ui| {
+                if let Some(w) = host_w.or(wall_w) {
+                    Self::metric_badge(
+                        ui,
+                        "Puissance HOST",
+                        format!("{:.1} W  [{}]", w, power_src),
+                        egui::Color32::LIGHT_BLUE,
+                    );
+                } else {
+                    Self::metric_badge(
+                        ui,
+                        "Puissance HOST",
+                        format!("N/A — {}", Self::power_unavailable_hint(&vm.platform_info.os)),
+                        egui::Color32::DARK_GRAY,
+                    );
+                }
+
+                // ── RAM sous dôme ──────────────────────────────────────────
+                let mem_pct = if vm.metrics.raw.mem_total_mb > 0 {
+                    vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64 * 100.0
+                } else { 0.0 };
+                Self::metric_badge(
+                    ui,
+                    "RAM utilisée",
+                    format!(
+                        "{} / {} ({:.0}%)",
+                        fmt::mib_from_mb(vm.metrics.raw.mem_used_mb),
+                        fmt::mib_from_mb(vm.metrics.raw.mem_total_mb),
+                        mem_pct
+                    ),
+                    Self::tone_for_ratio(mem_pct / 100.0),
+                );
+
+                // ── Compression mémoire ───────────────────────────────────
+                if let Some(ratio) = vm.metrics.compression {
+                    Self::metric_badge(
+                        ui,
+                        "Compression mém.",
+                        format!("{:.1}%  (ratio {:.3})", ratio * 100.0, ratio),
+                        if ratio > 0.15 {
+                            egui::Color32::from_rgb(96, 168, 104)
+                        } else {
+                            egui::Color32::GRAY
+                        },
+                    );
+                }
+
+                // ── Page faults/s (proxy pression mémoire) ────────────────
+                if let Some(pf) = vm.metrics.raw.page_faults_per_sec {
+                    let tone = if pf > 5000.0 {
+                        egui::Color32::from_rgb(210, 84, 84)
+                    } else if pf > 1500.0 {
+                        egui::Color32::from_rgb(214, 153, 58)
+                    } else {
+                        egui::Color32::from_rgb(96, 168, 104)
+                    };
+                    Self::metric_badge(
+                        ui,
+                        "Page faults",
+                        format!("{:.0}/s", pf),
+                        tone,
+                    );
+                }
+            });
+
+            // ── Delta depuis dernière action ──────────────────────────────
+            if let Some(delta) = &vm.host_impact {
+                ui.separator();
+                Self::host_impact_delta_row(ui, delta, vm.now_ms);
+            }
+        });
+    }
+
+    fn host_impact_delta_row(ui: &mut egui::Ui, delta: &HostImpactDelta, now_ms: u64) {
+        let age_s = now_ms.saturating_sub(delta.captured_at_ms) / 1000;
+        ui.label(egui::RichText::new(
+            format!("Résultat dernière action : {}  (il y a {}s)", delta.source, age_s)
+        ).strong());
+        ui.horizontal_wrapped(|ui| {
+            // RAM libérée
+            let freed = delta.mem_freed_mb();
+            let ram_color = if freed > 50 {
+                egui::Color32::from_rgb(96, 168, 104)
+            } else if freed < -50 {
+                egui::Color32::from_rgb(210, 84, 84)
+            } else {
+                egui::Color32::GRAY
+            };
+            Self::metric_badge(
+                ui,
+                "RAM libérée",
+                if freed > 0 {
+                    format!("-{} MiB", freed)
+                } else if freed < 0 {
+                    format!("+{} MiB", freed.abs())
+                } else {
+                    "stable".to_string()
+                },
+                ram_color,
+            );
+
+            // Page faults réduites
+            if let Some(pct) = delta.page_faults_reduction_pct() {
+                let color = if pct > 10.0 {
+                    egui::Color32::from_rgb(96, 168, 104)
+                } else if pct < -10.0 {
+                    egui::Color32::from_rgb(210, 84, 84)
+                } else {
+                    egui::Color32::GRAY
+                };
+                Self::metric_badge(
+                    ui,
+                    "Page faults",
+                    format!("{:+.0}%", -pct),
+                    color,
+                );
+            } else if delta.page_faults_before.is_some() || delta.page_faults_after.is_some() {
+                Self::metric_badge(ui, "Page faults", "mesure en cours".to_string(), egui::Color32::GRAY);
+            }
+
+            // Puissance économisée
+            if let Some(saved) = delta.power_saved_w() {
+                let color = if saved > 1.0 {
+                    egui::Color32::from_rgb(96, 168, 104)
+                } else if saved < -1.0 {
+                    egui::Color32::from_rgb(210, 84, 84)
+                } else {
+                    egui::Color32::GRAY
+                };
+                Self::metric_badge(
+                    ui,
+                    "Puissance",
+                    format!("{:+.1} W", -saved),
+                    color,
+                );
+            }
+
+            // Compression avant/après
+            if let (Some(before), Some(after)) = (delta.compression_before, delta.compression_after) {
+                let delta_ratio = after - before;
+                let color = if delta_ratio > 0.02 {
+                    egui::Color32::from_rgb(96, 168, 104)
+                } else {
+                    egui::Color32::GRAY
+                };
+                Self::metric_badge(
+                    ui,
+                    "Compression",
+                    format!("{:.1}% → {:.1}%", before * 100.0, after * 100.0),
+                    color,
+                );
+            }
+        });
+    }
+
+    fn power_unavailable_hint(os: &str) -> &'static str {
+        if os.contains("Windows") {
+            "desktop Windows: branchez un Meross"
+        } else if os.contains("macOS") || os.contains("Darwin") {
+            "Mac desktop: branchez un Meross"
+        } else {
+            "RAPL non disponible"
+        }
+    }
+
     fn decision_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
         ui.group(|ui| {
             Self::section_title(
@@ -782,32 +982,61 @@ impl LiteApp {
             }
             ui.label(egui::RichText::new(title).strong());
             for item in items {
-                let estimated_w = endpoint_budget_w
-                    .map(|budget| budget * (endpoint_weight(&item.kind) / total_weight));
                 ui.horizontal_wrapped(|ui| {
-                    ui.strong(&item.name);
+                    // Nom — gras si non vide
+                    if !item.name.is_empty() {
+                        ui.strong(&item.name);
+                    }
                     ui.label(format!("[{}]", item.kind));
+
+                    // Watts : seulement pour les endpoints ou si mesure réelle disponible
                     if endpoint_budget_w.is_some() {
-                        ui.label(format!("W dérivé {}", crate::fmt::watts(estimated_w)));
-                    } else {
-                        ui.label(crate::fmt::watts(estimated_w));
+                        let estimated_w = endpoint_budget_w
+                            .map(|budget| budget * (endpoint_weight(&item.kind) / total_weight));
+                        ui.label(format!("~{}", crate::fmt::watts(estimated_w)));
                     }
+
+                    // Scope de mesure : seulement si ce n'est pas "detected" banal
                     if let Some(scope) = &item.measurement_scope {
-                        ui.label(format!("preuve {scope}"));
+                        if scope != "detected" {
+                            ui.label(egui::RichText::new(format!("[{scope}]")).small());
+                        }
                     }
+
+                    // État
                     if let Some(active_state) = &item.active_state {
-                        ui.label(format!("etat {active_state}"));
-                    } else if let Some(status) = &item.status {
-                        ui.label(status);
+                        let (label, color) = match active_state.as_str() {
+                            "active" => ("actif", egui::Color32::from_rgb(96, 168, 104)),
+                            "connected" => ("connecté", egui::Color32::from_rgb(100, 149, 237)),
+                            "idle" => ("veille", egui::Color32::GRAY),
+                            other => (other, egui::Color32::GRAY),
+                        };
+                        ui.colored_label(color, label);
                     }
+
+                    // Lien physique
                     if let Some(link) = &item.physical_link_hint {
-                        ui.label(format!("lien {link}"));
+                        ui.label(egui::RichText::new(link).small().color(egui::Color32::DARK_GRAY));
                     }
+
+                    // Fiabilité : seulement si mesurée ou dérivée (pas "detected" à 65%)
                     if let Some(score) = item.confidence_score {
-                        ui.label(format!("fiab {:.0}%", score * 100.0));
+                        if score < 0.64 || score > 0.66 {
+                            // Uniquement si ≠ 65% (valeur par défaut sans intérêt)
+                            let color = if score >= 0.85 {
+                                egui::Color32::from_rgb(96, 168, 104)
+                            } else if score >= 0.6 {
+                                egui::Color32::from_rgb(214, 153, 58)
+                            } else {
+                                egui::Color32::from_rgb(210, 84, 84)
+                            };
+                            ui.colored_label(color, format!("{:.0}%", score * 100.0));
+                        }
                     }
+
+                    // Détail
                     if let Some(detail) = &item.detail {
-                        ui.label(detail);
+                        ui.label(egui::RichText::new(detail).small());
                     }
                 });
             }
@@ -1171,6 +1400,8 @@ impl eframe::App for LiteApp {
                 .show(ui, |ui| {
                     ui.push_id("dashboard_columns", |ui| {
                         ui.columns(2, |columns| {
+                            Self::host_impact_panel(&mut columns[0], &state.vm);
+                            columns[0].add_space(8.0);
                             Self::material_overview_panel(&mut columns[0], &state.vm);
                             columns[0].add_space(8.0);
                             Self::decision_panel(&mut columns[0], &state.vm);

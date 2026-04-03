@@ -24,6 +24,14 @@ pub fn mib_from_kb(kb: u64) -> String {
     format!("{:.0} MiB", kb as f64 / 1024.0)
 }
 
+pub fn mib_from_mb(mb: u64) -> String {
+    if mb >= 1024 {
+        format!("{:.1} GiB", mb as f64 / 1024.0)
+    } else {
+        format!("{} MiB", mb)
+    }
+}
+
 pub fn gib_pair(used_mb: u64, total_mb: u64) -> String {
     format!(
         "{:.1} / {:.1} GiB",

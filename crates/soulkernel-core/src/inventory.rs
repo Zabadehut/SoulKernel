@@ -14,6 +14,7 @@ fn command_for_inventory(program: &str) -> std::process::Command {
     cmd
 }
 
+
 fn trim_non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|s| s.trim().to_string())
@@ -115,7 +116,16 @@ fn infer_physical_link_hint(item: &DeviceInventoryItem) -> Option<String> {
     {
         Some("usb2".to_string())
     } else if kind.contains("network") {
-        Some("ethernet".to_string())
+        // Check name/detail for WiFi signals before defaulting to ethernet.
+        if haystack.starts_with("wl")
+            || haystack.contains("wifi")
+            || haystack.contains("wi-fi")
+            || haystack.contains("wireless")
+        {
+            Some("wifi".to_string())
+        } else {
+            Some("ethernet".to_string())
+        }
     } else {
         None
     }
@@ -1365,39 +1375,112 @@ pub fn collect_device_inventory_with_raw(
     let storage = disks
         .list()
         .iter()
-        .map(|disk| DeviceInventoryItem {
-            kind: "storage".to_string(),
-            name: disk.name().to_string_lossy().to_string(),
-            detail: Some(format!(
-                "{} · {} / {} GiB",
-                disk.file_system().to_string_lossy(),
-                ((disk.total_space().saturating_sub(disk.available_space())) as f64
-                    / 1024.0
-                    / 1024.0
-                    / 1024.0)
-                    .round(),
-                (disk.total_space() as f64 / 1024.0 / 1024.0 / 1024.0).round()
-            )),
-            status: Some(format!("{:?}", disk.kind()).to_lowercase()),
-            evidence: "platform_detected".to_string(),
-            ..Default::default()
+        .map(|disk| {
+            let raw_name = disk.name().to_string_lossy().to_string();
+            let mount = disk.mount_point().to_string_lossy().to_string();
+            // Fallback: si le label du volume est vide, utiliser le point de montage
+            let name = if raw_name.trim().is_empty() {
+                mount.clone()
+            } else {
+                raw_name.clone()
+            };
+            // For Unknown kind, try to infer from device path (Linux: /dev/nvme0n1, mmcblk, sda;
+            // macOS: disk0s1; Windows: \\.\PhysicalDrive0).
+            let disk_type = match disk.kind() {
+                sysinfo::DiskKind::SSD => "SSD",
+                sysinfo::DiskKind::HDD => "HDD",
+                _ => {
+                    let probe = format!("{} {}", raw_name, mount).to_ascii_lowercase();
+                    if probe.contains("nvme") {
+                        "NVMe"
+                    } else if probe.contains("mmcblk") || probe.contains("emmc") {
+                        "eMMC"
+                    } else if probe.contains("usb") {
+                        "USB"
+                    } else if probe.contains("sd") && !probe.contains("ssd") {
+                        "SD"
+                    } else {
+                        "storage"
+                    }
+                }
+            };
+            let used_gib = (disk.total_space().saturating_sub(disk.available_space())) as f64
+                / 1024.0_f64.powi(3);
+            let total_gib = disk.total_space() as f64 / 1024.0_f64.powi(3);
+            DeviceInventoryItem {
+                kind: "storage".to_string(),
+                name,
+                detail: Some(format!(
+                    "{} {} · {:.0} / {:.0} GiB",
+                    disk_type,
+                    disk.file_system().to_string_lossy(),
+                    used_gib,
+                    total_gib,
+                )),
+                // "connected" = le disque est présent et monté
+                status: Some("connected".to_string()),
+                evidence: "platform_detected".to_string(),
+                ..Default::default()
+            }
         })
         .collect::<Vec<_>>();
 
-    let networks = sysinfo::Networks::new_with_refreshed_list();
-    let network = networks
+    let nets = sysinfo::Networks::new_with_refreshed_list();
+    let network = nets
         .iter()
-        .map(|(name, data)| DeviceInventoryItem {
-            kind: "network".to_string(),
-            name: name.to_string(),
-            detail: Some(format!(
-                "rx {} B · tx {} B",
-                data.received(),
-                data.transmitted()
-            )),
-            status: Some("detected".to_string()),
-            evidence: "platform_detected".to_string(),
-            ..Default::default()
+        .filter(|(iface_name, data)| {
+            // Exclude loopback: by name (lo, loopback) or null MAC.
+            // Some Windows virtual adapters also have a null MAC, so name check comes first.
+            let n = iface_name.to_ascii_lowercase();
+            if n == "lo" || n == "loopback" || n.starts_with("lo:") {
+                return false;
+            }
+            // Exclude tunnel/virtual-only interfaces that carry no real traffic.
+            if n.starts_with("utun")
+                || n.starts_with("tun")
+                || n.starts_with("tap")
+                || n.starts_with("veth")
+                || n.starts_with("docker")
+                || n.starts_with("br-")
+                || n.starts_with("virbr")
+            {
+                return false;
+            }
+            // Null MAC is a strong signal for a software loopback that wasn't caught by name.
+            data.mac_address().0 != [0, 0, 0, 0, 0, 0]
+        })
+        .map(|(name, data)| {
+            // Show MAC address — stable info that doesn't require a timed delta.
+            let mac = data.mac_address().0;
+            let detail = Some(format!(
+                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+            ));
+
+            // WiFi detection by interface naming conventions across platforms:
+            //   Linux  : wlan0, wlp3s0, wifi0 (all start with "wl" or contain "wifi"/"wireless")
+            //   Windows: "Wi-Fi", "Wireless Network Connection", WLAN adapters
+            //   macOS  : en0 is usually WiFi but sysinfo has no flag — fall through to ethernet
+            let n = name.to_ascii_lowercase();
+            let link = if n.starts_with("wl")
+                || n == "wi-fi"
+                || n.contains("wifi")
+                || n.contains("wi-fi")
+                || n.contains("wireless")
+            {
+                "wifi"
+            } else {
+                "ethernet"
+            };
+            DeviceInventoryItem {
+                kind: "network".to_string(),
+                name: name.to_string(),
+                detail,
+                status: Some("connected".to_string()),
+                physical_link_hint: Some(link.to_string()),
+                evidence: "platform_detected".to_string(),
+                ..Default::default()
+            }
         })
         .collect::<Vec<_>>();
 

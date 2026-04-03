@@ -32,7 +32,7 @@ impl Default for EnergyPricing {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelemetryIngestRequest {
     pub ts_ms: Option<u64>,
     pub power_watts: Option<f64>,
@@ -909,14 +909,13 @@ mod tests {
                 ts_ms: Some(ts_ms),
                 power_watts,
                 dome_active,
-                soulram_active: false,
-                kpi_gain_median_pct: None,
                 cpu_pct: Some(cpu_pct),
                 pi: Some(1.0),
                 machine_activity: Some(machine_activity),
                 mem_used_mb: Some(mem_used_mb),
                 mem_total_mb: Some(8_192.0),
                 power_source_tag: power_watts.map(|_| "meross_wall".to_string()),
+                ..Default::default()
             })
             .unwrap();
     }

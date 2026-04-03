@@ -554,13 +554,19 @@ fn build_external_power_export<'a>(vm: &'a LiteViewModel) -> ExternalPowerExport
 
 fn infer_machine_activity(vm: &LiteViewModel) -> &'static str {
     let cpu = vm.metrics.raw.cpu_pct;
-    let gpu = vm.metrics.raw.gpu_pct.unwrap_or(0.0);
-    let io =
-        vm.metrics.raw.io_read_mb_s.unwrap_or(0.0) + vm.metrics.raw.io_write_mb_s.unwrap_or(0.0);
-    if cpu < 8.0 && gpu < 8.0 && io < 1.0 {
-        "idle"
-    } else if gpu >= 15.0 && cpu < 20.0 {
+    let gpu_pct = vm.metrics.raw.gpu_pct.unwrap_or(0.0);
+    let io_total = vm.metrics.raw.io_read_mb_s.unwrap_or(0.0)
+        + vm.metrics.raw.io_write_mb_s.unwrap_or(0.0);
+    let webview_mem_mb = vm.metrics.raw.webview_host_mem_mb.unwrap_or(0) as f64;
+    let gpu_adjusted = if webview_mem_mb >= 48.0 {
+        (gpu_pct - 18.0).max(0.0)
+    } else {
+        gpu_pct
+    };
+    if cpu < 12.0 && gpu_adjusted > 34.0 {
         "media"
+    } else if cpu < 8.0 && io_total < 0.5 && gpu_pct < 8.0 {
+        "idle"
     } else {
         "active"
     }

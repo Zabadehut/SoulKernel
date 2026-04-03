@@ -92,6 +92,30 @@ pub fn audit_write(
     data: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let file_mutex = ensure_audit_file(audit)?;
+    write_entry(file_mutex, category, action, level, data)
+}
+
+/// Écrit dans le fichier d'audit global sans SharedAudit.
+/// No-op silencieux si le fichier n'est pas encore initialisé (avant le premier audit_write).
+/// Utilisé par le backend plateforme pour distinguer trim global, trim ciblé et cooldowns.
+pub fn audit_write_direct(
+    category: &str,
+    action: &str,
+    level: Option<&str>,
+    data: Option<serde_json::Value>,
+) {
+    if let Some(file_mutex) = AUDIT_FILE.get() {
+        let _ = write_entry(file_mutex, category, action, level, data);
+    }
+}
+
+fn write_entry(
+    file_mutex: &Mutex<std::fs::File>,
+    category: &str,
+    action: &str,
+    level: Option<&str>,
+    data: Option<serde_json::Value>,
+) -> Result<(), String> {
     let ts_ms = now_ms_local();
     let entry = AuditEntry {
         ts_ms,

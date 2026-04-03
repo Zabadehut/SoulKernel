@@ -269,9 +269,23 @@ fn read_macos_gpu_kind() -> String {
 
 /// Real power in Watts when available on macOS.
 /// Uses AppleSmartBattery telemetry (no synthetic values).
+/// Mesure la puissance HOST en watts.
+///
+/// Stratégie par ordre de préférence :
+/// 1. `ioreg -rn AppleSmartBattery` — laptops Intel et Apple Silicon avec batterie.
+/// 2. `ioreg -rn AppleSmartBatteryManager` — chemin alternatif Apple Silicon M-series.
+///
+/// **Mac desktop (Mac mini, iMac, Mac Studio)** : aucune source native non-privilégiée
+/// ne retourne les watts CPU/système. `powermetrics` le ferait mais requiert `sudo`.
+/// → Utiliser un Meross MSS315 (prise connectée) comme source murale externe.
 pub fn sample_power_watts() -> Option<f64> {
+    try_ioreg_battery("AppleSmartBattery")
+        .or_else(|| try_ioreg_battery("AppleSmartBatteryManager"))
+}
+
+fn try_ioreg_battery(node: &str) -> Option<f64> {
     let out = std::process::Command::new("ioreg")
-        .args(["-rn", "AppleSmartBattery"])
+        .args(["-rn", node])
         .output()
         .ok()?;
     let txt = String::from_utf8(out.stdout).ok()?;
@@ -430,8 +444,8 @@ pub fn soulram_backend_info() -> crate::platform::SoulRamBackendInfo {
         equivalent_goal: "Native compressed memory + pressure-aware cache relief".into(),
         roadmap: vec![
             "Backend actuel: compression memoire geree par le noyau macOS, avec hints prudents type purge cache.".into(),
-            "Etape suivante: mieux suivre memory pressure et separer cache purge, pression et simple observation.".into(),
-            "A terme: exposer un backend memoire macOS comparable aux autres OS sans pretendre embarquer zRAM hors Linux.".into(),
+            "Mesure puissance: laptops (Intel/Apple Silicon) via ioreg AppleSmartBattery. Mac desktop (mini/iMac/Studio): mesure native indisponible sans sudo — branchez un Meross MSS315 pour la conso murale.".into(),
+            "A terme: mieux suivre memory pressure, separer cache purge et pression, exposer un backend comparable aux autres OS.".into(),
         ],
     }
 }

@@ -21,6 +21,40 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
+/// Snapshot interne utilisé pour calculer le delta avant/après une action.
+struct HostImpactSnapshot {
+    page_faults: Option<f64>,
+    compression: Option<f64>,
+    mem_used_mb: u64,
+    power_watts: Option<f64>,
+}
+
+impl HostImpactSnapshot {
+    fn capture(m: &ResourceState) -> Self {
+        Self {
+            page_faults: m.raw.page_faults_per_sec,
+            compression: m.compression,
+            mem_used_mb: m.raw.mem_used_mb,
+            power_watts: m.raw.power_watts,
+        }
+    }
+
+    fn delta_with(self, after: &ResourceState, source: &'static str) -> HostImpactDelta {
+        HostImpactDelta {
+            page_faults_before: self.page_faults,
+            page_faults_after: after.raw.page_faults_per_sec,
+            compression_before: self.compression,
+            compression_after: after.compression,
+            mem_used_mb_before: self.mem_used_mb,
+            mem_used_mb_after: after.raw.mem_used_mb,
+            power_watts_before: self.power_watts,
+            power_watts_after: after.raw.power_watts,
+            source,
+            captured_at_ms: now_ms_local(),
+        }
+    }
+}
+
 fn command_silent(program: &str) -> Command {
     #[allow(unused_mut)]
     let mut cmd = Command::new(program);
@@ -49,6 +83,54 @@ fn infer_machine_activity(metrics: &ResourceState) -> MachineActivity {
         MachineActivity::Idle
     } else {
         MachineActivity::Active
+    }
+}
+
+/// Snapshot avant/après une action dôme ou SoulRAM.
+/// Permet de mesurer l'impact HOST réel sans wattmètre : page faults, compression, RAM.
+#[derive(Debug, Clone)]
+pub struct HostImpactDelta {
+    /// Page faults/s avant l'action.
+    pub page_faults_before: Option<f64>,
+    /// Page faults/s après refresh (proxy d'impact mémoire).
+    pub page_faults_after: Option<f64>,
+    /// Ratio compression mémoire avant (0..1, Windows/macOS).
+    pub compression_before: Option<f64>,
+    /// Ratio compression après.
+    pub compression_after: Option<f64>,
+    /// RAM utilisée (MB) avant.
+    pub mem_used_mb_before: u64,
+    /// RAM utilisée (MB) après.
+    pub mem_used_mb_after: u64,
+    /// Puissance HOST (W) avant, si disponible.
+    pub power_watts_before: Option<f64>,
+    /// Puissance HOST (W) après, si disponible.
+    pub power_watts_after: Option<f64>,
+    /// Source de l'action ("dome" ou "soulram").
+    pub source: &'static str,
+    pub captured_at_ms: u64,
+}
+
+impl HostImpactDelta {
+    /// Réduction page faults en % (positif = amélioration).
+    pub fn page_faults_reduction_pct(&self) -> Option<f64> {
+        let before = self.page_faults_before?;
+        let after = self.page_faults_after?;
+        if before > 0.0 {
+            Some(((before - after) / before * 100.0).clamp(-999.0, 999.0))
+        } else {
+            None
+        }
+    }
+
+    /// Delta RAM libérée en MB (positif = libération).
+    pub fn mem_freed_mb(&self) -> i64 {
+        self.mem_used_mb_before as i64 - self.mem_used_mb_after as i64
+    }
+
+    /// Delta puissance en W (positif = économie).
+    pub fn power_saved_w(&self) -> Option<f64> {
+        Some(self.power_watts_before? - self.power_watts_after?)
     }
 }
 
@@ -89,6 +171,8 @@ pub struct LiteViewModel {
     pub benchmark_last_session: Option<BenchmarkSession>,
     pub benchmark_history: Option<BenchmarkHistoryResponse>,
     pub show_hud: bool,
+    /// Impact HOST mesuré lors de la dernière activation dôme ou SoulRAM.
+    pub host_impact: Option<HostImpactDelta>,
 }
 
 pub struct LiteState {
@@ -233,6 +317,7 @@ impl LiteState {
                 benchmark_last_session: None,
                 benchmark_history: Some(benchmark_history),
                 show_hud: false,
+                host_impact: None,
             },
             dome_snapshot: None,
             last_refresh: Instant::now() - Duration::from_secs(10),
@@ -402,6 +487,7 @@ impl LiteState {
 
     pub fn activate_dome(&mut self) -> Result<(), String> {
         let baseline = self.vm.metrics.clone();
+        let impact_before = HostImpactSnapshot::capture(&baseline);
         let profile = self.selected_profile();
         let result = self
             .runtime
@@ -416,7 +502,9 @@ impl LiteState {
         self.dome_snapshot = Some(baseline);
         self.vm.dome_active = true;
         self.vm.last_actions = result.actions;
-        self.refresh_now()
+        self.refresh_now()?;
+        self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, "dome"));
+        Ok(())
     }
 
     pub fn rollback_dome(&mut self) -> Result<(), String> {
@@ -433,6 +521,7 @@ impl LiteState {
     }
 
     pub fn enable_soulram(&mut self) -> Result<(), String> {
+        let impact_before = HostImpactSnapshot::capture(&self.vm.metrics);
         let actions = self
             .runtime
             .block_on(platform::enable_soulram(self.vm.soulram_percent));
@@ -447,7 +536,9 @@ impl LiteState {
                 }
             })
             .collect();
-        self.refresh_now()
+        self.refresh_now()?;
+        self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, "soulram"));
+        Ok(())
     }
 
     pub fn disable_soulram(&mut self) -> Result<(), String> {

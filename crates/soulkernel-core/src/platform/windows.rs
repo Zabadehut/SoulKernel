@@ -150,7 +150,40 @@ pub async fn apply_dome(
         if ok {
             crate::memory_policy::record_working_set_adjustment();
         }
+        crate::audit::audit_write_direct(
+            "soulram",
+            "trim_targeted",
+            Some(if ok { "info" } else { "warn" }),
+            Some(serde_json::json!({
+                "ok": ok,
+                "pid": target_pid,
+                "min_mb": min_b >> 20,
+                "max_mb": max_b >> 20,
+                "msg": msg,
+            })),
+        );
         actions.push((msg, ok));
+    } else if matches!(adaptive.memory_bias, crate::platform::MemoryBias::Boost)
+        && !mem_plan.apply_working_set
+    {
+        // Trim ciblé bloqué — on audite le cooldown si des notes existent
+        let cooldown_notes: Vec<&str> = mem_plan
+            .notes
+            .iter()
+            .filter(|n| n.contains("working set") && n.contains("cooldown"))
+            .map(String::as_str)
+            .collect();
+        if !cooldown_notes.is_empty() {
+            crate::audit::audit_write_direct(
+                "soulram",
+                "trim_targeted_cooldown",
+                Some("debug"),
+                Some(serde_json::json!({
+                    "pid": target_pid,
+                    "reasons": cooldown_notes,
+                })),
+            );
+        }
     }
 
     if matches!(adaptive.memory_bias, crate::platform::MemoryBias::Eco) {
@@ -1248,7 +1281,7 @@ pub fn soulram_backend_info() -> crate::platform::SoulRamBackendInfo {
         equivalent_goal: "Native compressed memory + working-set relief".into(),
         roadmap: vec![
             "Backend actuel: Memory Compression native Windows + trim global des working sets quand les garde-fous l'autorisent.".into(),
-            "Etape suivante: distinguer plus proprement trim global, trim cible et cooldowns dans l'audit SoulRAM.".into(),
+            "Fait: trim global, trim cible et cooldowns sont desormais traces separement dans l'audit SoulRAM (categories soulram/trim_global, trim_targeted, *_cooldown).".into(),
             "A terme: ajouter des politiques plus fines par processus et mesurer explicitement le cout/benefice du backend memoire Windows.".into(),
         ],
     }
@@ -1260,15 +1293,28 @@ pub async fn enable_soulram(percent: u8) -> Vec<(String, bool)> {
     crate::memory_policy::record_compression_toggle();
     out.push(enable_memory_compression());
     let (allow_trim, notes) = crate::memory_policy::allow_global_trim(None);
-    for n in notes {
-        out.push((n, true));
+    for n in &notes {
+        out.push((n.clone(), true));
     }
     if allow_trim {
         let (msg, ok) = trim_working_sets_global();
         if ok {
             crate::memory_policy::record_global_working_set_trim();
         }
+        crate::audit::audit_write_direct(
+            "soulram",
+            "trim_global",
+            Some(if ok { "info" } else { "warn" }),
+            Some(serde_json::json!({ "ok": ok, "msg": msg })),
+        );
         out.push((msg, ok));
+    } else {
+        crate::audit::audit_write_direct(
+            "soulram",
+            "trim_global_cooldown",
+            Some("debug"),
+            Some(serde_json::json!({ "reasons": notes })),
+        );
     }
     out
 }

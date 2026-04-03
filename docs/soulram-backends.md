@@ -36,7 +36,7 @@ Voir aussi [linux-soulram-install.md](./linux-soulram-install.md).
 ### Windows
 
 1. Stabiliser l'audit `Memory Compression + WorkingSet Trim`.
-2. Distinguer plus finement trim global, trim cible et cooldowns dans les rapports.
+2. ✓ Trim global, trim cible et cooldowns sont désormais tracés séparément dans `soulkernel_audit.jsonl` (catégories `soulram/trim_global`, `soulram/trim_targeted`, `soulram/trim_global_cooldown`, `soulram/trim_targeted_cooldown`).
 3. Mesurer explicitement le cout/benefice du backend memoire Windows face au gain host.
 
 ### macOS
