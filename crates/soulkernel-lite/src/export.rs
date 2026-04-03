@@ -293,6 +293,25 @@ struct LiteReport<'a> {
     last_actions: &'a [String],
 }
 
+/// Mirrors exactly what the "Matériel interne / externe → Écart" panel displays.
+/// All derived fields are computed from raw measurements — no formulas.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PowerComparisonExport {
+    host_power_w: Option<f64>,
+    wall_power_w: Option<f64>,
+    /// Host power as a fraction of wall power (0–100 %).  None if either source is missing.
+    host_of_wall_pct: Option<f64>,
+    /// Watts measured at the wall but not attributed to the host sensor.  None if either source is missing.
+    unattributed_w: Option<f64>,
+    /// "bonne" | "à rafraîchir" | "mur seul" | "hôte seul" | "faible"
+    confidence: &'static str,
+    /// Whether the host sensor (RAPL / PDH / battery discharge) produced a reading.
+    host_sensor_available: bool,
+    /// Whether an external wall-plug sensor produced a reading.
+    wall_sensor_available: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 struct LiteJsonExport<'a> {
@@ -301,6 +320,7 @@ struct LiteJsonExport<'a> {
     period: Option<&'static str>,
     period_label: Option<&'static str>,
     report: LiteReport<'a>,
+    power_comparison: PowerComparisonExport,
     raw_host_metrics: LiteRawHostMetricsExport<'a>,
     external_power: ExternalPowerExport<'a>,
     strict_evidence: StrictEvidenceExport<'a>,
@@ -928,6 +948,46 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
             benchmark_history: &vm.benchmark_history,
             audit_path: &vm.audit_path,
             last_actions: &vm.last_actions,
+        },
+        power_comparison: {
+            let host = vm.metrics.raw.host_power_watts;
+            let wall = vm.metrics.raw.wall_power_watts.or_else(|| {
+                if vm.external_status.is_fresh {
+                    vm.external_status.last_watts
+                } else {
+                    None
+                }
+            });
+            let host_of_wall_pct = match (host, wall) {
+                (Some(h), Some(w)) if w > 0.0 => Some((h / w * 100.0).clamp(0.0, 100.0)),
+                _ => None,
+            };
+            let unattributed_w = match (host, wall) {
+                (Some(h), Some(w)) => Some((w - h).max(0.0)),
+                _ => None,
+            };
+            let confidence = if wall.is_some() && host.is_some() {
+                if vm.external_status.is_fresh {
+                    "bonne"
+                } else {
+                    "à rafraîchir"
+                }
+            } else if wall.is_some() && host.is_none() {
+                "mur seul"
+            } else if host.is_some() && wall.is_none() {
+                "hôte seul"
+            } else {
+                "faible"
+            };
+            PowerComparisonExport {
+                host_power_w: host,
+                wall_power_w: wall,
+                host_of_wall_pct,
+                unattributed_w,
+                confidence,
+                host_sensor_available: host.is_some(),
+                wall_sensor_available: wall.is_some(),
+            }
         },
         raw_host_metrics,
         external_power,
