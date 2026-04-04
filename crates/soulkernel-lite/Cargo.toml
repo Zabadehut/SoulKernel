@@ -8,6 +8,7 @@ description = "SoulKernel native lite UI"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 eframe = { version = "0.33", default-features = true }
 egui = "0.33"
+flate2 = "1"
 rfd = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

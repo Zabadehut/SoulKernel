@@ -1,9 +1,13 @@
 use crate::state::LiteViewModel;
 use chrono::{Local, TimeZone, Utc};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use rfd::FileDialog;
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Read;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
@@ -398,6 +402,69 @@ pub fn default_observability_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("soulkernel_observability_samples.jsonl")
+}
+
+const OBSERVABILITY_ROTATE_BYTES: u64 = 16 * 1024 * 1024;
+const OBSERVABILITY_ARCHIVE_KEEP: usize = 8;
+
+pub fn observability_rotation_bytes() -> u64 {
+    OBSERVABILITY_ROTATE_BYTES
+}
+
+fn rotate_observability_if_needed(path: &PathBuf) -> Result<(), String> {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(_) => return Ok(()),
+    };
+    if meta.len() < OBSERVABILITY_ROTATE_BYTES {
+        return Ok(());
+    }
+
+    let ts_ms = soulkernel_core::telemetry::now_ms();
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("observability_samples");
+    let archive_path = path.with_file_name(format!("{stem}-{ts_ms}.jsonl.gz"));
+
+    let mut src = File::open(path).map_err(|e| e.to_string())?;
+    let archive_file = File::create(&archive_path).map_err(|e| e.to_string())?;
+    let mut encoder = GzEncoder::new(archive_file, Compression::default());
+    let mut buf = Vec::new();
+    src.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    encoder.write_all(&buf).map_err(|e| e.to_string())?;
+    encoder.finish().map_err(|e| e.to_string())?;
+
+    std::fs::write(path, b"").map_err(|e| e.to_string())?;
+    cleanup_observability_archives(path)?;
+    Ok(())
+}
+
+fn cleanup_observability_archives(path: &PathBuf) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("observability_samples");
+    let mut archives = std::fs::read_dir(parent)
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| name.starts_with(stem) && name.ends_with(".jsonl.gz"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    archives.sort();
+    let excess = archives.len().saturating_sub(OBSERVABILITY_ARCHIVE_KEEP);
+    for archive in archives.into_iter().take(excess) {
+        let _ = std::fs::remove_file(archive);
+    }
+    Ok(())
 }
 
 fn format_watts(value: Option<f64>) -> String {
@@ -1142,6 +1209,7 @@ pub fn append_observability_sample(vm: &LiteViewModel) -> Result<String, String>
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    rotate_observability_if_needed(&path)?;
     let payload = build_payload(vm, "observability_sample", Some("timeseries"), Some("tick"));
     let line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     let mut file = std::fs::OpenOptions::new()

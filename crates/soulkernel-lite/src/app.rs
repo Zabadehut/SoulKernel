@@ -316,24 +316,38 @@ impl LiteApp {
                         .map(|v| format!("{v:.0}/s"))
                         .unwrap_or_else(|| "N/A".to_string()),
                 );
-                // Compression (Windows memory compression or Linux zRAM ratio)
-                row(
-                    &mut columns[0],
-                    "Compression",
-                    vm.metrics
-                        .compression
-                        .map(|v| format!("{v:.2}x"))
-                        .unwrap_or_else(|| "N/A".to_string()),
-                );
-                row(
-                    &mut columns[0],
-                    "zRAM",
-                    vm.metrics
-                        .raw
-                        .zram_used_mb
-                        .map(|v| format!("{v} MiB"))
-                        .unwrap_or_else(|| "N/A".to_string()),
-                );
+                // Compression mémoire (Windows) / zRAM (Linux)
+                if let Some(ratio) = vm.metrics.compression {
+                    let store_mb = ratio * vm.metrics.raw.mem_total_mb as f64;
+                    let saved_mb = store_mb * 1.5; // ~2.5x typique Windows/zram
+                    row(
+                        &mut columns[0],
+                        "Store compressé",
+                        format!("{:.0} MiB ({:.1}% RAM)", store_mb, ratio * 100.0),
+                    );
+                    row(
+                        &mut columns[0],
+                        "RAM économisée ~",
+                        format!("{:.0} MiB évités en swap", saved_mb),
+                    );
+                } else {
+                    row(&mut columns[0], "Compression", "N/A".to_string());
+                }
+                // Swap / pagefile
+                {
+                    let swap_used = vm.metrics.raw.swap_used_mb;
+                    let swap_total = vm.metrics.raw.swap_total_mb;
+                    let label = if swap_used == 0 {
+                        "inactif".to_string()
+                    } else {
+                        format!("{} / {} MiB", swap_used, swap_total)
+                    };
+                    row(&mut columns[0], "Swap/Pagefile", label);
+                }
+                // zRAM Linux
+                if let Some(z) = vm.metrics.raw.zram_used_mb {
+                    row(&mut columns[0], "zRAM", format!("{z} MiB"));
+                }
                 // PSI — Linux only
                 if vm.metrics.raw.psi_cpu.is_some() || vm.metrics.raw.psi_mem.is_some() {
                     columns[0].label(format!(
@@ -570,16 +584,44 @@ impl LiteApp {
 
                 // ── Compression mémoire ───────────────────────────────────
                 if let Some(ratio) = vm.metrics.compression {
+                    let store_mb = ratio * vm.metrics.raw.mem_total_mb as f64;
+                    let saved_mb = store_mb * 1.5; // ratio typique ~2.5x → économie = store * 1.5
+                    let swap_used = vm.metrics.raw.swap_used_mb;
+                    let faults = vm.metrics.raw.page_faults_per_sec.unwrap_or(0.0);
+
+                    // Verdict : swap inactif + faults faibles = compression efficace
+                    let (verdict_text, verdict_color) = if swap_used == 0 && faults < 500.0 {
+                        ("bénéfique", egui::Color32::from_rgb(80, 180, 100))
+                    } else if swap_used > 0 {
+                        ("swap actif — pression élevée", egui::Color32::from_rgb(220, 120, 50))
+                    } else {
+                        ("active", egui::Color32::GRAY)
+                    };
+
                     Self::metric_badge(
                         ui,
                         "Compression mém.",
-                        format!("{:.1}%  (ratio {:.3})", ratio * 100.0, ratio),
-                        if ratio > 0.15 {
-                            egui::Color32::from_rgb(96, 168, 104)
-                        } else {
-                            egui::Color32::GRAY
-                        },
+                        format!(
+                            "store {:.0} MiB · ~{:.0} MiB économisés · {}",
+                            store_mb, saved_mb, verdict_text
+                        ),
+                        verdict_color,
                     );
+
+                    // Swap / pagefile
+                    let swap_label = if swap_used == 0 {
+                        egui::RichText::new("Swap/Pagefile  inactif")
+                            .color(egui::Color32::from_rgb(80, 180, 100))
+                            .small()
+                    } else {
+                        egui::RichText::new(format!(
+                            "Swap/Pagefile  {} MiB utilisé / {} MiB total",
+                            swap_used, vm.metrics.raw.swap_total_mb
+                        ))
+                        .color(egui::Color32::from_rgb(220, 120, 50))
+                        .small()
+                    };
+                    ui.label(swap_label);
                 }
 
             });
@@ -1791,6 +1833,31 @@ impl LiteApp {
                     .small()
                     .color(egui::Color32::DARK_GRAY),
             );
+            ui.label(
+                egui::RichText::new(format!(
+                    "Journal time-series auto  .jsonl -> rotation gzip à partir de {:.0} MiB  .gz conservés: 8",
+                    crate::export::observability_rotation_bytes() as f64 / (1024.0 * 1024.0)
+                ))
+                .small()
+                .color(egui::Color32::GRAY),
+            );
+            if cfg!(target_os = "windows") {
+                ui.label(
+                    egui::RichText::new(
+                        "Windows  AppData/Roaming/SoulKernel/telemetry/observability_samples.jsonl",
+                    )
+                    .small()
+                    .color(egui::Color32::GRAY),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(
+                        "Linux/macOS  XDG_DATA_HOME ou ~/.local/share/SoulKernel/telemetry/observability_samples.jsonl",
+                    )
+                    .small()
+                    .color(egui::Color32::GRAY),
+                );
+            }
         });
     }
 
