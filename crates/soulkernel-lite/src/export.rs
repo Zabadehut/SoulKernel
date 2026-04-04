@@ -2,7 +2,6 @@ use crate::state::LiteViewModel;
 use chrono::{Local, TimeZone, Utc};
 use rfd::FileDialog;
 use serde::Serialize;
-use soulkernel_core::audit::now_ms_local;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -974,8 +973,8 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
         period: Some("live"),
         period_label: Some("instant"),
         report: LiteReport {
-            exported_at: format_iso_timestamp(now_ms_local()),
-            exported_at_ms: now_ms_local(),
+            exported_at: format_iso_timestamp(vm.now_ms),
+            exported_at_ms: vm.now_ms,
             workload: &vm.selected_workload,
             dome_active: vm.dome_active,
             soulram_active: vm.soulram_active,

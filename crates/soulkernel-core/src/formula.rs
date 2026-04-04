@@ -337,8 +337,18 @@ fn advanced_guard(state: &ResourceState, profile: &WorkloadProfile) -> f64 {
         })
         .map(|w| ((w - 60.0) / 120.0).clamp(0.0, 1.0))
         .unwrap_or(0.0);
+    let faults_pressure = state
+        .raw
+        .page_faults_per_sec
+        .map(|pf| (pf / 20_000.0).clamp(0.0, 1.0))
+        .unwrap_or(0.0);
 
-    (1.0 - 0.30 * cpu_hot - 0.25 * gpu_hot - 0.18 * phase_penalty - 0.12 * power_pressure)
+    (1.0
+        - 0.30 * cpu_hot
+        - 0.25 * gpu_hot
+        - 0.18 * phase_penalty
+        - 0.12 * power_pressure
+        - 0.20 * faults_pressure)
         .clamp(0.45, 1.0)
 }
 

@@ -283,6 +283,9 @@ impl DeviceProfile {
             "winlogon", "smss", "services", "lsass", "lsaiso", "fontdrvhost", "sihost",
             "ntoskrnl", "idle", "kthreadd", "kworker", "ksoftirqd", "rcu_sched",
             "migration", "launchd", "kernel_task", "runtimebroker", "backgroundtaskhost",
+            // Windows shell / indexing / host UI: never target with the dome.
+            "startmenuexperiencehost", "searchprotocolhost", "shellexperiencehost",
+            "searchhost", "textinputhost", "lockapp", "widgetboard", "widgetservice",
         ]
     }
 
