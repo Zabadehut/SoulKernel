@@ -639,11 +639,22 @@ impl LiteState {
         });
         self.vm.telemetry = self.telemetry_state.summary(self.vm.now_ms);
         self.vm.target_pid = if self.vm.auto_target {
+            // Cible automatique : premier processus utile (non overhead, non système, non self).
+            // classify_by_name exclut antivirus, browser background, kernel threads.
             self.vm
                 .process_report
                 .top_processes
                 .iter()
-                .find(|p| !p.is_self_process && !p.is_embedded_webview)
+                .find(|p| {
+                    if p.is_self_process || p.is_embedded_webview {
+                        return false;
+                    }
+                    match soulkernel_core::kpi::classify_by_name(&self.vm.device_profile, &p.name) {
+                        Some(soulkernel_core::kpi::ProcessClass::SystemKernel) => false,
+                        Some(c) if c.is_overhead() => false,
+                        _ => true,
+                    }
+                })
                 .map(|p| p.pid)
         } else {
             self.vm.manual_target_pid

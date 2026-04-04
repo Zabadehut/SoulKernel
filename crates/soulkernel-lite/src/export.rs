@@ -210,7 +210,17 @@ struct ProcessImpactExport {
     grouped_processes: Vec<ProcessImpactGroupExport>,
     top_process_rows: Vec<ProcessImpactRowExport>,
     top_contributors: Vec<ProcessImpactGroupExport>,
+    /// SoulKernel lui-même — exclu du pool d'attribution pour ne pas biaiser les autres.
+    monitoring_overhead: MonitoringOverheadExport,
     attribution_notice: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+struct MonitoringOverheadExport {
+    cpu_pct: f64,
+    memory_mib: f64,
+    note: &'static str,
 }
 
 #[derive(Serialize)]
@@ -750,24 +760,32 @@ fn build_process_impact_export(vm: &LiteViewModel) -> ProcessImpactExport {
         } else {
             None
         });
-    let cpu_sum = processes
+
+    // Exclude SoulKernel itself and its embedded WebView from the attribution pool.
+    // They are monitoring overhead — including them distorts every other process's share.
+    let user_processes: Vec<_> = processes
+        .iter()
+        .filter(|p| !p.is_self_process && !p.is_embedded_webview)
+        .collect();
+
+    let cpu_sum = user_processes
         .iter()
         .map(|p| p.cpu_usage_pct.max(0.0))
         .sum::<f64>()
         .max(0.0001);
-    let mem_sum = processes
+    let mem_sum = user_processes
         .iter()
         .map(|p| p.memory_kb as f64)
         .sum::<f64>()
         .max(0.0001);
-    let io_sum = processes
+    let io_sum = user_processes
         .iter()
         .map(|p| p.disk_read_bytes.saturating_add(p.disk_written_bytes) as f64)
         .sum::<f64>()
         .max(0.0001);
 
     let mut impacts = Vec::new();
-    for proc_ in processes {
+    for proc_ in &user_processes {
         let cpu_share = (proc_.cpu_usage_pct.max(0.0) / cpu_sum) * 100.0;
         let mem_share = (proc_.memory_kb as f64 / mem_sum) * 100.0;
         let io_share = (proc_
@@ -785,7 +803,7 @@ fn build_process_impact_export(vm: &LiteViewModel) -> ProcessImpactExport {
         .sum::<f64>()
         .max(0.0001);
 
-    let top_process_rows = processes
+    let top_process_rows = user_processes
         .iter()
         .map(|proc_| {
             let (_, impact_pct, power_w) = impacts
@@ -831,7 +849,7 @@ fn build_process_impact_export(vm: &LiteViewModel) -> ProcessImpactExport {
         .collect::<Vec<_>>();
 
     let mut grouped = BTreeMap::<String, ProcessImpactGroupExport>::new();
-    for proc_ in processes {
+    for proc_ in &user_processes {
         let key = proc_.name.trim().to_lowercase();
         let (_, impact_pct, power_w) = impacts
             .iter()
@@ -914,6 +932,23 @@ fn build_process_impact_export(vm: &LiteViewModel) -> ProcessImpactExport {
         grouped_processes,
         top_process_rows,
         top_contributors,
+        monitoring_overhead: {
+            let self_cpu = processes
+                .iter()
+                .filter(|p| p.is_self_process || p.is_embedded_webview)
+                .map(|p| p.cpu_usage_pct)
+                .sum::<f64>();
+            let self_mem_mib = processes
+                .iter()
+                .filter(|p| p.is_self_process || p.is_embedded_webview)
+                .map(|p| p.memory_kb as f64 / 1024.0)
+                .sum::<f64>();
+            MonitoringOverheadExport {
+                cpu_pct: self_cpu,
+                memory_mib: self_mem_mib,
+                note: "SoulKernel exclu du pool d'attribution — overhead de monitoring, pas un processus utilisateur.",
+            }
+        },
         attribution_notice: "CPU, RAM et I/O par processus sont observés. impact_score_pct_estimated et estimated_power_w restent des attributions estimées, pas une mesure énergétique directe par processus.",
     }
 }
