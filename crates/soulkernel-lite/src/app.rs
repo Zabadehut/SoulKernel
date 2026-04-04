@@ -1786,6 +1786,11 @@ impl LiteApp {
                     .small()
                     .color(egui::Color32::DARK_GRAY),
             );
+            ui.label(
+                egui::RichText::new(format!("Observabilité  {}", state.vm.observability_path))
+                    .small()
+                    .color(egui::Color32::DARK_GRAY),
+            );
         });
     }
 

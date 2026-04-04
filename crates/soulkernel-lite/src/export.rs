@@ -5,6 +5,8 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
+use std::path::PathBuf;
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -364,6 +366,38 @@ struct LiteJsonExport<'a> {
     external_power: ExternalPowerExport<'a>,
     strict_evidence: StrictEvidenceExport<'a>,
     process_impact_report: ProcessImpactExport,
+}
+
+pub fn default_observability_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("SoulKernel")
+            .join("telemetry")
+            .join("observability_samples.jsonl");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+            return PathBuf::from(xdg)
+                .join("SoulKernel")
+                .join("telemetry")
+                .join("observability_samples.jsonl");
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("SoulKernel")
+                .join("telemetry")
+                .join("observability_samples.jsonl");
+        }
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("soulkernel_observability_samples.jsonl")
 }
 
 fn format_watts(value: Option<f64>) -> String {
@@ -952,12 +986,92 @@ fn build_process_impact_export(vm: &LiteViewModel) -> ProcessImpactExport {
     }
 }
 
-pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
-    let path = FileDialog::new()
-        .set_file_name("soulkernel-lite-export.json")
-        .save_file()
-        .ok_or_else(|| "export annulé".to_string())?;
+fn build_external_config_export<'a>(vm: &'a LiteViewModel) -> ExternalConfigExport<'a> {
+    ExternalConfigExport {
+        enabled: vm.external_config.enabled,
+        power_file: vm.external_config.power_file.as_deref(),
+        max_age_ms: vm.external_config.max_age_ms,
+        meross_email: vm.external_config.meross_email.as_deref(),
+        meross_region: vm.external_config.meross_region.as_deref(),
+        meross_device_type: vm.external_config.meross_device_type.as_deref(),
+        meross_http_proxy: vm.external_config.meross_http_proxy.as_deref(),
+        mfa_present: vm
+            .external_config
+            .meross_mfa_code
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false),
+        python_bin: vm.external_config.python_bin.as_deref(),
+        bridge_interval_s: vm.external_config.bridge_interval_s,
+        autostart_bridge: vm.external_config.autostart_bridge,
+    }
+}
 
+fn build_power_comparison_export(vm: &LiteViewModel) -> PowerComparisonExport {
+    let host = vm.metrics.raw.host_power_watts;
+    let wall = vm.metrics.raw.wall_power_watts.or_else(|| {
+        if vm.external_status.is_fresh {
+            vm.external_status.last_watts
+        } else {
+            None
+        }
+    });
+    let host_of_wall_pct = match (host, wall) {
+        (Some(h), Some(w)) if w > 0.0 => Some((h / w * 100.0).clamp(0.0, 100.0)),
+        _ => None,
+    };
+    let unattributed_w = match (host, wall) {
+        (Some(h), Some(w)) => Some((w - h).max(0.0)),
+        _ => None,
+    };
+    let confidence = if wall.is_some() && host.is_some() {
+        if vm.external_status.is_fresh {
+            "bonne"
+        } else {
+            "à rafraîchir"
+        }
+    } else if wall.is_some() && host.is_none() {
+        "mur seul"
+    } else if host.is_some() && wall.is_none() {
+        "hôte seul"
+    } else {
+        "faible"
+    };
+    PowerComparisonExport {
+        host_power_w: host,
+        wall_power_w: wall,
+        host_of_wall_pct,
+        unattributed_w,
+        confidence,
+        host_sensor_available: host.is_some(),
+        wall_sensor_available: wall.is_some(),
+    }
+}
+
+fn build_kpi_export(vm: &LiteViewModel) -> KpiExport {
+    let k = &vm.kpi;
+    KpiExport {
+        kpi_basic_w_per_pct: k.kpi_basic,
+        kpi_penalized_w_per_pct: k.kpi_penalized,
+        objective_j: k.objective_j,
+        label: k.label.as_str(),
+        cpu_total_pct: k.cpu_total_pct,
+        cpu_useful_pct: k.cpu_useful_pct,
+        cpu_overhead_pct: k.cpu_overhead_pct,
+        cpu_system_pct: k.cpu_system_pct,
+        cpu_self_pct: k.cpu_self_pct,
+        self_overload: k.self_overload,
+        trend: k.trend,
+        reward_ratio: vm.kpi_memory.reward_ratio(),
+    }
+}
+
+fn build_payload<'a>(
+    vm: &'a LiteViewModel,
+    report_type: &'static str,
+    period: Option<&'static str>,
+    period_label: Option<&'static str>,
+) -> LiteJsonExport<'a> {
     let raw_host_metrics = build_raw_host_metrics_export(vm);
     let external_power = build_external_power_export(vm);
     let strict_evidence = build_strict_evidence_export(
@@ -967,11 +1081,11 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
     );
     let process_impact_report = build_process_impact_export(vm);
 
-    let payload = LiteJsonExport {
+    LiteJsonExport {
         product: "SoulKernel",
-        report_type: "session_report",
-        period: Some("live"),
-        period_label: Some("instant"),
+        report_type,
+        period,
+        period_label,
         report: LiteReport {
             exported_at: format_iso_timestamp(vm.now_ms),
             exported_at_ms: vm.now_ms,
@@ -992,24 +1106,7 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
             telemetry: &vm.telemetry,
             processes: &vm.process_report,
             device_inventory: &vm.device_inventory,
-            external_config: ExternalConfigExport {
-                enabled: vm.external_config.enabled,
-                power_file: vm.external_config.power_file.as_deref(),
-                max_age_ms: vm.external_config.max_age_ms,
-                meross_email: vm.external_config.meross_email.as_deref(),
-                meross_region: vm.external_config.meross_region.as_deref(),
-                meross_device_type: vm.external_config.meross_device_type.as_deref(),
-                meross_http_proxy: vm.external_config.meross_http_proxy.as_deref(),
-                mfa_present: vm
-                    .external_config
-                    .meross_mfa_code
-                    .as_deref()
-                    .map(|s| !s.trim().is_empty())
-                    .unwrap_or(false),
-                python_bin: vm.external_config.python_bin.as_deref(),
-                bridge_interval_s: vm.external_config.bridge_interval_s,
-                autostart_bridge: vm.external_config.autostart_bridge,
-            },
+            external_config: build_external_config_export(vm),
             external_status: &vm.external_status,
             external_bridge_running: vm.external_bridge_running,
             external_bridge_detail: &vm.external_bridge_detail,
@@ -1018,70 +1115,40 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
             audit_path: &vm.audit_path,
             last_actions: &vm.last_actions,
         },
-        power_comparison: {
-            let host = vm.metrics.raw.host_power_watts;
-            let wall = vm.metrics.raw.wall_power_watts.or_else(|| {
-                if vm.external_status.is_fresh {
-                    vm.external_status.last_watts
-                } else {
-                    None
-                }
-            });
-            let host_of_wall_pct = match (host, wall) {
-                (Some(h), Some(w)) if w > 0.0 => Some((h / w * 100.0).clamp(0.0, 100.0)),
-                _ => None,
-            };
-            let unattributed_w = match (host, wall) {
-                (Some(h), Some(w)) => Some((w - h).max(0.0)),
-                _ => None,
-            };
-            let confidence = if wall.is_some() && host.is_some() {
-                if vm.external_status.is_fresh {
-                    "bonne"
-                } else {
-                    "à rafraîchir"
-                }
-            } else if wall.is_some() && host.is_none() {
-                "mur seul"
-            } else if host.is_some() && wall.is_none() {
-                "hôte seul"
-            } else {
-                "faible"
-            };
-            PowerComparisonExport {
-                host_power_w: host,
-                wall_power_w: wall,
-                host_of_wall_pct,
-                unattributed_w,
-                confidence,
-                host_sensor_available: host.is_some(),
-                wall_sensor_available: wall.is_some(),
-            }
-        },
-        kpi: {
-            let k = &vm.kpi;
-            KpiExport {
-                kpi_basic_w_per_pct: k.kpi_basic,
-                kpi_penalized_w_per_pct: k.kpi_penalized,
-                objective_j: k.objective_j,
-                label: k.label.as_str(),
-                cpu_total_pct: k.cpu_total_pct,
-                cpu_useful_pct: k.cpu_useful_pct,
-                cpu_overhead_pct: k.cpu_overhead_pct,
-                cpu_system_pct: k.cpu_system_pct,
-                cpu_self_pct: k.cpu_self_pct,
-                self_overload: k.self_overload,
-                trend: k.trend,
-                reward_ratio: vm.kpi_memory.reward_ratio(),
-            }
-        },
+        power_comparison: build_power_comparison_export(vm),
+        kpi: build_kpi_export(vm),
         raw_host_metrics,
         external_power,
         strict_evidence,
         process_impact_report,
-    };
+    }
+}
+
+pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
+    let path = FileDialog::new()
+        .set_file_name("soulkernel-lite-export.json")
+        .save_file()
+        .ok_or_else(|| "export annulé".to_string())?;
+
+    let payload = build_payload(vm, "session_report", Some("live"), Some("instant"));
 
     let bytes = serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string())?;
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+pub fn append_observability_sample(vm: &LiteViewModel) -> Result<String, String> {
+    let path = default_observability_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let payload = build_payload(vm, "observability_sample", Some("timeseries"), Some("tick"));
+    let line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "{line}").map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }

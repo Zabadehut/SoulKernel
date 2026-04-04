@@ -158,6 +158,7 @@ pub struct LiteViewModel {
     pub auto_target: bool,
     pub manual_target_pid: Option<u32>,
     pub audit_path: String,
+    pub observability_path: String,
     pub last_actions: Vec<String>,
     pub external_config: MerossFileConfig,
     pub external_status: ExternalPowerStatus,
@@ -335,6 +336,9 @@ impl LiteState {
                 auto_target: true,
                 manual_target_pid: None,
                 audit_path: default_audit_path().to_string_lossy().into_owned(),
+                observability_path: crate::export::default_observability_path()
+                    .to_string_lossy()
+                    .into_owned(),
                 last_actions: Vec::new(),
                 external_config,
                 external_status,
@@ -723,6 +727,10 @@ impl LiteState {
                     );
                 }
             }
+        }
+
+        if let Ok(path) = crate::export::append_observability_sample(&self.vm) {
+            self.vm.observability_path = path;
         }
 
         Ok(())
