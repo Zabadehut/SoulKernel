@@ -96,13 +96,11 @@ pub struct KpiSnapshot {
 }
 
 impl KpiSnapshot {
-    /// Vrai si le KPI se dégrade (ou est déjà inefficace) et mérite une action.
-    pub fn should_act_with_profile(&self, profile: &DeviceProfile) -> bool {
+    /// Vrai si le KPI est inefficace et mérite une action.
+    /// Note: on n'agit PAS sur le trend seul (ex: MODÉRÉ + trend montant) pour éviter
+    /// la boucle dome → page faults → rollback → repeat.
+    pub fn should_act_with_profile(&self, _profile: &DeviceProfile) -> bool {
         matches!(self.label, KpiLabel::Inefficient)
-            || self
-                .trend
-                .map(|d| d > profile.kpi_trend_degrade_threshold)
-                .unwrap_or(false)
     }
 }
 

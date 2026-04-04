@@ -434,10 +434,18 @@ impl LiteState {
             return;
         }
 
-        // Cooldown cleared — only fire when the machine is under meaningful load
-        // (sigma > 0.3) to avoid pointless churn at idle.
-        if sigma < self.vm.device_profile.soulram_idle_sigma_min {
-            self.vm.next_cycle_in_s = None; // "idle, aucun cycle nécessaire"
+        // Cooldown cleared — only fire when the machine is under meaningful load.
+        // sigma seul est insuffisant quand la pression mémoire est "basse" mais que
+        // la machine consomme 147W/29% CPU (cas observé en prod). On accepte aussi
+        // cpu_pct > 5% ou power > 20W comme preuve d'activité réelle.
+        let power_w = self.vm.metrics.raw.host_power_watts
+            .or(self.vm.metrics.raw.wall_power_watts)
+            .unwrap_or(0.0);
+        let machine_active = sigma >= self.vm.device_profile.soulram_idle_sigma_min
+            || self.vm.metrics.raw.cpu_pct > 5.0
+            || power_w > 20.0;
+        if !machine_active {
+            self.vm.next_cycle_in_s = None; // machine vraiment idle
             return;
         }
 
@@ -485,8 +493,22 @@ impl LiteState {
 
         if !self.vm.dome_active {
             // ── Activation ───────────────────────────────────────────────────
-            // Conditions : KPI dégradé (Inefficace ou tendance montante) + garde ouverte.
-            if kpi.should_act_with_profile(&self.vm.device_profile) && guard_ok {
+            // Conditions : KPI Inefficace + garde ouverte + au moins un processus
+            // utile (non-overhead, non-kernel) avec CPU ≥ cpu_useful_min_pct.
+            // Sans cible utile, le dôme ne sert à rien (ex: cibler MSIAfterburner à 3%).
+            let has_useful_target = self.vm.process_report.top_processes.iter().any(|p| {
+                !p.is_self_process
+                    && !p.is_embedded_webview
+                    && matches!(
+                        soulkernel_core::kpi::classify_by_name(
+                            &self.vm.device_profile,
+                            &p.name,
+                        ),
+                        None
+                    )
+                    && p.cpu_usage_pct >= self.vm.device_profile.cpu_useful_min_pct
+            });
+            if kpi.should_act_with_profile(&self.vm.device_profile) && guard_ok && has_useful_target {
                 let _ = self.activate_dome(); // erreurs non fatales en auto
             }
         } else {
