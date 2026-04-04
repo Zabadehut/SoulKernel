@@ -184,7 +184,7 @@
     </div>
     <div class="ptabs" id="ptabs"></div>
     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">➕ Rapport</button>
-    <input type="file" id="fileInput" accept=".json,.jsonl" multiple />
+    <input type="file" id="fileInput" accept=".json,.jsonl,.gz,.jsonl.gz" multiple />
   </div>
 </header>
 <main>
@@ -196,6 +196,7 @@
       <div class="dz-fmts">
         <span class="fmt">export.json</span>
         <span class="fmt">observability.jsonl</span>
+        <span class="fmt">observability-*.jsonl.gz</span>
         <span class="fmt">strict_evidence</span>
         <span class="fmt">process_impact</span>
       </div>
@@ -324,6 +325,27 @@ function getSeriesLabel(d){const samples=getSamples(d);if(!samples.length)return
   return `${samples.length.toLocaleString('fr-FR')} ticks · ${formatDate(start)} → ${formatDate(end)}`;
 }
 function formatDate(v){if(v==null)return'—';if(typeof v==='number')return new Date(v).toLocaleString('fr-FR');return new Date(v).toLocaleString('fr-FR');}
+function reportFamilyKey(fileName){
+  return fileName
+    .replace(/\.jsonl\.gz$/i,'')
+    .replace(/\.jsonl$/i,'')
+    .replace(/\.json$/i,'')
+    .replace(/-\d+$/,'');
+}
+function reportDisplayName(fileName){
+  return fileName.replace(/\.(json|jsonl|jsonl\.gz|gz)$/i,'');
+}
+async function readMaybeCompressedFile(file){
+  if(!/\.gz$/i.test(file.name)){
+    return file.text();
+  }
+  if(typeof DecompressionStream!=='function'){
+    throw new Error('Ce navigateur ne supporte pas la lecture gzip locale');
+  }
+  const ds=new DecompressionStream('gzip');
+  const decompressed=file.stream().pipeThrough(ds);
+  return new Response(decompressed).text();
+}
 function parseMaybeJsonl(text){
   const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   const items=[];
@@ -347,6 +369,30 @@ function normalizeImportedData(fileName,text){
     if(!lines.length)throw jsonErr;
     return {report_type:'observability_series',period:'timeseries',period_label:'timeline',samples:lines,latest:lines[lines.length-1]};
   }
+}
+function sampleTs(sample){
+  return sample?.report?.exported_at_ms
+    ?? sample?.raw_host_metrics?.exported_at_ms
+    ?? sample?.strict_evidence?.exported_at_ms
+    ?? 0;
+}
+function mergeSeriesData(existing,incoming){
+  const merged=[...getSamples(existing),...getSamples(incoming)];
+  const byTs=new Map();
+  merged.forEach(sample=>{
+    const ts=sampleTs(sample);
+    byTs.set(ts, sample);
+  });
+  const samples=[...byTs.entries()]
+    .sort((a,b)=>a[0]-b[0])
+    .map(([,sample])=>sample);
+  return {
+    report_type:'observability_series',
+    period:'timeseries',
+    period_label:'timeline',
+    samples,
+    latest:samples[samples.length-1]||incoming.latest||existing.latest,
+  };
 }
 function normalizeProcRow(p){
   return {
@@ -416,7 +462,7 @@ function renderSparkCard(title,color,unit,points){
   return `<div class="spark-card"><div class="spark-head"><div class="spark-title">${title}</div><div class="spark-meta">${points.length.toLocaleString('fr-FR')} pts<br>dernier ${fmt(latest,2)} ${unit}</div></div>${sparklineSvg(points,color)}<div class="spark-stat"><span>Moy.</span><span>${fmt(avg,2)} ${unit}</span></div><div class="spark-stat"><span>Min / Max</span><span>${fmt(min,2)} / ${fmt(max,2)} ${unit}</span></div></div>`;
 }
 
-$('fileInput').addEventListener('change',e=>loadFiles(e.target.files));
+$('fileInput').addEventListener('change',e=>{loadFiles(e.target.files);});
 const dz=$('dropZone');
 dz.addEventListener('click',()=>$('fileInput').click());
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over');});
@@ -425,26 +471,40 @@ dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over
 document.body.addEventListener('dragover',e=>e.preventDefault());
 document.body.addEventListener('drop',e=>{e.preventDefault();if(e.dataTransfer.files.length)loadFiles(e.dataTransfer.files);});
 
-function loadFiles(files){
-  [...files].forEach(file=>{
-    const r=new FileReader();
-    r.onload=ev=>{
-      try{
-        const data=normalizeImportedData(file.name,ev.target.result);
+async function loadFiles(files){
+  for(const file of [...files]){
+    try{
+      const text=await readMaybeCompressedFile(file);
+      const data=normalizeImportedData(file.name,text);
+      const name=reportDisplayName(file.name);
+      if(data.report_type==='observability_series'){
+        const family=reportFamilyKey(file.name);
+        const existing=S.reports.find(r=>r.kind==='observability_series' && r.family===family);
+        if(existing){
+          existing.data=mergeSeriesData(existing.data,data);
+          existing.name=family;
+          S.activeId=existing.id;
+          toast(`✅ "${file.name}" fusionné dans "${family}"`);
+        }else{
+          const id=genId();
+          S.reports.push({id,name:family,data,kind:'observability_series',family});
+          S.activeId=id;
+          toast(`✅ "${file.name}" chargé`);
+        }
+      }else{
         const id=genId();
-        const name=file.name.replace(/\.(json|jsonl)$/i,'');
-        S.reports.push({id,name,data});
+        S.reports.push({id,name,data,kind:'snapshot',family:name});
         S.activeId=id;
-        const periods=getPeriods(data);
-        S.activePeriod=periods.includes(S.activePeriod)?S.activePeriod:(periods[0]||'week');
         toast(`✅ "${name}" chargé`);
-        render();
-      }catch(err){
-        toast(`❌ ${file.name}: ${err.message}`,'err');
       }
-    };
-    r.readAsText(file);
-  });
+      const active=S.reports.find(r=>r.id===S.activeId);
+      const periods=getPeriods(active?.data||data);
+      S.activePeriod=periods.includes(S.activePeriod)?S.activePeriod:(periods[0]||'week');
+      render();
+    }catch(err){
+      toast(`❌ ${file.name}: ${err.message}`,'err');
+    }
+  }
 }
 function selReport(id){S.activeId=id;const active=S.reports.find(r=>r.id===id);const periods=getPeriods(active?.data||{});S.activePeriod=periods.includes(S.activePeriod)?S.activePeriod:(periods[0]||'week');render();}
 function delReport(id){S.reports=S.reports.filter(r=>r.id!==id);if(S.activeId===id)S.activeId=S.reports[0]?.id||null;render();}
@@ -646,8 +706,8 @@ function renderDiff(d){
 }
 function renderTimeline(d){
   const samples=getSamples(d);
-  $('timelineNotice').innerHTML=samples.length?`<strong>Mode timeline actif</strong> — série chargée depuis <code>observability_samples.jsonl</code>. Les graphes ci-dessous utilisent les ticks persistés par SoulKernel, pas un snapshot isolé.`:`Aucune série chargée. Importez <code>observability_samples.jsonl</code> pour afficher l’évolution CPU / RAM / watts / KPI / faults / dôme / cible.`;
-  $('timelineLegend').innerHTML=`<span class="badge b-real">🔌 Watts / énergie réelle</span><span class="badge b-measured">🔬 CPU / RAM / GPU / faults / sigma</span><span class="badge b-estimated">〜 KPI / attribution / différentiels</span>`;
+  $('timelineNotice').innerHTML=samples.length?`<strong>Mode timeline actif</strong> — série reconstruite depuis <code>observability_samples.jsonl</code> et/ou les archives <code>observability-*.jsonl.gz</code>. Les graphes ci-dessous utilisent les ticks persistés par SoulKernel, fusionnés et triés chronologiquement.`:`Aucune série chargée. Importe le fichier courant <code>observability_samples.jsonl</code> et, si rotation, les archives <code>observability-*.jsonl.gz</code> pour reconstituer l’historique complet.`;
+  $('timelineLegend').innerHTML=`<span class="badge b-real">🔌 Watts / énergie réelle</span><span class="badge b-measured">🔬 CPU / RAM / GPU / faults / sigma</span><span class="badge b-estimated">〜 KPI / attribution / différentiels</span><span class="badge b-measured">🗜 .jsonl.gz supporté</span>`;
   const stats=$('timelineStats');
   const grid=$('timelineGrid');
   stats.innerHTML='';

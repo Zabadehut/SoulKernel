@@ -1835,7 +1835,7 @@ impl LiteApp {
             );
             ui.label(
                 egui::RichText::new(format!(
-                    "Journal time-series auto  .jsonl -> rotation gzip à partir de {:.0} MiB  .gz conservés: 8",
+                    "Journal time-series auto  fichier courant .jsonl + archives .jsonl.gz  rotation à partir de {:.0} MiB  archives conservées: 8",
                     crate::export::observability_rotation_bytes() as f64 / (1024.0 * 1024.0)
                 ))
                 .small()
