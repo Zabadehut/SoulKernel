@@ -124,7 +124,7 @@ impl DeviceProfile {
             kpi_trend_degrade_threshold: 1.0,
             kpi_post_action_rollback_ratio: 1.20,
             auto_dome_cooldown_s: 30,
-            auto_dome_guard_min: 0.85,
+            auto_dome_guard_min: 0.70,
             auto_dome_rollback_trend_max: 0.0,
             auto_dome_grace_s: 90,
             auto_dome_min_hold_s: 300,

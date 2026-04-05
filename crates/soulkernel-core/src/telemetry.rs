@@ -406,7 +406,7 @@ impl TelemetrySummary {
             ));
             if let Some(saved) = session_energy_saved_kwh {
                 lines.push(format!(
-                    "Économie dôme cette session : ~{:.5} kWh (~{:.4} {}).",
+                    "Écart énergétique dôme ON vs OFF : ~{:.5} kWh (~{:.4} {}) — corrélation observée, pas causalité prouvée.",
                     saved,
                     saved * pricing.price_per_kwh,
                     pricing.currency,

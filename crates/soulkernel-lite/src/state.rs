@@ -250,7 +250,7 @@ impl LiteState {
             alpha: [0.2, 0.2, 0.2, 0.2, 0.2],
             duration_estimate_s: 60.0,
         });
-        let formula = formula::compute(&baseline, &profile, 2.0);
+        let formula = formula::compute(&baseline, &profile, 2.0, None);
         let now_ms = now_ms_local();
         let mut telemetry_state = TelemetryState::new_default();
         let _ = telemetry_state.ingest(TelemetryIngestRequest {
@@ -617,7 +617,9 @@ impl LiteState {
         refresh_inventory: bool,
     ) -> Result<LiteRefreshSnapshot, String> {
         let metrics = metrics::collect().map_err(|e| e.to_string())?;
-        let formula = formula::compute(&metrics, &profile, kappa);
+        // p_active_hint_w is not available on the background thread — formula is recomputed
+        // in apply_refresh_snapshot once the EMA has been updated. Pass None here.
+        let formula = formula::compute(&metrics, &profile, kappa, None);
         let device_inventory = refresh_inventory
             .then(|| inventory::collect_device_inventory_with_raw(Some(&metrics.raw)));
         Ok(LiteRefreshSnapshot {
@@ -635,7 +637,31 @@ impl LiteState {
     fn apply_refresh_snapshot(&mut self, snapshot: LiteRefreshSnapshot) -> Result<(), String> {
         self.vm.now_ms = snapshot.now_ms;
         self.vm.metrics = snapshot.metrics.clone();
-        self.vm.formula = snapshot.formula.clone();
+
+        // Learn p_active_hint_w via slow EMA (α=0.02) from real wall/PDH power measurements
+        // during active periods. This normalizes power_pressure in advanced_guard dynamically
+        // so the guard is relative to this machine's actual envelope, not a hardcoded 120W.
+        let is_real_wall_power = snapshot.metrics.raw.power_watts.is_some()
+            && snapshot.metrics.raw.power_watts_source.as_deref()
+                .map(|s| !s.contains("rapl") && !s.contains("pd_estimated") && !s.contains("usb_pd_measured"))
+                .unwrap_or(false);
+        if is_real_wall_power && snapshot.metrics.raw.cpu_pct > 5.0 {
+            if let Some(w) = snapshot.metrics.raw.power_watts {
+                const EMA_ALPHA: f64 = 0.02;
+                let current = self.vm.device_profile.p_active_hint_w.unwrap_or(w);
+                self.vm.device_profile.p_active_hint_w = Some(current + EMA_ALPHA * (w - current));
+            }
+        }
+
+        // Recompute formula with the updated p_active_hint_w so advanced_guard uses the
+        // machine-calibrated power envelope rather than the background thread's None value.
+        let profile = self.selected_profile();
+        self.vm.formula = formula::compute(
+            &snapshot.metrics,
+            &profile,
+            self.vm.kappa,
+            self.vm.device_profile.p_active_hint_w,
+        );
         if let Some(process_report) = snapshot.process_report {
             self.vm.process_report = process_report;
             self.last_process_refresh = Instant::now();
@@ -1120,7 +1146,7 @@ impl LiteState {
         profile: &WorkloadProfile,
     ) -> Result<BenchmarkSample, String> {
         let before = metrics::collect().map_err(|e| e.to_string())?;
-        let f_before = formula::compute(&before, profile, self.vm.kappa);
+        let f_before = formula::compute(&before, profile, self.vm.kappa, self.vm.device_profile.p_active_hint_w);
         let probe =
             if self.vm.benchmark_use_system_probe || self.vm.benchmark_command.trim().is_empty() {
                 self.runtime.block_on(benchmark::execute_system_probe(
@@ -1134,7 +1160,7 @@ impl LiteState {
                 ))?
             };
         let after = metrics::collect().map_err(|e| e.to_string())?;
-        let f_after = formula::compute(&after, profile, self.vm.kappa);
+        let f_after = formula::compute(&after, profile, self.vm.kappa, self.vm.device_profile.p_active_hint_w);
         Ok(BenchmarkSample {
             idx,
             phase,

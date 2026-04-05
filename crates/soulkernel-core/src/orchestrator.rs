@@ -35,7 +35,7 @@ pub async fn activate(
 ) -> Result<DomeResult> {
     let mut actions: Vec<String> = Vec::new();
 
-    let f = crate::formula::compute(baseline, profile, 2.0);
+    let f = crate::formula::compute(baseline, profile, 2.0, None);
 
     let results = platform::apply_dome_profile(profile, eta, baseline, policy, target_pid).await;
 

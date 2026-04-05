@@ -519,20 +519,24 @@ impl LiteApp {
         } else if real_savings {
             ui.colored_label(
                 egui::Color32::from_rgb(96, 168, 104),
-                egui::RichText::new("Économies mesurées").strong(),
+                egui::RichText::new("Données comparatives disponibles").strong(),
             );
             let body = if let (Some(saved_kwh), Some(delta_w)) =
                 (vm.telemetry.total.energy_saved_kwh, dome_delta_w)
             {
                 format!(
-                    "Dôme actif : −{:.1} W mesurés, {:.4} kWh économisés cette session.",
+                    "Moy. dôme ON vs OFF : {:.1} W d'écart ({:.4} kWh si cet écart était causal). \
+                     Corrélation observée, pas une causalité prouvée.",
                     delta_w, saved_kwh
                 )
             } else if let Some(delta_w) = dome_delta_w {
-                format!("Dôme actif : −{:.1} W mesurés (puissance moyenne).", delta_w)
+                format!(
+                    "Moy. dôme ON vs OFF : {:.1} W d'écart mesuré (corrélation, pas causalité prouvée).",
+                    delta_w
+                )
             } else {
                 format!(
-                    "Économie session : {:.4} kWh.",
+                    "Écart énergétique session : {:.4} kWh (corrélation dôme ON/OFF).",
                     vm.telemetry.total.energy_saved_kwh.unwrap_or(0.0)
                 )
             };

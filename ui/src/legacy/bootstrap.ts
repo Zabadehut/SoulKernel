@@ -3953,7 +3953,7 @@ async function buildSessionReportText() {
       lines.push('Puissance moy : dôme ON=' + f2(gainsSummary.session_dome_on_avg_power_w) + 'W | dôme OFF=' + f2(gainsSummary.session_dome_off_avg_power_w) + 'W | diff=' + f2(saved_w) + 'W');
     }
     if (gainsSummary.session_energy_saved_kwh != null) {
-      lines.push('Économie dôme session : ~' + Number(gainsSummary.session_energy_saved_kwh).toFixed(5) + ' kWh (~' + Number(gainsSummary.session_cost_saved ?? 0).toFixed(4) + ' ' + (gainsSummary.session_cost_currency || 'EUR') + ')');
+      lines.push('Écart dôme ON vs OFF : ~' + Number(gainsSummary.session_energy_saved_kwh).toFixed(5) + ' kWh (~' + Number(gainsSummary.session_cost_saved ?? 0).toFixed(4) + ' ' + (gainsSummary.session_cost_currency || 'EUR') + ') [corrélation, pas causalité prouvée]');
     }
     if (gainsSummary.has_real_power) {
       lines.push('Énergie lifetime (capteur réel) : ' + f4(gainsSummary.total_energy_kwh_lifetime) + ' kWh | ' + f4(gainsSummary.total_cost_lifetime) + ' ' + (gainsSummary.total_cost_currency || 'EUR') + ' | ' + f4(gainsSummary.total_co2_kg_lifetime) + ' kg CO₂');

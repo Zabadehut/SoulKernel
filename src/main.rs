@@ -1105,7 +1105,7 @@ fn compute_formula(
     profile: formula::WorkloadProfile,
     kappa: f64,
 ) -> formula::FormulaResult {
-    formula::compute(&state, &profile, kappa)
+    formula::compute(&state, &profile, kappa, None)
 }
 
 #[tauri::command]
@@ -1143,7 +1143,7 @@ async fn activate_dome_inner(
         .ok_or_else(|| format!("Unknown workload: {}", workload))?;
 
     let metrics = metrics::collect().map_err(|e| e.to_string())?;
-    let formula_res = formula::compute(&metrics, &profile, kappa);
+    let formula_res = formula::compute(&metrics, &profile, kappa, None);
 
     if metrics.sigma >= sigma_max {
         return Ok(orchestrator::DomeResult {
@@ -1549,10 +1549,10 @@ async fn run_ab_benchmark(
                 gpu_temp_after_c: after.as_ref().and_then(|m| m.raw.gpu_temp_c),
                 sigma_effective_before: before
                     .as_ref()
-                    .map(|m| formula::compute(m, &bench_profile, request.kappa).sigma_effective),
+                    .map(|m| formula::compute(m, &bench_profile, request.kappa, None).sigma_effective),
                 sigma_effective_after: after
                     .as_ref()
-                    .map(|m| formula::compute(m, &bench_profile, request.kappa).sigma_effective),
+                    .map(|m| formula::compute(m, &bench_profile, request.kappa, None).sigma_effective),
                 stdout_tail: probe.stdout_tail.clone(),
                 stderr_tail: probe.stderr_tail.clone(),
             });

@@ -132,7 +132,12 @@ const DELTA: [f64; 5] = [0.90, 0.85, 0.95, 0.80, 0.70];
 
 // ─── Core computation ─────────────────────────────────────────────────────────
 
-pub fn compute(state: &ResourceState, profile: &WorkloadProfile, kappa: f64) -> FormulaResult {
+pub fn compute(
+    state: &ResourceState,
+    profile: &WorkloadProfile,
+    kappa: f64,
+    p_active_hint_w: Option<f64>,
+) -> FormulaResult {
     let r = resource_vec(state);
     let alpha = profile.alpha;
     let eps = state.epsilon;
@@ -149,7 +154,7 @@ pub fn compute(state: &ResourceState, profile: &WorkloadProfile, kappa: f64) -> 
         .zip(eps.iter())
         .map(|(a, e)| (1.0_f64 - e).max(0.0).powf(*a))
         .product();
-    let advanced_guard = advanced_guard(state, profile);
+    let advanced_guard = advanced_guard(state, profile, p_active_hint_w);
     let friction = (friction_base * advanced_guard).clamp(0.0, 1.0);
 
     // ── Stability brake: e^{−κΣ(t)} ─────────────────────────────────────────
@@ -296,7 +301,7 @@ fn advanced_opportunity(state: &ResourceState, profile: &WorkloadProfile) -> f64
     (0.85 + 0.40 * headroom_mix - 0.20 * ui_penalty).clamp(0.70, 1.35)
 }
 
-fn advanced_guard(state: &ResourceState, profile: &WorkloadProfile) -> f64 {
+fn advanced_guard(state: &ResourceState, profile: &WorkloadProfile, p_active_hint_w: Option<f64>) -> f64 {
     let cpu_hot = state
         .raw
         .cpu_temp_c
@@ -320,6 +325,9 @@ fn advanced_guard(state: &ResourceState, profile: &WorkloadProfile) -> f64 {
         (profile.alpha[4] * gpu_vram_pressure + profile.alpha[0] * load_pressure).clamp(0.0, 1.0);
 
     // Total machine power pressure — only fires for real wall/PDH measurements (not RAPL/estimated partials).
+    // Normalized against p_active_hint_w if known (learned from telemetry EMA), otherwise
+    // falls back to a generic 120W reference. Pressure = 0 at or below the reference,
+    // scaling to 1.0 when power is double the reference.
     let power_pressure = state
         .raw
         .power_watts
@@ -335,7 +343,10 @@ fn advanced_guard(state: &ResourceState, profile: &WorkloadProfile) -> f64 {
                 })
                 .unwrap_or(false)
         })
-        .map(|w| ((w - 60.0) / 120.0).clamp(0.0, 1.0))
+        .map(|w| {
+            let p_ref = p_active_hint_w.unwrap_or(120.0).max(20.0);
+            ((w - p_ref) / p_ref).clamp(0.0, 1.0)
+        })
         .unwrap_or(0.0);
     let faults_pressure = state
         .raw
@@ -436,7 +447,7 @@ mod tests {
     fn pi_is_in_unit_range() {
         for profile in WorkloadProfile::all() {
             let state = mock_state(0.5, 0.7, 0.3);
-            let result = compute(&state, &profile, 2.0);
+            let result = compute(&state, &profile, 2.0, None);
             assert!(result.pi >= 0.0, "π must be ≥ 0 for {}", profile.name);
             assert!(result.pi <= 1.0, "π must be ≤ 1 for {}", profile.name);
         }
@@ -446,15 +457,15 @@ mod tests {
     fn friction_is_in_unit_range() {
         let state = mock_state(0.5, 0.7, 0.3);
         let profile = WorkloadProfile::from_name("es").unwrap();
-        let result = compute(&state, &profile, 2.0);
+        let result = compute(&state, &profile, 2.0, None);
         assert!(result.friction >= 0.0 && result.friction <= 1.0);
     }
 
     #[test]
     fn brake_decreases_with_sigma() {
         let profile = WorkloadProfile::from_name("compile").unwrap();
-        let r_low = compute(&mock_state(0.3, 0.8, 0.1), &profile, 2.0);
-        let r_high = compute(&mock_state(0.3, 0.8, 0.9), &profile, 2.0);
+        let r_low = compute(&mock_state(0.3, 0.8, 0.1), &profile, 2.0, None);
+        let r_high = compute(&mock_state(0.3, 0.8, 0.9), &profile, 2.0, None);
         assert!(
             r_low.brake > r_high.brake,
             "brake must decrease as sigma increases"
@@ -474,8 +485,8 @@ mod tests {
             alpha: [0.2, 0.35, 0.2, 0.25, 0.0],
             duration_estimate_s: 300.0,
         };
-        let r_short = compute(&state, &short, 2.0);
-        let r_long = compute(&state, &long, 2.0);
+        let r_short = compute(&state, &short, 2.0, None);
+        let r_long = compute(&state, &long, 2.0, None);
         assert!(r_long.dome_gain > r_short.dome_gain);
     }
 
@@ -483,7 +494,7 @@ mod tests {
     fn b_idle_positive_when_resources_available() {
         let state = mock_state(0.3, 0.8, 0.2);
         let profile = WorkloadProfile::from_name("es").unwrap();
-        let result = compute(&state, &profile, 2.0);
+        let result = compute(&state, &profile, 2.0, None);
         assert!(
             result.b_idle > 0.0,
             "B_idle must be positive with available resources"
@@ -520,7 +531,7 @@ mod tests {
     fn zero_kappa_means_no_brake() {
         let state = mock_state(0.5, 0.7, 0.5);
         let profile = WorkloadProfile::from_name("es").unwrap();
-        let result = compute(&state, &profile, 0.0);
+        let result = compute(&state, &profile, 0.0, None);
         assert!(
             (result.brake - 1.0).abs() < 1e-10,
             "brake must be 1.0 when κ=0"
@@ -531,7 +542,7 @@ mod tests {
     fn dimension_weights_consistent() {
         let state = mock_state(0.5, 0.7, 0.3);
         let profile = WorkloadProfile::from_name("gamer").unwrap();
-        let result = compute(&state, &profile, 2.0);
+        let result = compute(&state, &profile, 2.0, None);
         for (i, dw) in result.dimension_weights.iter().enumerate() {
             assert!(*dw >= 0.0, "dimension_weight[{}] must be ≥ 0", i);
         }

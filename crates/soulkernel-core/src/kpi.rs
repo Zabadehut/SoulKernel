@@ -96,11 +96,12 @@ pub struct KpiSnapshot {
 }
 
 impl KpiSnapshot {
-    /// Vrai si le KPI est inefficace et mérite une action.
-    /// Note: on n'agit PAS sur le trend seul (ex: MODÉRÉ + trend montant) pour éviter
-    /// la boucle dome → page faults → rollback → repeat.
+    /// Vrai si le KPI justifie une action (Moderate ou Inefficient).
+    /// Activer uniquement sur Inefficient était trop restrictif : une machine à 130 W / 35 % CPU
+    /// tourne typiquement en Moderate (KPI 5–12) et ne passait jamais en Inefficient (> 12).
+    /// Le ping-pong est contrôlé par min_hold_s et grace_s dans tick_auto_dome, pas ici.
     pub fn should_act_with_profile(&self, _profile: &DeviceProfile) -> bool {
-        matches!(self.label, KpiLabel::Inefficient)
+        matches!(self.label, KpiLabel::Inefficient | KpiLabel::Moderate)
     }
 }
 
