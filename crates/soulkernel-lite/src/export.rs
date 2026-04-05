@@ -173,6 +173,9 @@ struct PeriodWindows {
     year_kwh: f64,
 }
 
+// GainsSummary est défini dans soulkernel-core::telemetry — type unique partagé
+// entre soulkernel-lite et le backend Tauri.
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 struct MeasuredDifferentials<'a> {
@@ -363,6 +366,8 @@ struct LiteJsonExport<'a> {
     report_type: &'static str,
     period: Option<&'static str>,
     period_label: Option<&'static str>,
+    /// Synthèse des gains — premier champ pour une lecture immédiate.
+    gains_summary: soulkernel_core::telemetry::GainsSummary,
     report: LiteReport<'a>,
     power_comparison: PowerComparisonExport,
     kpi: KpiExport,
@@ -1133,6 +1138,15 @@ fn build_kpi_export(vm: &LiteViewModel) -> KpiExport {
     }
 }
 
+fn build_gains_summary_export(vm: &LiteViewModel) -> soulkernel_core::telemetry::GainsSummary {
+    // Délègue vers la logique partagée dans soulkernel-core.
+    // soulkernel-lite fournit les données kpi_memory (non disponibles côté Tauri).
+    vm.telemetry.to_gains_summary(
+        vm.kpi_memory.reward_ratio() * 100.0,
+        vm.kpi_memory.avg_kpi_gain(),
+    )
+}
+
 fn build_payload<'a>(
     vm: &'a LiteViewModel,
     report_type: &'static str,
@@ -1153,6 +1167,7 @@ fn build_payload<'a>(
         report_type,
         period,
         period_label,
+        gains_summary: build_gains_summary_export(vm),
         report: LiteReport {
             exported_at: format_iso_timestamp(vm.now_ms),
             exported_at_ms: vm.now_ms,

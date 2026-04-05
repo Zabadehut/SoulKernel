@@ -938,6 +938,204 @@ impl LiteApp {
         });
     }
 
+    fn gains_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
+        let lt = &vm.telemetry.lifetime;
+        let mem = &vm.kpi_memory;
+
+        ui.group(|ui| {
+            Self::section_title(
+                ui,
+                "Gains SoulKernel",
+                "Ce que l'application a concretement fait pour toi depuis le premier lancement.",
+            );
+
+            // ── Ancienneté ────────────────────────────────────────────────────
+            if lt.first_launch_ts > 0 {
+                let age_h = lt.total_samples as f64 * vm.telemetry.total.avg_power_w
+                    .map(|_| 1.0).unwrap_or(1.0); // just for age display
+                // Use total_samples * refresh_interval to estimate age
+                // refresh ~5s → total_idle_hours + total_dome_hours + reste
+                let monitored_h = lt.total_idle_hours + lt.total_dome_hours + lt.soulram_active_hours;
+                if monitored_h > 0.01 {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Suivi depuis {:.0}h  ({} samples  ·  {:.0}h idle  ·  {:.1}h dôme)",
+                            monitored_h,
+                            lt.total_samples,
+                            lt.total_idle_hours,
+                            lt.total_dome_hours,
+                        ))
+                        .small()
+                        .color(egui::Color32::GRAY),
+                    );
+                }
+                let _ = age_h; // unused
+            }
+
+            ui.separator();
+
+            // ── Dôme ──────────────────────────────────────────────────────────
+            ui.label(egui::RichText::new("Dôme").strong());
+            ui.horizontal_wrapped(|ui| {
+                Self::metric_badge(
+                    ui,
+                    "Activations",
+                    format!("{}", lt.total_dome_activations),
+                    if lt.total_dome_activations > 0 {
+                        egui::Color32::from_rgb(96, 168, 104)
+                    } else {
+                        egui::Color32::GRAY
+                    },
+                );
+                Self::metric_badge(
+                    ui,
+                    "Temps actif",
+                    format!("{:.1}h", lt.total_dome_hours),
+                    egui::Color32::GRAY,
+                );
+                if lt.total_cpu_hours_differential > 0.0 {
+                    Self::metric_badge(
+                        ui,
+                        "CPU·h économisé",
+                        format!("{:.3} CPU·h", lt.total_cpu_hours_differential),
+                        egui::Color32::from_rgb(96, 168, 104),
+                    );
+                }
+                if lt.total_mem_gb_hours_differential > 0.0 {
+                    Self::metric_badge(
+                        ui,
+                        "RAM·GB·h libérée",
+                        format!("{:.3} GB·h", lt.total_mem_gb_hours_differential),
+                        egui::Color32::from_rgb(96, 168, 104),
+                    );
+                }
+            });
+
+            // ── SoulRAM ───────────────────────────────────────────────────────
+            ui.separator();
+            ui.label(egui::RichText::new("SoulRAM").strong());
+            ui.horizontal_wrapped(|ui| {
+                Self::metric_badge(
+                    ui,
+                    "Temps actif",
+                    format!("{:.1}h", lt.soulram_active_hours),
+                    if lt.soulram_active_hours > 0.0 {
+                        egui::Color32::from_rgb(96, 168, 104)
+                    } else {
+                        egui::Color32::GRAY
+                    },
+                );
+            });
+
+            // ── KPI / efficacité des actions ──────────────────────────────────
+            ui.separator();
+            ui.label(egui::RichText::new("Efficacité des actions").strong());
+            ui.horizontal_wrapped(|ui| {
+                // Session courante : ratio de récompense
+                let reward = mem.reward_ratio();
+                Self::metric_badge(
+                    ui,
+                    "Actions efficaces (session)",
+                    format!("{:.0}%", reward * 100.0),
+                    if reward >= 0.6 {
+                        egui::Color32::from_rgb(96, 168, 104)
+                    } else if reward >= 0.4 {
+                        egui::Color32::from_rgb(214, 153, 58)
+                    } else {
+                        egui::Color32::from_rgb(200, 80, 80)
+                    },
+                );
+                // Gain KPI médian session (négatif = amélioration)
+                if let Some(avg_delta) = mem.avg_kpi_gain() {
+                    Self::metric_badge(
+                        ui,
+                        "Δ KPI médian (session)",
+                        format!("{:+.2} W/%", avg_delta),
+                        egui::Color32::from_rgb(96, 168, 104),
+                    );
+                }
+                // Amélioration KPI lifetime (% calculé au fil des ticks)
+                if let Some(gain_pct) = lt.avg_kpi_gain_pct {
+                    Self::metric_badge(
+                        ui,
+                        "Amélioration KPI (lifetime)",
+                        format!("{:+.1}%", gain_pct),
+                        if gain_pct < 0.0 {
+                            egui::Color32::from_rgb(96, 168, 104) // négatif = bien
+                        } else {
+                            egui::Color32::from_rgb(200, 80, 80)
+                        },
+                    );
+                }
+            });
+
+            // ── Énergie & coût (si capteur réel disponible) ───────────────────
+            ui.separator();
+            ui.label(egui::RichText::new("Énergie & coût").strong());
+            if lt.has_real_power {
+                ui.horizontal_wrapped(|ui| {
+                    Self::metric_badge(
+                        ui,
+                        "Énergie mesurée",
+                        format!("{:.3} kWh", lt.total_energy_kwh),
+                        egui::Color32::LIGHT_BLUE,
+                    );
+                    if lt.total_energy_cost_measured > 0.0 {
+                        Self::metric_badge(
+                            ui,
+                            "Coût cumulé",
+                            format!("{:.2} {}", lt.total_energy_cost_measured, vm.telemetry.pricing.currency),
+                            egui::Color32::LIGHT_BLUE,
+                        );
+                    }
+                    if lt.total_co2_measured_kg > 0.0 {
+                        Self::metric_badge(
+                            ui,
+                            "CO₂ mesuré",
+                            format!("{:.3} kg", lt.total_co2_measured_kg),
+                            egui::Color32::GRAY,
+                        );
+                    }
+                });
+                // Économie dôme session (puissance moy dôme ON vs OFF)
+                if let Some(saved) = vm.telemetry.total.energy_saved_kwh.filter(|&v| v > 0.0) {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Économie estimée dôme cette session  {:.4} kWh  (~{:.3} {})",
+                            saved,
+                            saved * vm.telemetry.pricing.price_per_kwh,
+                            vm.telemetry.pricing.currency,
+                        ))
+                        .color(egui::Color32::from_rgb(96, 168, 104)),
+                    );
+                }
+            } else {
+                ui.label(
+                    egui::RichText::new(
+                        "Capteur de puissance non disponible — branchez un Meross ou activez RAPL \
+                         pour mesurer kWh et calculer les économies en euros.",
+                    )
+                    .small()
+                    .color(egui::Color32::from_rgb(180, 130, 50)),
+                );
+                // On peut quand même montrer un estimé si on a des données CPU diff
+                if lt.total_cpu_hours_differential > 0.0 {
+                    // Estimation très conservatrice : ~0.5 W par point de % CPU (TDP ~100W / 100% / 2)
+                    let est_kwh = lt.total_cpu_hours_differential * 0.5;
+                    let est_cost = est_kwh * vm.telemetry.pricing.price_per_kwh;
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Estimation sans capteur (0.5 W/%·CPU)  ~{:.4} kWh  ~{:.3} {}",
+                            est_kwh, est_cost, vm.telemetry.pricing.currency,
+                        ))
+                        .small()
+                        .color(egui::Color32::GRAY),
+                    );
+                }
+            }
+        });
+    }
+
     fn telemetry_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
         ui.group(|ui| {
             Self::section_title(
@@ -2055,7 +2253,9 @@ impl eframe::App for LiteApp {
                             columns[0].add_space(8.0);
                             Self::telemetry_panel(&mut columns[0], &state.vm);
 
-                            // Colonne droite : agir → configurer → inventaire
+                            // Colonne droite : gains → agir → configurer → inventaire
+                            Self::gains_panel(&mut columns[1], &state.vm);
+                            columns[1].add_space(8.0);
                             Self::pilotage_panel(
                                 &mut columns[1],
                                 state,

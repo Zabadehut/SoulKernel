@@ -79,6 +79,12 @@ pub struct DeviceProfile {
     pub auto_dome_cooldown_s: u64,
     pub auto_dome_guard_min: f64,
     pub auto_dome_rollback_trend_max: f64,
+    /// Période de grâce après activation : pas de rollback (post-action ou tick) pendant X secondes.
+    /// Absorbe le pic transitoire de page faults dû à l'ajustement des working sets.
+    pub auto_dome_grace_s: u64,
+    /// Durée minimale de maintien du dôme avant qu'un rollback "KPI Efficient" soit autorisé.
+    /// Évite le cycle activate→Efficient→rollback→Inefficient→activate.
+    pub auto_dome_min_hold_s: u64,
     pub soulram_idle_sigma_min: f64,
     pub soulram_burst_cooldown_s: u64,
     pub soulram_sustain_cooldown_s: u64,
@@ -120,6 +126,8 @@ impl DeviceProfile {
             auto_dome_cooldown_s: 30,
             auto_dome_guard_min: 0.85,
             auto_dome_rollback_trend_max: 0.0,
+            auto_dome_grace_s: 90,
+            auto_dome_min_hold_s: 300,
             soulram_idle_sigma_min: 0.30,
             soulram_burst_cooldown_s: 180,
             soulram_sustain_cooldown_s: 900,
@@ -156,6 +164,8 @@ impl DeviceProfile {
             auto_dome_cooldown_s: 45,
             auto_dome_guard_min: 0.80,
             auto_dome_rollback_trend_max: 0.0,
+            auto_dome_grace_s: 120,
+            auto_dome_min_hold_s: 600,
             soulram_idle_sigma_min: 0.20,
             soulram_burst_cooldown_s: 180,
             soulram_sustain_cooldown_s: 900,
@@ -192,6 +202,8 @@ impl DeviceProfile {
             auto_dome_cooldown_s: 20,
             auto_dome_guard_min: 0.90,
             auto_dome_rollback_trend_max: 0.0,
+            auto_dome_grace_s: 60,
+            auto_dome_min_hold_s: 180,
             soulram_idle_sigma_min: 0.35,
             soulram_burst_cooldown_s: 180,
             soulram_sustain_cooldown_s: 900,
@@ -228,6 +240,8 @@ impl DeviceProfile {
             auto_dome_cooldown_s: 30,
             auto_dome_guard_min: 0.85,
             auto_dome_rollback_trend_max: 0.0,
+            auto_dome_grace_s: 90,
+            auto_dome_min_hold_s: 300,
             soulram_idle_sigma_min: 0.30,
             soulram_burst_cooldown_s: 180,
             soulram_sustain_cooldown_s: 900,

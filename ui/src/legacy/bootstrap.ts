@@ -3909,7 +3909,7 @@ async function exportEnergyPeriodReport(periodKey) {
   return path;
 }
 
-function buildSessionReportText() {
+async function buildSessionReportText() {
   const now = new Date().toISOString();
   const diag = benchmarkDiagPayload({
     report_type: 'session-report',
@@ -3925,11 +3925,44 @@ function buildSessionReportText() {
   const meter = collectEnergyMeterExport();
   const proc = collectProcessImpactExport();
   const host = collectRawHostMetricsExport();
+
+  // Gains summary depuis le backend Rust — structure alignée avec soulkernel-lite.
+  let gainsSummary = null;
+  try { gainsSummary = await invoke('get_gains_summary'); } catch (_) {}
+
   const lines = [];
 
   lines.push('SoulKernel - Rapport complet de session');
   lines.push('Export: ' + now);
   lines.push('');
+
+  // ── GAINS (section de tête) ─────────────────────────────────────────────
+  if (gainsSummary) {
+    lines.push('=== GAINS SOULKERNEL ===');
+    lines.push(gainsSummary.interpretation || '(aucune donnée)');
+    if (gainsSummary.caveats?.length) {
+      gainsSummary.caveats.forEach(c => lines.push('  [!] ' + c));
+    }
+    lines.push('');
+    const f4 = v => (v == null ? 'N/A' : Number(v).toFixed(4));
+    const f2 = v => (v == null ? 'N/A' : Number(v).toFixed(2));
+    lines.push('Dôme : ' + (gainsSummary.dome_activations_lifetime ?? 0) + ' activation(s) | ' + f2(gainsSummary.dome_active_hours_lifetime) + 'h actif | CPU·h diff=' + f4(gainsSummary.cpu_hours_differential_lifetime) + ' | RAM·GB·h diff=' + f4(gainsSummary.mem_gb_hours_differential_lifetime));
+    lines.push('SoulRAM : ' + f2(gainsSummary.soulram_active_hours_lifetime) + 'h actif');
+    if (gainsSummary.session_dome_on_avg_power_w != null && gainsSummary.session_dome_off_avg_power_w != null) {
+      const saved_w = gainsSummary.session_dome_off_avg_power_w - gainsSummary.session_dome_on_avg_power_w;
+      lines.push('Puissance moy : dôme ON=' + f2(gainsSummary.session_dome_on_avg_power_w) + 'W | dôme OFF=' + f2(gainsSummary.session_dome_off_avg_power_w) + 'W | diff=' + f2(saved_w) + 'W');
+    }
+    if (gainsSummary.session_energy_saved_kwh != null) {
+      lines.push('Économie dôme session : ~' + Number(gainsSummary.session_energy_saved_kwh).toFixed(5) + ' kWh (~' + Number(gainsSummary.session_cost_saved ?? 0).toFixed(4) + ' ' + (gainsSummary.session_cost_currency || 'EUR') + ')');
+    }
+    if (gainsSummary.has_real_power) {
+      lines.push('Énergie lifetime (capteur réel) : ' + f4(gainsSummary.total_energy_kwh_lifetime) + ' kWh | ' + f4(gainsSummary.total_cost_lifetime) + ' ' + (gainsSummary.total_cost_currency || 'EUR') + ' | ' + f4(gainsSummary.total_co2_kg_lifetime) + ' kg CO₂');
+    } else {
+      lines.push('Estimation sans capteur : ~' + Number(gainsSummary.estimated_kwh_no_sensor).toFixed(5) + ' kWh | ~' + Number(gainsSummary.estimated_cost_no_sensor).toFixed(4) + ' ' + (gainsSummary.estimated_cost_currency || 'EUR'));
+    }
+    lines.push('');
+  }
+  // ── FIN GAINS ───────────────────────────────────────────────────────────
 
   lines.push('Parametres actifs');
   lines.push('Workload: ' + state.wl);

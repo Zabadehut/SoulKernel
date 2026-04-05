@@ -221,6 +221,8 @@ pub struct LiteState {
     last_auto_cycle: Option<Instant>,
     /// Instant de la dernière évaluation auto-dôme (pour le cooldown de 30s).
     last_auto_dome_eval: Option<Instant>,
+    /// Instant auquel le dôme a été activé (auto ou manuel). Sert pour grace_s et min_hold_s.
+    dome_activated_at: Option<Instant>,
 }
 
 struct LiteRefreshSnapshot {
@@ -375,6 +377,7 @@ impl LiteState {
             refresh_in_flight: false,
             last_auto_cycle: None,
             last_auto_dome_eval: None,
+            dome_activated_at: None,
         })
     }
 
@@ -520,15 +523,22 @@ impl LiteState {
             // On ne rollback que sur Efficient (pas Moderate) : si le KPI est
             // encore Modéré, le dôme travaille encore — le retirer relancerait
             // immédiatement un nouveau cycle (ping-pong Modéré ↔ Inefficace).
-            // Tendance stable ou décroissante requise pour éviter un rollback
-            // alors que le KPI est en train de s'améliorer.
+            // Tendance stable ou décroissante requise.
+            // Durée minimale : le dôme doit rester actif au moins min_hold_s avant
+            // qu'un rollback "KPI amélioré" soit autorisé. Évite le cycle
+            // activate → Efficient → rollback immédiat → overhead revient → repeat.
+            let hold_elapsed = self.dome_activated_at
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(self.vm.device_profile.auto_dome_min_hold_s + 1);
+            let held_long_enough = hold_elapsed >= self.vm.device_profile.auto_dome_min_hold_s;
+
             use soulkernel_core::kpi::KpiLabel;
             let kpi_stable = matches!(kpi.label, KpiLabel::Efficient)
                 && kpi
                     .trend
                     .map(|d| d <= self.vm.device_profile.auto_dome_rollback_trend_max)
                     .unwrap_or(true);
-            if kpi_stable {
+            if kpi_stable && held_long_enough {
                 let _ = self.rollback_dome();
             }
         }
@@ -634,12 +644,21 @@ impl LiteState {
         }
         self.vm.external_status = snapshot.external_status;
         self.vm.external_bridge_running = self.is_external_bridge_running();
+        // KPI gain median : delta médian des actions récompensées, exprimé en %
+        // par rapport au KPI courant. Négatif = amélioration (KPI a baissé).
+        let kpi_gain_median_pct = self.vm.kpi_memory.avg_kpi_gain().and_then(|avg_delta| {
+            self.vm.kpi.kpi_penalized.filter(|&k| k > 0.0).map(|k| {
+                // avg_delta est négatif (amélioration) ; on le normalise en %
+                (avg_delta / k * 100.0).clamp(-100.0, 0.0)
+            })
+        });
+
         let _ = self.telemetry_state.ingest(TelemetryIngestRequest {
             ts_ms: Some(self.vm.now_ms),
             power_watts: snapshot.metrics.raw.power_watts,
             dome_active: self.vm.dome_active,
             soulram_active: self.vm.soulram_active,
-            kpi_gain_median_pct: None,
+            kpi_gain_median_pct,
             cpu_pct: Some(snapshot.metrics.raw.cpu_pct),
             pi: Some(snapshot.formula.pi),
             machine_activity: Some(infer_machine_activity(&snapshot.metrics)),
@@ -709,22 +728,32 @@ impl LiteState {
 
         // ── Protection KPI post-action ────────────────────────────────────────
         // Si le KPI a empiré de >20 % suite au dôme, on l'annule automatiquement.
+        // MAIS uniquement après la période de grâce (grace_s) : les premières secondes
+        // après activation génèrent un pic transitoire de page faults tout à fait normal.
         if self.vm.dome_active {
-            if let (Some(prev), Some(curr)) = (prev_kpi, self.vm.kpi.kpi_penalized) {
-                if curr > prev * self.vm.device_profile.kpi_post_action_rollback_ratio
-                    && prev > 0.0
-                {
-                    // Le dôme dégrade le KPI — rollback silencieux.
-                    let _ = self.runtime.block_on(orchestrator::rollback(
-                        self.dome_snapshot.clone(),
-                        self.vm.target_pid,
-                    ));
-                    self.dome_snapshot = None;
-                    self.vm.dome_active = false;
-                    self.vm.last_actions.insert(
-                        0,
-                        format!("⚠ dôme annulé auto : KPI {prev:.1}→{curr:.1} W/%"),
-                    );
+            let grace_elapsed = self.dome_activated_at
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(self.vm.device_profile.auto_dome_grace_s + 1);
+            let past_grace = grace_elapsed >= self.vm.device_profile.auto_dome_grace_s;
+
+            if past_grace {
+                if let (Some(prev), Some(curr)) = (prev_kpi, self.vm.kpi.kpi_penalized) {
+                    if curr > prev * self.vm.device_profile.kpi_post_action_rollback_ratio
+                        && prev > 0.0
+                    {
+                        // Le dôme dégrade le KPI en régime établi — rollback silencieux.
+                        let _ = self.runtime.block_on(orchestrator::rollback(
+                            self.dome_snapshot.clone(),
+                            self.vm.target_pid,
+                        ));
+                        self.dome_snapshot = None;
+                        self.vm.dome_active = false;
+                        self.dome_activated_at = None;
+                        self.vm.last_actions.insert(
+                            0,
+                            format!("⚠ dôme annulé auto : KPI {prev:.1}→{curr:.1} W/%"),
+                        );
+                    }
                 }
             }
         }
@@ -764,6 +793,7 @@ impl LiteState {
             .map_err(|e| e.to_string())?;
         self.dome_snapshot = Some(baseline);
         self.vm.dome_active = true;
+        self.dome_activated_at = Some(Instant::now());
         self.vm.last_actions = result.actions;
         self.vm.kpi_memory.open(now_ms_local(), "dome", self.vm.kpi.kpi_penalized);
         self.refresh_now()?;
@@ -780,6 +810,7 @@ impl LiteState {
             ))
             .map_err(|e| e.to_string())?;
         self.vm.dome_active = false;
+        self.dome_activated_at = None;
         self.vm.last_actions = actions;
         self.refresh_now()
     }

@@ -1737,6 +1737,18 @@ fn get_lifetime_gains(
     Ok(t.lifetime())
 }
 
+/// Synthèse des gains — même structure que soulkernel-lite.
+/// kpi_memory non disponible côté Tauri : reward_ratio=0, avg_delta=None.
+/// Brancher kpi_reward_ratio_pct et kpi_avg_delta si la mémoire KPI est portée ici.
+#[tauri::command]
+fn get_gains_summary(
+    telemetry_state: State<'_, SharedTelemetry>,
+) -> Result<telemetry::GainsSummary, String> {
+    let t = telemetry_state.lock().map_err(|e| e.to_string())?;
+    let summary = t.summary(telemetry::now_ms());
+    Ok(summary.to_gains_summary(0.0, None))
+}
+
 #[tauri::command]
 fn get_external_power_config() -> Result<external_power::MerossFileConfig, String> {
     Ok(external_power::get_meross_config_or_default())
@@ -2198,6 +2210,7 @@ fn main() {
             get_energy_pricing,
             set_energy_pricing,
             get_lifetime_gains,
+            get_gains_summary,
             get_external_power_config,
             set_external_power_config,
             get_external_power_status,

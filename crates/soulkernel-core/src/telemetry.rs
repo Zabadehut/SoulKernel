@@ -284,6 +284,191 @@ pub struct TelemetrySummary {
     pub lifetime: LifetimeGains,
 }
 
+/// Synthèse des gains — structure partagée entre soulkernel-lite et le backend Tauri.
+/// Calculée depuis `TelemetrySummary::to_gains_summary(...)`.
+/// Positionnée en tête du rapport JSON pour une lecture immédiate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GainsSummary {
+    // ── Période ──────────────────────────────────────────────────────────────
+    pub first_launch_ts_ms: u64,
+    pub monitored_hours: f64,
+    pub total_samples: u64,
+
+    // ── Dôme ─────────────────────────────────────────────────────────────────
+    pub dome_activations_lifetime: u64,
+    pub dome_active_hours_lifetime: f64,
+    pub cpu_hours_differential_lifetime: f64,
+    pub mem_gb_hours_differential_lifetime: f64,
+
+    // ── SoulRAM ───────────────────────────────────────────────────────────────
+    pub soulram_active_hours_lifetime: f64,
+
+    // ── KPI efficacité ────────────────────────────────────────────────────────
+    pub kpi_reward_ratio_session_pct: f64,
+    pub kpi_avg_delta_session_w_per_pct: Option<f64>,
+    pub kpi_avg_gain_lifetime_pct: Option<f64>,
+
+    // ── Session courante ──────────────────────────────────────────────────────
+    pub session_avg_power_w: Option<f64>,
+    pub session_dome_on_avg_power_w: Option<f64>,
+    pub session_dome_off_avg_power_w: Option<f64>,
+    pub session_energy_saved_kwh: Option<f64>,
+    pub session_cost_saved: Option<f64>,
+    pub session_cost_currency: String,
+
+    // ── Énergie lifetime (capteur réel) ───────────────────────────────────────
+    pub has_real_power: bool,
+    pub total_energy_kwh_lifetime: f64,
+    pub total_cost_lifetime: f64,
+    pub total_cost_currency: String,
+    pub total_co2_kg_lifetime: f64,
+
+    // ── Estimation sans capteur ───────────────────────────────────────────────
+    pub estimated_kwh_no_sensor: f64,
+    pub estimated_cost_no_sensor: f64,
+    pub estimated_cost_currency: String,
+
+    // ── Interprétation lisible ────────────────────────────────────────────────
+    pub interpretation: String,
+    pub caveats: Vec<String>,
+}
+
+impl TelemetrySummary {
+    /// Calcule la synthèse des gains à partir de la télémétrie et des métriques KPI optionnelles.
+    /// `kpi_reward_ratio_pct` et `kpi_avg_delta` viennent de `KpiLearningMemory` dans
+    /// soulkernel-lite ; le backend Tauri peut passer `(0.0, None)` tant qu'il n'expose pas
+    /// la mémoire KPI.
+    pub fn to_gains_summary(
+        &self,
+        kpi_reward_ratio_pct: f64,
+        kpi_avg_delta_w_per_pct: Option<f64>,
+    ) -> GainsSummary {
+        let lt = &self.lifetime;
+        let t = &self.total;
+        let pricing = &self.pricing;
+
+        let monitored_hours =
+            lt.total_idle_hours + lt.total_dome_hours + lt.soulram_active_hours;
+        let session_energy_saved_kwh = t.energy_saved_kwh.filter(|&v| v > 0.0);
+        let session_cost_saved =
+            session_energy_saved_kwh.map(|kwh| kwh * pricing.price_per_kwh);
+        let estimated_kwh_no_sensor = lt.total_cpu_hours_differential * 0.5;
+        let estimated_cost_no_sensor = estimated_kwh_no_sensor * pricing.price_per_kwh;
+
+        let mut lines: Vec<String> = Vec::new();
+        if monitored_hours > 0.01 {
+            lines.push(format!(
+                "SoulKernel a monitoré {:.0}h depuis le premier lancement ({} échantillons).",
+                monitored_hours, lt.total_samples
+            ));
+        }
+        if lt.total_dome_activations > 0 {
+            lines.push(format!(
+                "Dôme : {} activation(s), {:.1}h actif.",
+                lt.total_dome_activations, lt.total_dome_hours
+            ));
+            if lt.total_cpu_hours_differential > 0.001 {
+                lines.push(format!(
+                    "CPU économisé (diff. dôme vs baseline) : {:.4} CPU·h.",
+                    lt.total_cpu_hours_differential
+                ));
+            }
+            if lt.total_mem_gb_hours_differential > 0.001 {
+                lines.push(format!(
+                    "RAM libérée (diff.) : {:.4} GB·h.",
+                    lt.total_mem_gb_hours_differential
+                ));
+            }
+        } else {
+            lines.push("Dôme : aucune activation enregistrée.".to_string());
+        }
+        if lt.soulram_active_hours > 0.01 {
+            lines.push(format!("SoulRAM : {:.1}h actif.", lt.soulram_active_hours));
+        }
+        if let Some(delta) = kpi_avg_delta_w_per_pct {
+            lines.push(format!(
+                "KPI : amélioration médiane {:.2} W/% par cycle (session), taux de réussite {:.0}%.",
+                delta, kpi_reward_ratio_pct
+            ));
+        }
+        if lt.has_real_power {
+            lines.push(format!(
+                "Énergie mesurée (capteur réel) : {:.4} kWh · {:.4} {} · {:.4} kg CO₂.",
+                lt.total_energy_kwh,
+                lt.total_energy_cost_measured,
+                pricing.currency,
+                lt.total_co2_measured_kg,
+            ));
+            if let Some(saved) = session_energy_saved_kwh {
+                lines.push(format!(
+                    "Économie dôme cette session : ~{:.5} kWh (~{:.4} {}).",
+                    saved,
+                    saved * pricing.price_per_kwh,
+                    pricing.currency,
+                ));
+            }
+        } else {
+            lines.push(
+                "Pas de capteur de puissance : kWh et euros non mesurables directement."
+                    .to_string(),
+            );
+            if estimated_kwh_no_sensor > 0.0 {
+                lines.push(format!(
+                    "Estimation conservative (0.5 W/% × CPU·h diff) : ~{:.5} kWh, ~{:.4} {}.",
+                    estimated_kwh_no_sensor, estimated_cost_no_sensor, pricing.currency,
+                ));
+            }
+        }
+
+        let mut caveats: Vec<String> = Vec::new();
+        if !lt.has_real_power {
+            caveats.push(
+                "Pas de capteur de puissance (RAPL / PDH / Meross) : l'énergie et le coût sont des estimations conservatives.".to_string(),
+            );
+        }
+        if lt.total_cpu_hours_differential == 0.0 && lt.total_dome_activations > 0 {
+            caveats.push(
+                "CPU·h différentiel = 0 : la baseline CPU (10 min dôme OFF) n'est peut-être pas encore établie.".to_string(),
+            );
+        }
+        if lt.total_dome_hours < 0.1 {
+            caveats.push(
+                "Dôme actif moins de 6 min au total : pas assez de données pour des statistiques fiables.".to_string(),
+            );
+        }
+
+        GainsSummary {
+            first_launch_ts_ms: lt.first_launch_ts,
+            monitored_hours,
+            total_samples: lt.total_samples,
+            dome_activations_lifetime: lt.total_dome_activations,
+            dome_active_hours_lifetime: lt.total_dome_hours,
+            cpu_hours_differential_lifetime: lt.total_cpu_hours_differential,
+            mem_gb_hours_differential_lifetime: lt.total_mem_gb_hours_differential,
+            soulram_active_hours_lifetime: lt.soulram_active_hours,
+            kpi_reward_ratio_session_pct: kpi_reward_ratio_pct,
+            kpi_avg_delta_session_w_per_pct: kpi_avg_delta_w_per_pct,
+            kpi_avg_gain_lifetime_pct: lt.avg_kpi_gain_pct,
+            session_avg_power_w: t.avg_power_w,
+            session_dome_on_avg_power_w: t.avg_power_dome_on_w,
+            session_dome_off_avg_power_w: t.avg_power_dome_off_w,
+            session_energy_saved_kwh,
+            session_cost_saved,
+            session_cost_currency: pricing.currency.clone(),
+            has_real_power: lt.has_real_power,
+            total_energy_kwh_lifetime: lt.total_energy_kwh,
+            total_cost_lifetime: lt.total_energy_cost_measured,
+            total_cost_currency: pricing.currency.clone(),
+            total_co2_kg_lifetime: lt.total_co2_measured_kg,
+            estimated_kwh_no_sensor,
+            estimated_cost_no_sensor,
+            estimated_cost_currency: pricing.currency.clone(),
+            interpretation: lines.join(" "),
+            caveats,
+        }
+    }
+}
+
 pub struct TelemetryState {
     path: PathBuf,
     pricing_path: PathBuf,
