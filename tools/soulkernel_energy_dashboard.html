@@ -192,10 +192,10 @@
     <div class="drop-zone" id="dropZone">
       <div class="dz-icon">📊</div>
       <div class="dz-title">Importer un rapport SoulKernel</div>
-      <div class="dz-sub">Glissez un fichier JSON ici ou cliquez pour parcourir<br>Plusieurs rapports supportés — comparaison automatique</div>
+      <div class="dz-sub">Glissez un export live <code>*.json</code>, le journal courant <code>*.jsonl</code> ou les rotations <code>*.jsonl.gz</code><br>Plusieurs fichiers supportés — timeline et comparaison automatiques</div>
       <div class="dz-fmts">
-        <span class="fmt">export.json</span>
-        <span class="fmt">observability.jsonl</span>
+        <span class="fmt">live-export.json</span>
+        <span class="fmt">observability_samples.jsonl</span>
         <span class="fmt">observability-*.jsonl.gz</span>
         <span class="fmt">strict_evidence</span>
         <span class="fmt">process_impact</span>
@@ -305,7 +305,15 @@ const PCOLS=['#6c63ff','#00d4aa','#ffd166','#ff6b6b','#a78bfa','#34d399','#60a5f
 
 function toast(msg,type='ok'){const t=$('toast');t.textContent=msg;t.className=`show ${type}`;setTimeout(()=>t.className='',3200);}
 function snap(d){return d?.latest||d;}
-function getSamples(d){return Array.isArray(d?.samples)?d.samples:[];}
+function isTimelineCapableSnapshot(d){
+  const s=d?.latest||d;
+  return !!(s?.report || s?.kpi || s?.raw_host_metrics || s?.strict_evidence);
+}
+function getSamples(d){
+  if(Array.isArray(d?.samples))return d.samples;
+  if(isTimelineCapableSnapshot(d))return [snap(d)];
+  return [];
+}
 function getTelemetry(d){const s=snap(d);return s?.telemetry_summary||s?.report?.telemetry||{};}
 function getStrictEvidence(d){const s=snap(d);return s?.strict_evidence||s?.report?.strict_evidence||null;}
 function getRaw(d){const s=snap(d);return s?.raw_host_metrics?.raw||s?.report?.metrics?.raw||{};}
@@ -495,7 +503,7 @@ async function loadFiles(files){
         const id=genId();
         S.reports.push({id,name,data,kind:'snapshot',family:name});
         S.activeId=id;
-        toast(`✅ "${name}" chargé`);
+        toast(`✅ "${name}" chargé (timeline snapshot disponible)`);
       }
       const active=S.reports.find(r=>r.id===S.activeId);
       const periods=getPeriods(active?.data||data);
@@ -706,15 +714,20 @@ function renderDiff(d){
 }
 function renderTimeline(d){
   const samples=getSamples(d);
-  $('timelineNotice').innerHTML=samples.length?`<strong>Mode timeline actif</strong> — série reconstruite depuis <code>observability_samples.jsonl</code> et/ou les archives <code>observability-*.jsonl.gz</code>. Les graphes ci-dessous utilisent les ticks persistés par SoulKernel, fusionnés et triés chronologiquement.`:`Aucune série chargée. Importe le fichier courant <code>observability_samples.jsonl</code> et, si rotation, les archives <code>observability-*.jsonl.gz</code> pour reconstituer l’historique complet.`;
-  $('timelineLegend').innerHTML=`<span class="badge b-real">🔌 Watts / énergie réelle</span><span class="badge b-measured">🔬 CPU / RAM / GPU / faults / sigma</span><span class="badge b-estimated">〜 KPI / attribution / différentiels</span><span class="badge b-measured">🗜 .jsonl.gz supporté</span>`;
+  const isSeries=Array.isArray(d?.samples)&&d.samples.length;
+  $('timelineNotice').innerHTML=samples.length
+    ? (isSeries
+      ? `<strong>Mode timeline actif</strong> — série reconstruite depuis le fichier courant <code>observability_samples.jsonl</code>, les archives <code>observability-*.jsonl.gz</code> et, si besoin, des exports live <code>*.json</code>. Les ticks sont fusionnés et triés chronologiquement.`
+      : `<strong>Mode timeline snapshot</strong> — ce rapport <code>*.json</code> fournit un tick instantané. Pour une courbe continue, charge aussi le fichier courant <code>observability_samples.jsonl</code> et les rotations <code>observability-*.jsonl.gz</code>.`)
+    : `Aucune série chargée. Importe un export live <code>*.json</code> pour un tick instantané, ou le fichier courant <code>observability_samples.jsonl</code> avec les rotations <code>observability-*.jsonl.gz</code> pour reconstituer l’historique complet.`;
+  $('timelineLegend').innerHTML=`<span class="badge b-real">🔌 Watts / énergie réelle</span><span class="badge b-measured">🔬 CPU / RAM / GPU / faults / sigma</span><span class="badge b-estimated">〜 KPI / attribution / différentiels</span><span class="badge b-measured">📄 *.json live</span><span class="badge b-measured">🗜 .jsonl.gz supporté</span>`;
   const stats=$('timelineStats');
   const grid=$('timelineGrid');
   stats.innerHTML='';
   grid.innerHTML='';
   if(!samples.length){
     stats.innerHTML='<div class="kcard"><div class="k-lbl">Série</div><div class="k-val">0</div><div class="k-sub">Aucun tick chargé</div></div>';
-    grid.innerHTML='<div class="spark-empty">Charge un fichier JSONL d’observabilité pour obtenir les courbes temporelles complètes.</div>';
+    grid.innerHTML='<div class="spark-empty">Charge un export live <code>*.json</code> pour un tick, ou <code>observability_samples.jsonl</code> avec les rotations <code>*.jsonl.gz</code> pour les courbes temporelles complètes.</div>';
     return;
   }
   const first=samples[0];
