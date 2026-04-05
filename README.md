@@ -180,6 +180,30 @@ cargo tauri dev
 cargo run
 ```
 
+### Supervision live Node
+
+Pour superviser SoulKernel en continu sans import manuel de fichiers :
+
+```bash
+npm --prefix ui run supervision
+```
+
+Puis ouvrir :
+
+```text
+http://localhost:8787
+```
+
+Le serveur lit automatiquement :
+
+- le fichier live `observability_samples.jsonl`
+- les archives `observability_samples-*.jsonl.gz`
+
+Variables utiles :
+
+- `PORT=8790 npm --prefix ui run supervision`
+- `SOULKERNEL_OBSERVABILITY_PATH=/chemin/vers/observability_samples.jsonl npm --prefix ui run supervision`
+
 **UI 100 % offline** : Lucide via `ui/public/vendor/lucide.min.js` (aucun CDN au runtime). Mise à jour du bundle : `./scripts/sync-lucide-ui.sh` (copier le fichier généré vers `ui/public/vendor/`). Typo : pile monospace système, sans Google Fonts.
 
 **Rocky 9 / EL9 — GUI Tauri + itération sur `ui/`** : sur l’hôte, **`cargo tauri dev` ne peut pas linker** WebKit (glib système &lt; 2.70). Ce n’est pas une limite de ton code : il faut exécuter le **même dépôt** dans une couche où glib/WebKit sont récents. Le flux le plus direct :

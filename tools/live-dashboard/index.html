@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SoulKernel Live Supervision</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">SoulKernel Live</div>
+      <h1>Supervision dynamique</h1>
+    </div>
+    <div class="top-actions">
+      <div class="pill" id="freshnessPill">attente</div>
+      <button id="refreshBtn">Rafraîchir</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Nouveau regard</div>
+        <h2>Le système lit directement le flux live et les archives, sans import manuel.</h2>
+        <p id="statusLine">Connexion à l’observabilité SoulKernel…</p>
+      </div>
+      <div class="hero-meta">
+        <div class="meta-card">
+          <div class="meta-label">Fichier actif</div>
+          <div class="meta-value" id="activePath">—</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">Archives</div>
+          <div class="meta-value" id="archiveCount">—</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">Échantillons</div>
+          <div class="meta-value" id="sampleCount">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cards" id="headlineCards"></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Timeline</h3>
+        <div class="legend">
+          <span class="badge real">watts mur</span>
+          <span class="badge meas">CPU / RAM / GPU</span>
+          <span class="badge est">KPI / faults / overhead</span>
+        </div>
+      </div>
+      <div class="charts" id="charts"></div>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <div class="panel-head">
+          <h3>Dernier snapshot</h3>
+        </div>
+        <div class="snapshot-grid" id="snapshotGrid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h3>Processus dominants</h3>
+        </div>
+        <div class="process-list" id="processList"></div>
+      </section>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
