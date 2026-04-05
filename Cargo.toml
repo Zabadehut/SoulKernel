@@ -4,6 +4,7 @@ members = [
   "crates/soulkernel-core",
   "crates/soulkernel-headless",
   "crates/soulkernel-lite",
+  "crates/soulkernel-mcp",
 ]
 
 [package]

@@ -5188,6 +5188,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soulkernel-mcp"
+version = "1.1.9"
+dependencies = [
+ "flate2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "soup3"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

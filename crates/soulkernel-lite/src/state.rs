@@ -136,6 +136,7 @@ impl HostImpactDelta {
     }
 }
 
+#[derive(Clone)]
 pub struct LiteViewModel {
     pub now_ms: u64,
     pub metrics: ResourceState,
@@ -217,6 +218,8 @@ pub struct LiteState {
     external_bridge_child: Option<Child>,
     refresh_rx: Option<Receiver<Result<LiteRefreshSnapshot, String>>>,
     refresh_in_flight: bool,
+    observability_write_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
+    last_observability_write: Instant,
     /// Instant de la dernière exécution d'une action auto-cycle (pour respecter le cooldown interne).
     last_auto_cycle: Option<Instant>,
     /// Instant de la dernière évaluation auto-dôme (pour le cooldown de 30s).
@@ -375,6 +378,8 @@ impl LiteState {
             external_bridge_child: None,
             refresh_rx: None,
             refresh_in_flight: false,
+            observability_write_handle: None,
+            last_observability_write: Instant::now() - Duration::from_secs(10),
             last_auto_cycle: None,
             last_auto_dome_eval: None,
             dome_activated_at: None,
@@ -382,6 +387,7 @@ impl LiteState {
     }
 
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
+        self.poll_observability_write();
         let applied = self.apply_pending_refresh()?;
 
         // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
@@ -549,6 +555,7 @@ impl LiteState {
     }
 
     pub fn refresh_now(&mut self) -> Result<(), String> {
+        self.poll_observability_write();
         // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
         // Les process/inventory seront rafraîchis par le prochain cycle périodique.
         let refresh_processes = self.last_process_refresh.elapsed()
@@ -566,6 +573,47 @@ impl LiteState {
         self.refresh_rx = None;
         self.last_refresh = Instant::now();
         Ok(())
+    }
+
+    fn poll_observability_write(&mut self) {
+        let Some(handle) = self.observability_write_handle.take() else {
+            return;
+        };
+        if !handle.is_finished() {
+            self.observability_write_handle = Some(handle);
+            return;
+        }
+        match handle.join() {
+            Ok(Ok(path)) => {
+                self.vm.observability_path = path;
+            }
+            Ok(Err(err)) => {
+                self.vm.last_actions.insert(
+                    0,
+                    format!("⚠ observabilité: écriture échouée ({err})"),
+                );
+            }
+            Err(_) => {
+                self.vm
+                    .last_actions
+                    .insert(0, "⚠ observabilité: writer panic".to_string());
+            }
+        }
+    }
+
+    fn spawn_observability_write_if_needed(&mut self) {
+        const OBSERVABILITY_WRITE_MIN_S: u64 = 5;
+        if self.observability_write_handle.is_some() {
+            return;
+        }
+        if self.last_observability_write.elapsed() < Duration::from_secs(OBSERVABILITY_WRITE_MIN_S) {
+            return;
+        }
+        self.last_observability_write = Instant::now();
+        let vm = self.vm.clone();
+        self.observability_write_handle = Some(std::thread::spawn(move || {
+            crate::export::append_observability_sample(&vm)
+        }));
     }
 
     fn spawn_refresh_task(&mut self) {
@@ -788,9 +836,7 @@ impl LiteState {
             }
         }
 
-        if let Ok(path) = crate::export::append_observability_sample(&self.vm) {
-            self.vm.observability_path = path;
-        }
+        self.spawn_observability_write_if_needed();
 
         Ok(())
     }

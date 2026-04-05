@@ -35,6 +35,16 @@
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_TOKEN}"
       }
+    },
+    "soulkernel-report": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "--quiet",
+        "-p",
+        "soulkernel-mcp"
+      ],
+      "cwd": "${workspaceFolder}"
     }
   }
 }
