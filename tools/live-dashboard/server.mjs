@@ -143,13 +143,26 @@ function loadObservability({ includeArchives = true } = {}) {
   };
 }
 
+function getGains(sample) {
+  return sample?.gains_summary || {};
+}
+
 function projectSample(sample) {
   const raw = getRaw(sample);
   const kpi = getKpi(sample);
+  const gains = getGains(sample);
+  const pc = sample?.power_comparison || {};
+  const norm = sample?.raw_host_metrics?.normalized || {};
+  const formula = sample?.report?.formula || {};
   return {
     ts_ms: sampleTs(sample),
     exported_at: sample?.report?.exported_at || null,
+    // Power
     watts: raw.wall_power_watts ?? raw.power_watts ?? getTelemetry(sample)?.live_power_w ?? null,
+    host_power_w: pc.host_power_w ?? raw.host_power_watts ?? null,
+    wall_power_w: pc.wall_power_w ?? raw.wall_power_watts ?? null,
+    power_confidence: pc.confidence ?? null,
+    // Resources
     cpu_pct: raw.cpu_pct ?? null,
     ram_pct: raw.mem_total_mb ? (raw.mem_used_mb / raw.mem_total_mb) * 100 : null,
     ram_used_mb: raw.mem_used_mb ?? null,
@@ -158,13 +171,29 @@ function projectSample(sample) {
     gpu_power_watts: raw.gpu_power_watts ?? null,
     faults_per_sec: raw.page_faults_per_sec ?? null,
     sigma: sample?.report?.metrics?.sigma ?? null,
+    compression: norm.compression ?? null,
+    // KPI
     kpi_basic: kpi.kpi_basic_w_per_pct ?? null,
     kpi_penalized: kpi.kpi_penalized_w_per_pct ?? null,
+    kpi_label: kpi.label ?? null,
+    kpi_trend: kpi.trend ?? null,
+    kpi_reward_ratio: kpi.reward_ratio ?? null,
     cpu_useful_pct: kpi.cpu_useful_pct ?? null,
     cpu_overhead_pct: kpi.cpu_overhead_pct ?? null,
+    // Formula
+    pi: formula.advanced_guard != null ? formula.pi ?? null : null,
+    advanced_guard: formula.advanced_guard ?? null,
+    // Dome / SoulRAM
     dome_active: sample?.report?.dome_active ?? false,
     soulram_active: sample?.report?.soulram_active ?? false,
     target_pid: sample?.report?.target_pid ?? null,
+    workload: sample?.report?.workload ?? null,
+    // Gains session (dome ON vs OFF comparison)
+    dome_on_avg_w: gains.session_dome_on_avg_power_w ?? null,
+    dome_off_avg_w: gains.session_dome_off_avg_power_w ?? null,
+    energy_saved_kwh: gains.session_energy_saved_kwh ?? null,
+    // Context
+    machine_activity: sample?.strict_evidence?.machine_activity ?? null,
   };
 }
 

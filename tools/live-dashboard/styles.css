@@ -193,6 +193,9 @@ button:hover{border-color:var(--cyan)}
   color:var(--muted);
 }
 .empty{padding:16px;color:var(--muted)}
+.trend-label{font-size:11px;margin-bottom:6px;color:var(--muted)}
+.trend-slope{font-size:9px;margin-left:4px}
+.dome-note{font-size:11px;color:var(--muted);font-style:italic;margin:0 0 12px;padding:0 4px}
 @media (max-width: 980px){
   .hero,.grid{grid-template-columns:1fr}
 }
