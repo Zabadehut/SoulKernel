@@ -4246,7 +4246,7 @@ if (btnCopyEvidence) {
 
 const btnCopyGains = document.getElementById('btnCopyGains');
 if (btnCopyGains) {
-  btnCopyGains.addEventListener('click', () => {
+  btnCopyGains.addEventListener('click', async () => {
     try {
       const diag = benchmarkDiagPayload({
         export_mode: 'clipboard',
@@ -4255,7 +4255,7 @@ if (btnCopyGains) {
         last_benchmark_gain_p95_pct: state.kpiBench.lastSummary?.gain_p95_pct ?? null,
       });
       log('EXPORT DIAG clipboard ' + JSON.stringify(diag), 'info');
-      const report = buildSessionReportText();
+      const report = await buildSessionReportText();
       navigator.clipboard.writeText(report).then(() => {
         log('Rapport complet copie dans le presse-papier', 'ok');
       }).catch((e) => log('Copie echouee: ' + e, 'err'));

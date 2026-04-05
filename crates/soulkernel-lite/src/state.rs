@@ -383,6 +383,20 @@ impl LiteState {
 
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
         let applied = self.apply_pending_refresh()?;
+
+        // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
+        // Must run on every new snapshot (applied=true), NOT inside the spawn
+        // guard — otherwise the applied=true signal is swallowed by the early
+        // return on elapsed < min_refresh_s and the auto-cycle stalls forever.
+        if applied && self.vm.auto_cycle_soulram && self.vm.soulram_active {
+            self.tick_auto_cycle_soulram();
+        }
+
+        // ── Auto-dôme KPI ─────────────────────────────────────────────────────
+        if applied && self.vm.auto_dome {
+            self.tick_auto_dome();
+        }
+
         if self.last_refresh.elapsed()
             < Duration::from_secs(self.vm.device_profile.lite_refresh_min_s)
         {
@@ -393,16 +407,6 @@ impl LiteState {
         }
         self.last_refresh = Instant::now();
         self.spawn_refresh_task();
-
-        // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
-        if applied && self.vm.auto_cycle_soulram && self.vm.soulram_active {
-            self.tick_auto_cycle_soulram();
-        }
-
-        // ── Auto-dôme KPI ─────────────────────────────────────────────────────
-        if applied && self.vm.auto_dome {
-            self.tick_auto_dome();
-        }
 
         Ok(applied)
     }

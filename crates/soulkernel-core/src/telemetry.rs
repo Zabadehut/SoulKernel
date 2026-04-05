@@ -243,6 +243,10 @@ pub struct LifetimeGains {
     /// Heures cumulées d’échantillonnage avec SoulRAM actif et dôme inactif (Δt réels entre ticks télémétrie).
     #[serde(default)]
     pub soulram_active_hours: f64,
+    /// Timestamp (ms) of the last sample processed into lifetime counters.
+    /// Used on startup to replay only new samples from JSONL without double-counting.
+    #[serde(default)]
+    pub last_processed_ts_ms: u64,
 }
 
 impl Default for LifetimeGains {
@@ -263,6 +267,7 @@ impl Default for LifetimeGains {
             total_media_hours: 0.0,
             total_mem_gb_hours_differential: 0.0,
             soulram_active_hours: 0.0,
+            last_processed_ts_ms: 0,
         }
     }
 }
@@ -914,6 +919,11 @@ impl TelemetryState {
             self.kpi_gains_all.push(g);
             self.lifetime.avg_kpi_gain_pct = median(&self.kpi_gains_all);
         }
+
+        // Track the latest sample timestamp so load_existing() can skip already-counted samples.
+        if s.ts_ms > self.lifetime.last_processed_ts_ms {
+            self.lifetime.last_processed_ts_ms = s.ts_ms;
+        }
     }
 
     fn save_lifetime(&self) -> Result<(), String> {
@@ -934,12 +944,18 @@ impl TelemetryState {
             Err(_) => return Ok(()),
         };
         let reader = BufReader::new(file);
+        // last_processed_ts_ms is the last timestamp already persisted in the lifetime file.
+        // Replay only newer samples so lifetime counters stay consistent without double-counting.
+        let already_counted_ts = self.lifetime.last_processed_ts_ms;
         for line in reader.lines().map_while(Result::ok) {
             if let Ok(sample) = serde_json::from_str::<TelemetrySample>(&line) {
                 self.last_ts_ms = Some(
                     self.last_ts_ms
                         .map_or(sample.ts_ms, |p| p.max(sample.ts_ms)),
                 );
+                if sample.ts_ms > already_counted_ts {
+                    self.update_lifetime(&sample);
+                }
                 self.ring.push_back(sample);
             }
         }

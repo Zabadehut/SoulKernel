@@ -503,27 +503,53 @@ impl LiteApp {
     }
 
     fn priority_hint(ui: &mut egui::Ui, vm: &LiteViewModel) {
-        let (title, body, color) = if vm.metrics.sigma >= vm.sigma_max {
-            (
-                "Pression élevée",
-                "La machine est déjà tendue. Réduire l'agressivité ou cibler plus finement.",
+        // Check if real dome savings are already measured this session.
+        let dome_delta_w = vm.telemetry.total.avg_power_dome_off_w
+            .zip(vm.telemetry.total.avg_power_dome_on_w)
+            .map(|(off, on)| off - on);
+        let real_savings = vm.telemetry.total.energy_saved_kwh.unwrap_or(0.0) > 0.01
+            || dome_delta_w.unwrap_or(0.0) > 5.0;
+
+        if vm.metrics.sigma >= vm.sigma_max {
+            ui.colored_label(
                 egui::Color32::from_rgb(210, 84, 84),
-            )
-        } else if vm.formula.pi >= 0.6 {
-            (
-                "Fenêtre favorable",
-                "Le contexte est bon pour activer le dôme sur une cible utile.",
+                egui::RichText::new("Pression élevée").strong(),
+            );
+            ui.label("La machine est déjà tendue. Réduire l'agressivité ou cibler plus finement.");
+        } else if real_savings {
+            ui.colored_label(
                 egui::Color32::from_rgb(96, 168, 104),
-            )
+                egui::RichText::new("Économies mesurées").strong(),
+            );
+            let body = if let (Some(saved_kwh), Some(delta_w)) =
+                (vm.telemetry.total.energy_saved_kwh, dome_delta_w)
+            {
+                format!(
+                    "Dôme actif : −{:.1} W mesurés, {:.4} kWh économisés cette session.",
+                    delta_w, saved_kwh
+                )
+            } else if let Some(delta_w) = dome_delta_w {
+                format!("Dôme actif : −{:.1} W mesurés (puissance moyenne).", delta_w)
+            } else {
+                format!(
+                    "Économie session : {:.4} kWh.",
+                    vm.telemetry.total.energy_saved_kwh.unwrap_or(0.0)
+                )
+            };
+            ui.label(body);
+        } else if vm.formula.pi >= 0.6 {
+            ui.colored_label(
+                egui::Color32::from_rgb(96, 168, 104),
+                egui::RichText::new("Fenêtre favorable").strong(),
+            );
+            ui.label("Le contexte est bon pour activer le dôme sur une cible utile.");
         } else {
-            (
-                "Impact modéré",
-                "Le gain attendu semble limité. Vérifier d'abord la cible et la charge réelle.",
+            ui.colored_label(
                 egui::Color32::from_rgb(214, 153, 58),
-            )
-        };
-        ui.colored_label(color, egui::RichText::new(title).strong());
-        ui.label(body);
+                egui::RichText::new("Impact modéré").strong(),
+            );
+            ui.label("Le gain attendu semble limité. Vérifier d'abord la cible et la charge réelle.");
+        }
     }
 
     /// Panneau principal : ce que SoulKernel fait concrètement sur ce HOST.
