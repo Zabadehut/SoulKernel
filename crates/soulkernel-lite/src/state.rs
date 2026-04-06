@@ -177,6 +177,101 @@ struct RemotePushSuccess {
     target_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptiveTuningState {
+    pub enabled: bool,
+    pub samples: u64,
+    pub reward_ema: f64,
+    pub delta_kpi_ema: f64,
+    pub faults_gain_ema: f64,
+    pub power_gain_ema: f64,
+    pub base_guard_min: f64,
+    pub base_rollback_ratio: f64,
+    pub base_lambda: f64,
+    pub guard_bias: f64,
+    pub rollback_bias: f64,
+    pub lambda_bias: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AdaptiveTuningPersisted {
+    enabled: bool,
+    samples: u64,
+    reward_ema: f64,
+    delta_kpi_ema: f64,
+    faults_gain_ema: f64,
+    power_gain_ema: f64,
+    guard_bias: f64,
+    rollback_bias: f64,
+    lambda_bias: f64,
+}
+
+impl Default for AdaptiveTuningPersisted {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            samples: 0,
+            reward_ema: 0.5,
+            delta_kpi_ema: 0.0,
+            faults_gain_ema: 0.0,
+            power_gain_ema: 0.0,
+            guard_bias: 0.0,
+            rollback_bias: 0.0,
+            lambda_bias: 0.0,
+        }
+    }
+}
+
+impl AdaptiveTuningState {
+    pub fn for_profile(profile: &DeviceProfile) -> Self {
+        Self {
+            enabled: true,
+            samples: 0,
+            reward_ema: 0.5,
+            delta_kpi_ema: 0.0,
+            faults_gain_ema: 0.0,
+            power_gain_ema: 0.0,
+            base_guard_min: profile.auto_dome_guard_min,
+            base_rollback_ratio: profile.kpi_post_action_rollback_ratio,
+            base_lambda: profile.kpi_lambda_default,
+            guard_bias: 0.0,
+            rollback_bias: 0.0,
+            lambda_bias: 0.0,
+        }
+    }
+}
+
+impl AdaptiveTuningPersisted {
+    fn from_runtime(state: &AdaptiveTuningState) -> Self {
+        Self {
+            enabled: state.enabled,
+            samples: state.samples,
+            reward_ema: state.reward_ema,
+            delta_kpi_ema: state.delta_kpi_ema,
+            faults_gain_ema: state.faults_gain_ema,
+            power_gain_ema: state.power_gain_ema,
+            guard_bias: state.guard_bias,
+            rollback_bias: state.rollback_bias,
+            lambda_bias: state.lambda_bias,
+        }
+    }
+
+    fn into_runtime(self, profile: &DeviceProfile) -> AdaptiveTuningState {
+        let mut state = AdaptiveTuningState::for_profile(profile);
+        state.enabled = self.enabled;
+        state.samples = self.samples;
+        state.reward_ema = self.reward_ema;
+        state.delta_kpi_ema = self.delta_kpi_ema;
+        state.faults_gain_ema = self.faults_gain_ema;
+        state.power_gain_ema = self.power_gain_ema;
+        state.guard_bias = self.guard_bias.clamp(-0.12, 0.15);
+        state.rollback_bias = self.rollback_bias.clamp(-0.10, 0.08);
+        state.lambda_bias = self.lambda_bias.clamp(-0.25, 0.50);
+        state
+    }
+}
+
 #[derive(Clone)]
 enum BackgroundActionKind {
     ActivateDome,
@@ -278,6 +373,8 @@ pub struct LiteViewModel {
     pub kpi: KpiSnapshot,
     /// λ (pénalité faults). Défaut : 0.5.
     pub kpi_lambda: f64,
+    /// Ajustement dynamique des paramètres de décision selon les gains réellement observés.
+    pub adaptive_tuning: AdaptiveTuningState,
     /// Historique glissant des 60 dernières valeurs KPI* pour le sparkline.
     pub kpi_history: Vec<(u64, f64)>, // (ts_ms, kpi_penalized)
     /// Mémoire d'apprentissage : enregistre l'effet des actions sur le KPI.
@@ -397,6 +494,17 @@ impl LiteState {
         let benchmark_state = BenchmarkState::new(benchmark_path);
         let benchmark_history = benchmark_state.history(None, None, None, None);
         let remote_supervisor_config = load_remote_supervisor_config().unwrap_or_default();
+        let mut device_profile = DeviceProfile::pc();
+        let adaptive_tuning =
+            load_adaptive_tuning(&default_machine_id(), &device_profile).unwrap_or_else(|| {
+                AdaptiveTuningState::for_profile(&device_profile)
+            });
+        device_profile.auto_dome_guard_min =
+            (adaptive_tuning.base_guard_min + adaptive_tuning.guard_bias).clamp(0.55, 0.95);
+        device_profile.kpi_post_action_rollback_ratio =
+            (adaptive_tuning.base_rollback_ratio + adaptive_tuning.rollback_bias).clamp(1.05, 1.35);
+        let kpi_lambda =
+            (adaptive_tuning.base_lambda + adaptive_tuning.lambda_bias).clamp(0.10, 1.50);
 
         Ok(Self {
             runtime,
@@ -450,9 +558,10 @@ impl LiteState {
                 next_cycle_in_s: None,
                 auto_dome: false,
                 auto_dome_next_eval_s: None,
-                device_profile: DeviceProfile::pc(),
+                device_profile,
                 kpi: KpiSnapshot::default(),
-                kpi_lambda: DeviceProfile::pc().kpi_lambda_default,
+                kpi_lambda,
+                adaptive_tuning,
                 kpi_history: Vec::new(),
                 kpi_memory: KpiLearningMemory::default(),
             },
@@ -1044,7 +1153,11 @@ impl LiteState {
             }
         }
         // Ferme le pending KPI si une action était en attente de mesure après.
+        let kpi_records_before = self.vm.kpi_memory.records.len();
         self.vm.kpi_memory.close_pending(self.vm.kpi.kpi_penalized);
+        if self.vm.kpi_memory.records.len() > kpi_records_before {
+            self.update_adaptive_tuning_from_latest_action();
+        }
 
         // ── Protection KPI post-action ────────────────────────────────────────
         // Si le KPI a empiré de >20 % suite au dôme, on l'annule automatiquement.
@@ -1092,6 +1205,100 @@ impl LiteState {
         self.action_handle.is_some()
     }
 
+    pub fn reset_adaptive_tuning_for_profile(&mut self) {
+        self.vm.adaptive_tuning = load_adaptive_tuning(&default_machine_id(), &self.vm.device_profile)
+            .unwrap_or_else(|| AdaptiveTuningState::for_profile(&self.vm.device_profile));
+        self.apply_adaptive_tuning();
+        let _ = self.save_adaptive_tuning();
+    }
+
+    pub fn set_adaptive_tuning_enabled(&mut self, enabled: bool) {
+        self.vm.adaptive_tuning.enabled = enabled;
+        if !enabled {
+            self.vm.adaptive_tuning.guard_bias = 0.0;
+            self.vm.adaptive_tuning.rollback_bias = 0.0;
+            self.vm.adaptive_tuning.lambda_bias = 0.0;
+        }
+        self.apply_adaptive_tuning();
+        let _ = self.save_adaptive_tuning();
+    }
+
+    fn apply_adaptive_tuning(&mut self) {
+        let tuning = &self.vm.adaptive_tuning;
+        self.vm.device_profile.auto_dome_guard_min =
+            (tuning.base_guard_min + tuning.guard_bias).clamp(0.55, 0.95);
+        self.vm.device_profile.kpi_post_action_rollback_ratio =
+            (tuning.base_rollback_ratio + tuning.rollback_bias).clamp(1.05, 1.35);
+        self.vm.kpi_lambda = (tuning.base_lambda + tuning.lambda_bias).clamp(0.10, 1.50);
+    }
+
+    fn update_adaptive_tuning_from_latest_action(&mut self) {
+        if !self.vm.adaptive_tuning.enabled {
+            return;
+        }
+        let Some(rec) = self.vm.kpi_memory.records.last() else {
+            return;
+        };
+        let delta_kpi = rec.delta_kpi.unwrap_or(0.0).clamp(-20.0, 20.0);
+        let reward_signal = if rec.rewarded { 1.0 } else { 0.0 };
+        let faults_gain = self
+            .vm
+            .host_impact
+            .as_ref()
+            .and_then(|h| h.page_faults_reduction_pct())
+            .map(|v| (v / 100.0).clamp(-1.0, 1.0))
+            .unwrap_or(0.0);
+        let power_gain = self
+            .vm
+            .host_impact
+            .as_ref()
+            .and_then(|h| h.power_saved_w())
+            .map(|v| (v / 25.0).clamp(-1.0, 1.0))
+            .unwrap_or(0.0);
+
+        let t = &mut self.vm.adaptive_tuning;
+        t.samples += 1;
+        t.reward_ema = t.reward_ema * 0.9 + reward_signal * 0.1;
+        t.delta_kpi_ema = t.delta_kpi_ema * 0.9 + delta_kpi * 0.1;
+        t.faults_gain_ema = t.faults_gain_ema * 0.9 + faults_gain * 0.1;
+        t.power_gain_ema = t.power_gain_ema * 0.9 + power_gain * 0.1;
+
+        match rec.action.as_str() {
+            "dome" => {
+                let dome_signal = ((-delta_kpi / 10.0) + power_gain + faults_gain * 0.5)
+                    .clamp(-1.0, 1.0);
+                if dome_signal >= 0.0 {
+                    t.guard_bias -= 0.020 * dome_signal;
+                    t.rollback_bias += 0.020 * dome_signal;
+                } else {
+                    let bad = -dome_signal;
+                    t.guard_bias += 0.030 * bad;
+                    t.rollback_bias -= 0.030 * bad;
+                }
+                if faults_gain < -0.10 {
+                    t.lambda_bias += 0.020;
+                }
+            }
+            "soulram" => {
+                let mem_signal =
+                    (faults_gain + (-delta_kpi / 10.0) * 0.5 + power_gain * 0.25).clamp(-1.0, 1.0);
+                t.lambda_bias += 0.040 * mem_signal;
+                if mem_signal >= 0.0 {
+                    t.guard_bias -= 0.005 * mem_signal;
+                } else {
+                    t.guard_bias += 0.005 * -mem_signal;
+                }
+            }
+            _ => {}
+        }
+
+        t.guard_bias = t.guard_bias.clamp(-0.12, 0.15);
+        t.rollback_bias = t.rollback_bias.clamp(-0.10, 0.08);
+        t.lambda_bias = t.lambda_bias.clamp(-0.25, 0.50);
+        self.apply_adaptive_tuning();
+        let _ = self.save_adaptive_tuning();
+    }
+
     pub fn selected_profile(&self) -> WorkloadProfile {
         WorkloadProfile::from_name(&self.vm.selected_workload).unwrap_or(WorkloadProfile {
             name: self.vm.selected_workload.clone(),
@@ -1134,6 +1341,17 @@ impl LiteState {
         }
         let bytes = serde_json::to_vec_pretty(&self.vm.remote_supervisor_config)
             .map_err(|e| e.to_string())?;
+        std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn save_adaptive_tuning(&self) -> Result<(), String> {
+        let path = adaptive_tuning_path(&default_machine_id(), &self.vm.device_profile)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let persisted = AdaptiveTuningPersisted::from_runtime(&self.vm.adaptive_tuning);
+        let bytes = serde_json::to_vec_pretty(&persisted).map_err(|e| e.to_string())?;
         std::fs::write(path, bytes).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -1566,6 +1784,36 @@ fn remote_supervisor_config_path() -> Result<PathBuf, String> {
     external_power::soulkernel_config_dir()
         .map(|dir| dir.join("remote_supervisor.json"))
         .ok_or_else(|| "remote supervisor config dir unavailable".to_string())
+}
+
+fn sanitize_file_stem(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn adaptive_tuning_path(machine_id: &str, profile: &DeviceProfile) -> Result<PathBuf, String> {
+    let machine = sanitize_file_stem(machine_id);
+    let profile_id = sanitize_file_stem(profile.id);
+    external_power::soulkernel_config_dir()
+        .map(|dir| {
+            dir.join("adaptive")
+                .join(format!("adaptive_tuning_{machine}_{profile_id}.json"))
+        })
+        .ok_or_else(|| "adaptive tuning config dir unavailable".to_string())
+}
+
+fn load_adaptive_tuning(machine_id: &str, profile: &DeviceProfile) -> Option<AdaptiveTuningState> {
+    let path = adaptive_tuning_path(machine_id, profile).ok()?;
+    let raw = std::fs::read(path).ok()?;
+    let persisted: AdaptiveTuningPersisted = serde_json::from_slice(&raw).ok()?;
+    Some(persisted.into_runtime(profile))
 }
 
 fn load_remote_supervisor_config() -> Option<RemoteSupervisorConfig> {

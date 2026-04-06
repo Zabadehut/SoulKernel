@@ -361,6 +361,26 @@ struct KpiExport {
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
+struct AdaptiveTuningExport {
+    enabled: bool,
+    samples: u64,
+    reward_ema: f64,
+    delta_kpi_ema: f64,
+    faults_gain_ema: f64,
+    power_gain_ema: f64,
+    current_lambda: f64,
+    current_guard_min: f64,
+    current_rollback_ratio: f64,
+    base_lambda: f64,
+    base_guard_min: f64,
+    base_rollback_ratio: f64,
+    lambda_bias: f64,
+    guard_bias: f64,
+    rollback_bias: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
 struct LiteJsonExport<'a> {
     product: &'static str,
     report_type: &'static str,
@@ -371,6 +391,7 @@ struct LiteJsonExport<'a> {
     report: LiteReport<'a>,
     power_comparison: PowerComparisonExport,
     kpi: KpiExport,
+    adaptive_tuning: AdaptiveTuningExport,
     raw_host_metrics: LiteRawHostMetricsExport<'a>,
     external_power: ExternalPowerExport<'a>,
     strict_evidence: StrictEvidenceExport<'a>,
@@ -1147,6 +1168,27 @@ fn build_gains_summary_export(vm: &LiteViewModel) -> soulkernel_core::telemetry:
     )
 }
 
+fn build_adaptive_tuning_export(vm: &LiteViewModel) -> AdaptiveTuningExport {
+    let t = &vm.adaptive_tuning;
+    AdaptiveTuningExport {
+        enabled: t.enabled,
+        samples: t.samples,
+        reward_ema: t.reward_ema,
+        delta_kpi_ema: t.delta_kpi_ema,
+        faults_gain_ema: t.faults_gain_ema,
+        power_gain_ema: t.power_gain_ema,
+        current_lambda: vm.kpi_lambda,
+        current_guard_min: vm.device_profile.auto_dome_guard_min,
+        current_rollback_ratio: vm.device_profile.kpi_post_action_rollback_ratio,
+        base_lambda: t.base_lambda,
+        base_guard_min: t.base_guard_min,
+        base_rollback_ratio: t.base_rollback_ratio,
+        lambda_bias: t.lambda_bias,
+        guard_bias: t.guard_bias,
+        rollback_bias: t.rollback_bias,
+    }
+}
+
 fn build_payload<'a>(
     vm: &'a LiteViewModel,
     report_type: &'static str,
@@ -1199,6 +1241,7 @@ fn build_payload<'a>(
         },
         power_comparison: build_power_comparison_export(vm),
         kpi: build_kpi_export(vm),
+        adaptive_tuning: build_adaptive_tuning_export(vm),
         raw_host_metrics,
         external_power,
         strict_evidence,

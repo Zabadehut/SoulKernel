@@ -523,6 +523,20 @@ impl LiteApp {
             .small()
             .color(egui::Color32::GRAY),
         );
+        let t = &vm.adaptive_tuning;
+        ui.label(
+            egui::RichText::new(format!(
+                "Formule dynamique {}  ·  λ {:.2}  ·  garde {:.0}%  ·  rollback {:.2}  ·  reward EMA {:.0}%  ·  {} obs",
+                if t.enabled { "ON" } else { "OFF" },
+                vm.kpi_lambda,
+                vm.device_profile.auto_dome_guard_min * 100.0,
+                vm.device_profile.kpi_post_action_rollback_ratio,
+                t.reward_ema * 100.0,
+                t.samples
+            ))
+            .small()
+            .color(egui::Color32::GRAY),
+        );
     }
 
     fn action_summary(ui: &mut egui::Ui, vm: &LiteViewModel) {
@@ -2067,7 +2081,7 @@ impl LiteApp {
                                 if p.can_act { "actions activées" } else { "monitoring seul" }
                             )).clicked() {
                                 state.vm.device_profile = p;
-                                state.vm.kpi_lambda = state.vm.device_profile.kpi_lambda_default;
+                                state.reset_adaptive_tuning_for_profile();
                             }
                         }
                     });
@@ -2078,6 +2092,13 @@ impl LiteApp {
                     );
                 }
                 ui.separator();
+                let mut adaptive_enabled = state.vm.adaptive_tuning.enabled;
+                if ui.checkbox(
+                    &mut adaptive_enabled,
+                    "Ajustement dynamique de la formule",
+                ).changed() {
+                    state.set_adaptive_tuning_enabled(adaptive_enabled);
+                }
                 egui::ComboBox::from_label("Politique")
                     .selected_text(state.vm.policy_mode.as_name())
                     .show_ui(ui, |ui| {
