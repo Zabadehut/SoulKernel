@@ -1,6 +1,7 @@
 use flate2::read::GzDecoder;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -75,6 +76,8 @@ fn handle_tool_call(id: Option<Value>, params: Option<&Value>) -> Value {
         "get_metric_snapshot" => tool_get_metric_snapshot(&args),
         "get_timeline_samples" => tool_get_timeline_samples(&args),
         "get_observability_status" => tool_get_observability_status(&args),
+        "get_project_bridge_status" => tool_get_project_bridge_status(&args),
+        "get_supervisor_launch_config" => tool_get_supervisor_launch_config(&args),
         other => Err(format!("Unknown tool: {other}")),
     };
 
@@ -175,6 +178,81 @@ fn tool_get_observability_status(_args: &Value) -> Result<Value, String> {
         "is_fresh": latest_ts.map(|ts| now_ms().saturating_sub(ts) <= ACTIVE_FRESHNESS_MS).unwrap_or(false),
         "rotation_bytes": 16 * 1024 * 1024_u64,
         "latest_snapshot": latest_snapshot
+    }))
+}
+
+fn tool_get_project_bridge_status(_args: &Value) -> Result<Value, String> {
+    let observability = ObservabilityStore::discover()?;
+    let latest = observability.latest_sample(true)?;
+    let latest_ts = latest.as_ref().map(sample_ts);
+    let supervisor = SupervisorProject::discover();
+    let latest_snapshot = latest
+        .as_ref()
+        .map(|sample| build_metric_snapshot(&observability, sample))
+        .unwrap_or_else(|| json!(null));
+
+    Ok(json!({
+        "soulkernel": {
+            "workspace_root": workspace_root().to_string_lossy(),
+            "observability_path": observability.active_path,
+            "observability_exists": observability.active_exists,
+            "archive_count": observability.archive_count,
+            "latest_sample_ts_ms": latest_ts,
+            "is_fresh": latest_ts.map(|ts| now_ms().saturating_sub(ts) <= ACTIVE_FRESHNESS_MS).unwrap_or(false),
+        },
+        "supervisor": supervisor,
+        "bridge_ready": supervisor.exists && observability.active_exists,
+        "latest_snapshot": latest_snapshot,
+    }))
+}
+
+fn tool_get_supervisor_launch_config(args: &Value) -> Result<Value, String> {
+    let observability = ObservabilityStore::discover()?;
+    let supervisor = SupervisorProject::discover();
+    let telemetry_dir = PathBuf::from(&observability.active_path)
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Unable to derive telemetry directory".to_string())?;
+    let port = args
+        .get("port")
+        .and_then(Value::as_u64)
+        .unwrap_or(8787);
+
+    let mut commands = BTreeMap::new();
+    if supervisor.exists {
+        let root = supervisor.root.clone().unwrap_or_default();
+        commands.insert(
+            "docker".to_string(),
+            format!(
+                "cd {root} && SOULKERNEL_TELEMETRY_DIR=\"{}\" SOULKERNEL_DASHBOARD_PORT={port} docker compose up --build -d",
+                telemetry_dir.to_string_lossy()
+            ),
+        );
+        commands.insert(
+            "node".to_string(),
+            format!(
+                "cd {root} && PORT={port} SOULKERNEL_OBSERVABILITY_PATH=\"{}\" npm run dev",
+                observability.active_path
+            ),
+        );
+    }
+
+    Ok(json!({
+        "supervisor": supervisor,
+        "telemetry_dir": telemetry_dir,
+        "observability_path": observability.active_path,
+        "recommended_port": port,
+        "env": {
+            "SOULKERNEL_TELEMETRY_DIR": telemetry_dir,
+            "SOULKERNEL_OBSERVABILITY_PATH": observability.active_path,
+            "SOULKERNEL_DASHBOARD_PORT": port,
+            "PORT": port,
+        },
+        "commands": commands,
+        "notes": [
+            "Mode recommandé: le superviseur lit le dossier telemetry du client en lecture seule.",
+            "Pour un serveur distant, synchronisez ou montez le dossier telemetry du client vers la machine de supervision."
+        ]
     }))
 }
 
@@ -291,6 +369,27 @@ fn tools_manifest() -> Vec<Value> {
                 "properties": {}
             }
         }),
+        json!({
+            "name": "get_project_bridge_status",
+            "description": "Return the linkage status between the SoulKernel client workspace and the sibling SoulKernel-Supervisor project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_supervisor_launch_config",
+            "description": "Return launch commands and environment variables to start SoulKernel-Supervisor against this client's observability files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "integer",
+                        "description": "Dashboard port to expose."
+                    }
+                }
+            }
+        }),
     ]
 }
 
@@ -302,6 +401,60 @@ struct ObservabilityStore {
     active_modified_ms: Option<u64>,
     archives: Vec<String>,
     archive_count: usize,
+}
+
+#[derive(Serialize)]
+struct SupervisorProject {
+    exists: bool,
+    root: Option<String>,
+    package_json_exists: bool,
+    dockerfile_exists: bool,
+    compose_exists: bool,
+    readme_exists: bool,
+    package_name: Option<String>,
+    scripts: BTreeMap<String, String>,
+}
+
+impl SupervisorProject {
+    fn discover() -> Self {
+        let root = default_supervisor_root();
+        let package_path = root.join("package.json");
+        let dockerfile_path = root.join("Dockerfile");
+        let compose_path = root.join("docker-compose.yml");
+        let readme_path = root.join("README.md");
+        let package_json_exists = package_path.exists();
+        let dockerfile_exists = dockerfile_path.exists();
+        let compose_exists = compose_path.exists();
+        let readme_exists = readme_path.exists();
+        let exists = root.exists() && package_json_exists;
+        let mut package_name = None;
+        let mut scripts = BTreeMap::new();
+        if let Ok(content) = std::fs::read_to_string(&package_path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&content) {
+                package_name = value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string());
+                if let Some(obj) = value.get("scripts").and_then(Value::as_object) {
+                    for (key, value) in obj {
+                        if let Some(script) = value.as_str() {
+                            scripts.insert(key.clone(), script.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        Self {
+            exists,
+            root: root.exists().then(|| root.to_string_lossy().into_owned()),
+            package_json_exists,
+            dockerfile_exists,
+            compose_exists,
+            readme_exists,
+            package_name,
+            scripts,
+        }
+    }
 }
 
 impl ObservabilityStore {
@@ -390,6 +543,21 @@ fn default_observability_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("soulkernel_observability_samples.jsonl")
+}
+
+fn workspace_root() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn default_supervisor_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("SOULKERNEL_SUPERVISOR_ROOT") {
+        return PathBuf::from(root);
+    }
+    workspace_root()
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("SoulKernel-Supervisor")
 }
 
 fn observability_archives(path: &Path) -> Result<Vec<PathBuf>, String> {
