@@ -180,29 +180,24 @@ cargo tauri dev
 cargo run
 ```
 
-### Supervision live Node
+### Supervision distante
 
-Pour superviser SoulKernel en continu sans import manuel de fichiers :
+Le dashboard live Node et son packaging Docker vivent maintenant dans le repo dédié :
 
-```bash
-npm --prefix ui run supervision
-```
+- `https://github.com/Zabadehut/SoulKernel-Supervisor`
 
-Puis ouvrir :
+Le repo `SoulKernel` conserve :
 
-```text
-http://localhost:8787
-```
+- l’écriture de `observability_samples.jsonl`
+- les rotations `observability_samples-*.jsonl.gz`
+- l’export snapshot local
 
-Le serveur lit automatiquement :
+Le repo `SoulKernel-Supervisor` gère :
 
-- le fichier live `observability_samples.jsonl`
-- les archives `observability_samples-*.jsonl.gz`
-
-Variables utiles :
-
-- `PORT=8790 npm --prefix ui run supervision`
-- `SOULKERNEL_OBSERVABILITY_PATH=/chemin/vers/observability_samples.jsonl npm --prefix ui run supervision`
+- le serveur live Node
+- le dashboard distant
+- Docker / compose
+- la supervision hors du poste client
 
 **UI 100 % offline** : Lucide via `ui/public/vendor/lucide.min.js` (aucun CDN au runtime). Mise à jour du bundle : `./scripts/sync-lucide-ui.sh` (copier le fichier généré vers `ui/public/vendor/`). Typo : pile monospace système, sans Google Fonts.
 
