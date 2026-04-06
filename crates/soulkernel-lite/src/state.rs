@@ -138,9 +138,11 @@ impl HostImpactDelta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RemoteSupervisorConfig {
     pub enabled: bool,
     pub server_url: String,
+    pub enroll_token: String,
     pub api_key: String,
     pub machine_id: String,
     pub push_interval_s: u64,
@@ -151,6 +153,7 @@ impl Default for RemoteSupervisorConfig {
         Self {
             enabled: false,
             server_url: "http://127.0.0.1:8787/api/ingest".to_string(),
+            enroll_token: String::new(),
             api_key: String::new(),
             machine_id: default_machine_id(),
             push_interval_s: 5,
@@ -171,6 +174,13 @@ struct RemotePushSuccess {
     ts_ms: u64,
     status: u16,
     target_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteSupervisorRegisterResponse {
+    machine_id: String,
+    api_key: String,
+    ingest_url: String,
 }
 
 #[derive(Clone)]
@@ -1059,6 +1069,27 @@ impl LiteState {
         Ok(())
     }
 
+    pub fn register_remote_supervisor(&mut self) -> Result<(), String> {
+        let enroll_token = normalized_text(&self.vm.remote_supervisor_config.enroll_token)
+            .ok_or_else(|| "enroll token manquant".to_string())?;
+        let server_url = self.vm.remote_supervisor_config.server_url.clone();
+        let machine_id = self.vm.remote_supervisor_config.machine_id.clone();
+        let response = register_remote_supervisor_machine(
+            &server_url,
+            &enroll_token,
+            &machine_id,
+        )?;
+        self.vm.remote_supervisor_config.machine_id = response.machine_id;
+        self.vm.remote_supervisor_config.api_key = response.api_key;
+        self.vm.remote_supervisor_config.server_url =
+            normalize_remote_supervisor_ingest_url(&response.ingest_url);
+        self.vm.remote_supervisor_config.enabled = true;
+        self.vm.remote_supervisor_status.last_error = None;
+        self.vm.remote_supervisor_status.connected = false;
+        self.save_remote_supervisor_config()?;
+        Ok(())
+    }
+
     pub fn start_external_bridge(&mut self) -> Result<(), String> {
         if !self.vm.external_config.enabled {
             return Err("active d'abord la source puissance externe".to_string());
@@ -1413,16 +1444,62 @@ fn load_remote_supervisor_config() -> Option<RemoteSupervisorConfig> {
     Some(cfg)
 }
 
-fn normalize_remote_supervisor_url(input: &str) -> String {
+fn normalize_remote_supervisor_base_url(input: &str) -> String {
     let trimmed = input.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        return "http://127.0.0.1:8787/api/ingest".to_string();
+        return "http://127.0.0.1:8787".to_string();
     }
-    if trimmed.contains("/api/ingest") {
-        trimmed.to_string()
+    if let Some((base, _)) = trimmed.split_once("/api/") {
+        base.to_string()
     } else {
-        format!("{trimmed}/api/ingest")
+        trimmed.to_string()
     }
+}
+
+fn normalize_remote_supervisor_ingest_url(input: &str) -> String {
+    format!("{}/api/ingest", normalize_remote_supervisor_base_url(input))
+}
+
+fn normalize_remote_supervisor_register_url(input: &str) -> String {
+    format!("{}/api/register", normalize_remote_supervisor_base_url(input))
+}
+
+fn normalize_remote_supervisor_url(input: &str) -> String {
+    normalize_remote_supervisor_ingest_url(input)
+}
+
+fn register_remote_supervisor_machine(
+    server_url: &str,
+    enroll_token: &str,
+    machine_id_hint: &str,
+) -> Result<RemoteSupervisorRegisterResponse, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let payload = serde_json::json!({
+        "machine_id_hint": normalized_text(machine_id_hint).unwrap_or_else(default_machine_id),
+        "hostname": default_machine_id(),
+        "platform": std::env::consts::OS,
+        "app": "soulkernel-lite",
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    let response = client
+        .post(normalize_remote_supervisor_register_url(server_url))
+        .bearer_auth(enroll_token)
+        .json(&payload)
+        .send()
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().unwrap_or_default();
+        return Err(if detail.trim().is_empty() {
+            format!("HTTP {}", status.as_u16())
+        } else {
+            format!("HTTP {}: {}", status.as_u16(), detail.trim())
+        });
+    }
+    response.json().map_err(|e| e.to_string())
 }
 
 fn push_remote_observability_sample(
@@ -1465,7 +1542,7 @@ fn push_remote_observability_sample(
     Ok(RemotePushSuccess {
         ts_ms: now_ms_local(),
         status: status.as_u16(),
-        target_url: normalize_remote_supervisor_url(&cfg.server_url),
+        target_url: normalize_remote_supervisor_ingest_url(&cfg.server_url),
     })
 }
 

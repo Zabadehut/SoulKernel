@@ -2166,6 +2166,15 @@ impl LiteApp {
                 ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.server_url);
             });
             ui.horizontal(|ui| {
+                ui.label("Enroll token");
+                ui.add(
+                    egui::TextEdit::singleline(
+                        &mut state.vm.remote_supervisor_config.enroll_token,
+                    )
+                    .password(true),
+                );
+            });
+            ui.horizontal(|ui| {
                 ui.label("API key");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.api_key)
@@ -2182,13 +2191,19 @@ impl LiteApp {
             );
             ui.label(
                 egui::RichText::new(
-                    "Le serveur doit exposer POST /api/ingest et accepter un payload JSON SoulKernel complet.",
+                    "Accepte une URL de base (ex. http://supervisor:8787) ou directement /api/ingest. Le serveur génère la clé via POST /api/register.",
                 )
                 .small()
                 .color(egui::Color32::GRAY),
             );
 
             ui.horizontal(|ui| {
+                if ui.button("Enregistrer la machine").clicked() {
+                    match state.register_remote_supervisor() {
+                        Ok(()) => *info = Some("Machine enregistrée auprès du superviseur".to_string()),
+                        Err(err) => *error = Some(err),
+                    }
+                }
                 if ui.button("Enregistrer").clicked() {
                     match state.save_remote_supervisor_config() {
                         Ok(()) => *info = Some("Config superviseur enregistrée".to_string()),
