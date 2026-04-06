@@ -164,8 +164,11 @@ impl Default for RemoteSupervisorConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct RemoteSupervisorStatus {
-    pub last_push_ms: Option<u64>,
-    pub last_http_status: Option<u16>,
+    pub last_attempt_ms: Option<u64>,
+    pub last_success_ms: Option<u64>,
+    pub last_success_http_status: Option<u16>,
+    pub last_error_ms: Option<u64>,
+    pub last_error_kind: Option<String>,
     pub last_error: Option<String>,
     pub last_target_url: Option<String>,
     pub connected: bool,
@@ -813,19 +816,30 @@ impl LiteState {
         }
         match handle.join() {
             Ok(Ok(success)) => {
-                self.vm.remote_supervisor_status.last_push_ms = Some(success.ts_ms);
-                self.vm.remote_supervisor_status.last_http_status = Some(success.status);
+                self.vm.remote_supervisor_status.last_attempt_ms = Some(success.ts_ms);
+                self.vm.remote_supervisor_status.last_success_ms = Some(success.ts_ms);
+                self.vm.remote_supervisor_status.last_success_http_status = Some(success.status);
                 self.vm.remote_supervisor_status.last_target_url = Some(success.target_url);
                 self.vm.remote_supervisor_status.last_error = None;
+                self.vm.remote_supervisor_status.last_error_ms = None;
+                self.vm.remote_supervisor_status.last_error_kind = None;
                 self.vm.remote_supervisor_status.connected = true;
             }
             Ok(Err(err)) => {
+                let now = now_ms_local();
+                self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
                 self.vm.remote_supervisor_status.last_error = Some(err);
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+                self.vm.remote_supervisor_status.last_error_kind = Some("network".to_string());
                 self.vm.remote_supervisor_status.connected = false;
             }
             Err(_) => {
+                let now = now_ms_local();
+                self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
                 self.vm.remote_supervisor_status.last_error =
                     Some("panic du worker réseau".to_string());
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+                self.vm.remote_supervisor_status.last_error_kind = Some("runtime".to_string());
                 self.vm.remote_supervisor_status.connected = false;
             }
         }
@@ -1367,14 +1381,30 @@ impl LiteState {
         Ok(())
     }
 
+    pub fn test_remote_supervisor_connection(&mut self) -> Result<String, String> {
+        let server_url = self.vm.remote_supervisor_config.server_url.clone();
+        let target_url = normalize_remote_supervisor_base_url(&server_url);
+        let status = fetch_remote_supervisor_status(&target_url)?;
+        let now = now_ms_local();
+        self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
+        self.vm.remote_supervisor_status.last_target_url = Some(target_url);
+        self.vm.remote_supervisor_status.last_error = None;
+        self.vm.remote_supervisor_status.last_error_ms = None;
+        self.vm.remote_supervisor_status.last_error_kind = None;
+        self.vm.remote_supervisor_status.connected = true;
+        Ok(format!(
+            "superviseur OK · {} machine(s) · {} échantillons",
+            status.machine_count, status.sample_count
+        ))
+    }
+
     pub fn register_remote_supervisor(&mut self) -> Result<(), String> {
-        let enroll_token = normalized_text(&self.vm.remote_supervisor_config.enroll_token)
-            .ok_or_else(|| "enroll token manquant".to_string())?;
+        let enroll_token = normalized_text(&self.vm.remote_supervisor_config.enroll_token);
         let server_url = self.vm.remote_supervisor_config.server_url.clone();
         let machine_id = self.vm.remote_supervisor_config.machine_id.clone();
         let response = register_remote_supervisor_machine(
             &server_url,
-            &enroll_token,
+            enroll_token.as_deref(),
             &machine_id,
         )?;
         self.vm.remote_supervisor_config.machine_id = response.machine_id;
@@ -1383,6 +1413,8 @@ impl LiteState {
             normalize_remote_supervisor_ingest_url(&response.ingest_url);
         self.vm.remote_supervisor_config.enabled = true;
         self.vm.remote_supervisor_status.last_error = None;
+        self.vm.remote_supervisor_status.last_error_ms = None;
+        self.vm.remote_supervisor_status.last_error_kind = None;
         self.vm.remote_supervisor_status.connected = false;
         self.save_remote_supervisor_config()?;
         Ok(())
@@ -1856,7 +1888,7 @@ fn normalize_remote_supervisor_url(input: &str) -> String {
 
 fn register_remote_supervisor_machine(
     server_url: &str,
-    enroll_token: &str,
+    enroll_token: Option<&str>,
     machine_id_hint: &str,
 ) -> Result<RemoteSupervisorRegisterResponse, String> {
     let client = reqwest::blocking::Client::builder()
@@ -1870,12 +1902,13 @@ fn register_remote_supervisor_machine(
         "app": "soulkernel-lite",
         "version": env!("CARGO_PKG_VERSION"),
     });
-    let response = client
+    let mut request = client
         .post(normalize_remote_supervisor_register_url(server_url))
-        .bearer_auth(enroll_token)
-        .json(&payload)
-        .send()
-        .map_err(|e| e.to_string())?;
+        .json(&payload);
+    if let Some(token) = enroll_token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().map_err(describe_reqwest_error)?;
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().unwrap_or_default();
@@ -1914,7 +1947,7 @@ fn push_remote_observability_sample(
     if let Some(api_key) = normalized_text(&cfg.api_key) {
         request = request.bearer_auth(api_key);
     }
-    let response = request.send().map_err(|e| e.to_string())?;
+    let response = request.send().map_err(describe_reqwest_error)?;
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().unwrap_or_default();
@@ -1930,6 +1963,47 @@ fn push_remote_observability_sample(
         status: status.as_u16(),
         target_url: normalize_remote_supervisor_ingest_url(&cfg.server_url),
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteSupervisorStatusResponse {
+    machine_count: u64,
+    sample_count: u64,
+}
+
+fn fetch_remote_supervisor_status(
+    server_url: &str,
+) -> Result<RemoteSupervisorStatusResponse, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(format!("{}/api/status", normalize_remote_supervisor_base_url(server_url)))
+        .send()
+        .map_err(describe_reqwest_error)?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().unwrap_or_default();
+        return Err(if detail.trim().is_empty() {
+            format!("HTTP {}", status.as_u16())
+        } else {
+            format!("HTTP {}: {}", status.as_u16(), detail.trim())
+        });
+    }
+    response.json().map_err(|e| e.to_string())
+}
+
+fn describe_reqwest_error(err: reqwest::Error) -> String {
+    if err.is_timeout() {
+        "timeout vers le superviseur distant".to_string()
+    } else if err.is_connect() {
+        "superviseur distant injoignable".to_string()
+    } else if err.is_request() {
+        format!("requête invalide vers le superviseur: {err}")
+    } else {
+        format!("erreur réseau superviseur: {err}")
+    }
 }
 
 fn split_args(input: &str) -> Vec<String> {

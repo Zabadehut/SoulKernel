@@ -2180,10 +2180,13 @@ impl LiteApp {
 
             ui.horizontal_wrapped(|ui| {
                 let status = &state.vm.remote_supervisor_status;
+                let enrolled = !state.vm.remote_supervisor_config.api_key.trim().is_empty();
                 let color = if status.connected {
                     egui::Color32::from_rgb(96, 168, 104)
                 } else if status.last_error.is_some() {
                     egui::Color32::from_rgb(191, 97, 106)
+                } else if !enrolled {
+                    egui::Color32::from_rgb(214, 153, 58)
                 } else {
                     egui::Color32::DARK_GRAY
                 };
@@ -2193,24 +2196,53 @@ impl LiteApp {
                     if status.connected {
                         "connecté".to_string()
                     } else if status.last_error.is_some() {
-                        "erreur".to_string()
+                        status
+                            .last_error_kind
+                            .as_deref()
+                            .map(|kind| match kind {
+                                "network" => "erreur réseau".to_string(),
+                                "http" => "erreur HTTP".to_string(),
+                                "runtime" => "erreur interne".to_string(),
+                                _ => "erreur".to_string(),
+                            })
+                            .unwrap_or_else(|| "erreur".to_string())
+                    } else if !enrolled {
+                        "non enrôlé".to_string()
                     } else {
                         "inactif".to_string()
                     },
                     color,
                 );
-                if let Some(code) = status.last_http_status {
+                Self::metric_badge(
+                    ui,
+                    "Enrôlement",
+                    if enrolled { "clé présente".to_string() } else { "clé absente".to_string() },
+                    if enrolled {
+                        egui::Color32::from_rgb(96, 168, 104)
+                    } else {
+                        egui::Color32::from_rgb(214, 153, 58)
+                    },
+                );
+                if let Some(code) = status.last_success_http_status {
                     Self::metric_badge(
                         ui,
-                        "HTTP",
+                        "Dernier HTTP",
                         code.to_string(),
                         egui::Color32::from_rgb(92, 124, 250),
                     );
                 }
-                if let Some(ts_ms) = status.last_push_ms {
+                if let Some(ts_ms) = status.last_success_ms {
                     Self::metric_badge(
                         ui,
-                        "Dernier push",
+                        "Dernier succès",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
+                        egui::Color32::GRAY,
+                    );
+                }
+                if let Some(ts_ms) = status.last_attempt_ms {
+                    Self::metric_badge(
+                        ui,
+                        "Dernière tentative",
                         fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
                         egui::Color32::GRAY,
                     );
@@ -2229,6 +2261,16 @@ impl LiteApp {
                     egui::RichText::new(format!("Erreur  {err_msg}"))
                         .small()
                         .color(egui::Color32::from_rgb(191, 97, 106)),
+                );
+            }
+            if let Some(ts_ms) = state.vm.remote_supervisor_status.last_error_ms {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Dernière erreur  {}",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms))
+                    ))
+                    .small()
+                    .color(egui::Color32::GRAY),
                 );
             }
 
@@ -2277,6 +2319,12 @@ impl LiteApp {
                 if ui.button("Enregistrer la machine").clicked() {
                     match state.register_remote_supervisor() {
                         Ok(()) => *info = Some("Machine enregistrée auprès du superviseur".to_string()),
+                        Err(err) => *error = Some(err),
+                    }
+                }
+                if ui.button("Tester la connexion").clicked() {
+                    match state.test_remote_supervisor_connection() {
+                        Ok(msg) => *info = Some(msg),
                         Err(err) => *error = Some(err),
                     }
                 }
