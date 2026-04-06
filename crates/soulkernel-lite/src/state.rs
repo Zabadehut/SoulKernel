@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 /// Snapshot interne utilisé pour calculer le delta avant/après une action.
+#[derive(Clone)]
 struct HostImpactSnapshot {
     page_faults: Option<f64>,
     compression: Option<f64>,
@@ -176,6 +177,34 @@ struct RemotePushSuccess {
     target_url: String,
 }
 
+#[derive(Clone)]
+enum BackgroundActionKind {
+    ActivateDome,
+    RollbackDome,
+    EnableSoulram,
+    DisableSoulram,
+}
+
+enum BackgroundActionSuccess {
+    ActivateDome {
+        baseline: ResourceState,
+        impact_before: HostImpactSnapshot,
+        actions: Vec<String>,
+    },
+    RollbackDome {
+        impact_before: HostImpactSnapshot,
+        actions: Vec<String>,
+    },
+    EnableSoulram {
+        impact_before: HostImpactSnapshot,
+        actions: Vec<(String, bool)>,
+    },
+    DisableSoulram {
+        impact_before: HostImpactSnapshot,
+        actions: Vec<(String, bool)>,
+    },
+}
+
 #[derive(Debug, Deserialize)]
 struct RemoteSupervisorRegisterResponse {
     machine_id: String,
@@ -269,8 +298,10 @@ pub struct LiteState {
     refresh_in_flight: bool,
     observability_write_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
     remote_push_handle: Option<std::thread::JoinHandle<Result<RemotePushSuccess, String>>>,
+    action_handle: Option<std::thread::JoinHandle<Result<BackgroundActionSuccess, String>>>,
     last_observability_write: Instant,
     last_remote_push: Instant,
+    pending_host_impact: Option<(HostImpactSnapshot, &'static str)>,
     /// Instant de la dernière exécution d'une action auto-cycle (pour respecter le cooldown interne).
     last_auto_cycle: Option<Instant>,
     /// Instant de la dernière évaluation auto-dôme (pour le cooldown de 30s).
@@ -434,8 +465,10 @@ impl LiteState {
             refresh_in_flight: false,
             observability_write_handle: None,
             remote_push_handle: None,
+            action_handle: None,
             last_observability_write: Instant::now() - Duration::from_secs(10),
             last_remote_push: Instant::now() - Duration::from_secs(10),
+            pending_host_impact: None,
             last_auto_cycle: None,
             last_auto_dome_eval: None,
             dome_activated_at: None,
@@ -445,6 +478,7 @@ impl LiteState {
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
         self.poll_observability_write();
         self.poll_remote_push();
+        self.poll_action();
         let applied = self.apply_pending_refresh()?;
 
         // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
@@ -614,6 +648,7 @@ impl LiteState {
     pub fn refresh_now(&mut self) -> Result<(), String> {
         self.poll_observability_write();
         self.poll_remote_push();
+        self.poll_action();
         // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
         // Les process/inventory seront rafraîchis par le prochain cycle périodique.
         let refresh_processes = self.last_process_refresh.elapsed()
@@ -687,6 +722,78 @@ impl LiteState {
         }
     }
 
+    fn poll_action(&mut self) {
+        let Some(handle) = self.action_handle.take() else {
+            return;
+        };
+        if !handle.is_finished() {
+            self.action_handle = Some(handle);
+            return;
+        }
+        match handle.join() {
+            Ok(Ok(result)) => {
+                match result {
+                    BackgroundActionSuccess::ActivateDome {
+                        baseline,
+                        impact_before,
+                        actions,
+                    } => {
+                        self.dome_snapshot = Some(baseline);
+                        self.vm.dome_active = true;
+                        self.dome_activated_at = Some(Instant::now());
+                        self.vm.last_actions = actions;
+                        self.vm.kpi_memory
+                            .open(now_ms_local(), "dome", self.vm.kpi.kpi_penalized);
+                        self.pending_host_impact = Some((impact_before, "dome"));
+                    }
+                    BackgroundActionSuccess::RollbackDome {
+                        impact_before,
+                        actions,
+                    } => {
+                        self.dome_snapshot = None;
+                        self.vm.dome_active = false;
+                        self.dome_activated_at = None;
+                        self.vm.last_actions = actions;
+                        self.pending_host_impact = Some((impact_before, "dome"));
+                    }
+                    BackgroundActionSuccess::EnableSoulram {
+                        impact_before,
+                        actions,
+                    } => {
+                        self.vm.soulram_active = platform::soulram_enablement_effective(&actions);
+                        self.vm.last_actions = actions
+                            .into_iter()
+                            .map(|(msg, ok)| if ok { format!("✓ {msg}") } else { format!("✗ {msg}") })
+                            .collect();
+                        self.vm.kpi_memory
+                            .open(now_ms_local(), "soulram", self.vm.kpi.kpi_penalized);
+                        self.pending_host_impact = Some((impact_before, "soulram"));
+                    }
+                    BackgroundActionSuccess::DisableSoulram {
+                        impact_before,
+                        actions,
+                    } => {
+                        self.vm.soulram_active = false;
+                        self.vm.last_actions = actions
+                            .into_iter()
+                            .map(|(msg, ok)| if ok { format!("✓ {msg}") } else { format!("✗ {msg}") })
+                            .collect();
+                        self.pending_host_impact = Some((impact_before, "soulram"));
+                    }
+                }
+                if !self.refresh_in_flight {
+                    self.spawn_refresh_task();
+                }
+            }
+            Ok(Err(err)) => {
+                self.vm.last_actions.insert(0, format!("✗ action: {err}"));
+            }
+            Err(_) => {
+                self.vm.last_actions.insert(0, "✗ action: worker panic".to_string());
+            }
+        }
+    }
+
     fn spawn_observability_write_if_needed(&mut self) {
         const OBSERVABILITY_WRITE_MIN_S: u64 = 5;
         if self.observability_write_handle.is_some() {
@@ -720,6 +827,32 @@ impl LiteState {
         self.remote_push_handle = Some(std::thread::spawn(move || {
             push_remote_observability_sample(vm, cfg)
         }));
+    }
+
+    fn spawn_action_if_possible(&mut self, kind: BackgroundActionKind) -> Result<(), String> {
+        if self.action_handle.is_some() {
+            return Err("une action SoulKernel est déjà en cours".to_string());
+        }
+        let baseline = self.vm.metrics.clone();
+        let dome_snapshot = self.dome_snapshot.clone();
+        let profile = self.selected_profile();
+        let eta = self.vm.eta;
+        let policy_mode = self.vm.policy_mode;
+        let target_pid = self.vm.target_pid;
+        let soulram_percent = self.vm.soulram_percent;
+        self.action_handle = Some(std::thread::spawn(move || {
+            execute_background_action(
+                kind,
+                baseline,
+                dome_snapshot,
+                profile,
+                eta,
+                policy_mode,
+                target_pid,
+                soulram_percent,
+            )
+        }));
+        Ok(())
     }
 
     fn spawn_refresh_task(&mut self) {
@@ -828,6 +961,9 @@ impl LiteState {
         }
         self.vm.external_status = snapshot.external_status;
         self.vm.external_bridge_running = self.is_external_bridge_running();
+        if let Some((impact_before, source)) = self.pending_host_impact.take() {
+            self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, source));
+        }
         // KPI gain median : delta médian des actions récompensées, exprimé en %
         // par rapport au KPI courant. Négatif = amélioration (KPI a baissé).
         let kpi_gain_median_pct = self.vm.kpi_memory.avg_kpi_gain().and_then(|avg_delta| {
@@ -952,6 +1088,10 @@ impl LiteState {
         self.refresh_in_flight
     }
 
+    pub fn is_action_in_flight(&self) -> bool {
+        self.action_handle.is_some()
+    }
+
     pub fn selected_profile(&self) -> WorkloadProfile {
         WorkloadProfile::from_name(&self.vm.selected_workload).unwrap_or(WorkloadProfile {
             name: self.vm.selected_workload.clone(),
@@ -961,79 +1101,19 @@ impl LiteState {
     }
 
     pub fn activate_dome(&mut self) -> Result<(), String> {
-        let baseline = self.vm.metrics.clone();
-        let impact_before = HostImpactSnapshot::capture(&baseline);
-        let profile = self.selected_profile();
-        let result = self
-            .runtime
-            .block_on(orchestrator::activate(
-                &profile,
-                self.vm.eta,
-                &baseline,
-                self.vm.policy_mode,
-                self.vm.target_pid,
-            ))
-            .map_err(|e| e.to_string())?;
-        self.dome_snapshot = Some(baseline);
-        self.vm.dome_active = true;
-        self.dome_activated_at = Some(Instant::now());
-        self.vm.last_actions = result.actions;
-        self.vm.kpi_memory.open(now_ms_local(), "dome", self.vm.kpi.kpi_penalized);
-        self.refresh_now()?;
-        self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, "dome"));
-        Ok(())
+        self.spawn_action_if_possible(BackgroundActionKind::ActivateDome)
     }
 
     pub fn rollback_dome(&mut self) -> Result<(), String> {
-        let actions = self
-            .runtime
-            .block_on(orchestrator::rollback(
-                self.dome_snapshot.clone(),
-                self.vm.target_pid,
-            ))
-            .map_err(|e| e.to_string())?;
-        self.vm.dome_active = false;
-        self.dome_activated_at = None;
-        self.vm.last_actions = actions;
-        self.refresh_now()
+        self.spawn_action_if_possible(BackgroundActionKind::RollbackDome)
     }
 
     pub fn enable_soulram(&mut self) -> Result<(), String> {
-        let impact_before = HostImpactSnapshot::capture(&self.vm.metrics);
-        let actions = self
-            .runtime
-            .block_on(platform::enable_soulram(self.vm.soulram_percent));
-        self.vm.soulram_active = platform::soulram_enablement_effective(&actions);
-        self.vm.last_actions = actions
-            .into_iter()
-            .map(|(msg, ok)| {
-                if ok {
-                    format!("✓ {msg}")
-                } else {
-                    format!("✗ {msg}")
-                }
-            })
-            .collect();
-        self.vm.kpi_memory.open(now_ms_local(), "soulram", self.vm.kpi.kpi_penalized);
-        self.refresh_now()?;
-        self.vm.host_impact = Some(impact_before.delta_with(&self.vm.metrics, "soulram"));
-        Ok(())
+        self.spawn_action_if_possible(BackgroundActionKind::EnableSoulram)
     }
 
     pub fn disable_soulram(&mut self) -> Result<(), String> {
-        let actions = self.runtime.block_on(platform::disable_soulram());
-        self.vm.soulram_active = false;
-        self.vm.last_actions = actions
-            .into_iter()
-            .map(|(msg, ok)| {
-                if ok {
-                    format!("✓ {msg}")
-                } else {
-                    format!("✗ {msg}")
-                }
-            })
-            .collect();
-        self.refresh_now()
+        self.spawn_action_if_possible(BackgroundActionKind::DisableSoulram)
     }
 
     pub fn save_external_config(&mut self) -> Result<(), String> {
@@ -1422,6 +1502,64 @@ fn default_machine_id() -> String {
         }
     }
     "soulkernel-client".to_string()
+}
+
+fn execute_background_action(
+    kind: BackgroundActionKind,
+    baseline: ResourceState,
+    dome_snapshot: Option<ResourceState>,
+    profile: WorkloadProfile,
+    eta: f64,
+    policy_mode: PolicyMode,
+    target_pid: Option<u32>,
+    soulram_percent: u8,
+) -> Result<BackgroundActionSuccess, String> {
+    let runtime = Runtime::new().map_err(|e| e.to_string())?;
+    match kind {
+        BackgroundActionKind::ActivateDome => {
+            let impact_before = HostImpactSnapshot::capture(&baseline);
+            let result = runtime
+                .block_on(orchestrator::activate(
+                    &profile,
+                    eta,
+                    &baseline,
+                    policy_mode,
+                    target_pid,
+                ))
+                .map_err(|e| e.to_string())?;
+            Ok(BackgroundActionSuccess::ActivateDome {
+                baseline,
+                impact_before,
+                actions: result.actions,
+            })
+        }
+        BackgroundActionKind::RollbackDome => {
+            let impact_before = HostImpactSnapshot::capture(&baseline);
+            let actions = runtime
+                .block_on(orchestrator::rollback(dome_snapshot, target_pid))
+                .map_err(|e| e.to_string())?;
+            Ok(BackgroundActionSuccess::RollbackDome {
+                impact_before,
+                actions,
+            })
+        }
+        BackgroundActionKind::EnableSoulram => {
+            let impact_before = HostImpactSnapshot::capture(&baseline);
+            let actions = runtime.block_on(platform::enable_soulram(soulram_percent));
+            Ok(BackgroundActionSuccess::EnableSoulram {
+                impact_before,
+                actions,
+            })
+        }
+        BackgroundActionKind::DisableSoulram => {
+            let impact_before = HostImpactSnapshot::capture(&baseline);
+            let actions = runtime.block_on(platform::disable_soulram());
+            Ok(BackgroundActionSuccess::DisableSoulram {
+                impact_before,
+                actions,
+            })
+        }
+    }
 }
 
 fn remote_supervisor_config_path() -> Result<PathBuf, String> {

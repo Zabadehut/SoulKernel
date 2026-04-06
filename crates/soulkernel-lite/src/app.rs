@@ -7,6 +7,16 @@ pub struct LiteApp {
     state: Option<LiteState>,
     error: Option<String>,
     info: Option<String>,
+    active_tab: DashboardTab,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DashboardTab {
+    Home,
+    Actions,
+    Processes,
+    Energy,
+    Hardware,
 }
 
 impl Default for LiteApp {
@@ -16,17 +26,49 @@ impl Default for LiteApp {
                 state: Some(state),
                 error: None,
                 info: None,
+                active_tab: DashboardTab::Home,
             },
             Err(err) => Self {
                 state: None,
                 error: Some(err),
                 info: None,
+                active_tab: DashboardTab::Home,
             },
         }
     }
 }
 
 impl LiteApp {
+    fn tab_button(ui: &mut egui::Ui, active: bool, label: &str) -> egui::Response {
+        let fill = if active {
+            egui::Color32::from_rgb(70, 110, 78)
+        } else {
+            egui::Color32::from_rgb(45, 45, 45)
+        };
+        ui.add(
+            egui::Button::new(label)
+                .fill(fill)
+                .stroke(egui::Stroke::new(1.0, egui::Color32::DARK_GRAY))
+                .corner_radius(6.0),
+        )
+    }
+
+    fn dashboard_tabs(ui: &mut egui::Ui, active_tab: &mut DashboardTab) {
+        ui.horizontal_wrapped(|ui| {
+            for (tab, label) in [
+                (DashboardTab::Home, "Accueil"),
+                (DashboardTab::Actions, "Actions"),
+                (DashboardTab::Processes, "Processus"),
+                (DashboardTab::Energy, "Énergie"),
+                (DashboardTab::Hardware, "Matériel"),
+            ] {
+                if Self::tab_button(ui, *active_tab == tab, label).clicked() {
+                    *active_tab = tab;
+                }
+            }
+        });
+    }
+
     fn tone_for_ratio(value: f64) -> egui::Color32 {
         if value >= 0.85 {
             egui::Color32::from_rgb(210, 84, 84)
@@ -1793,6 +1835,15 @@ impl LiteApp {
                 "Commandes",
                 "Choisir une cible, activer le dôme, libérer la mémoire.",
             );
+            let action_busy = state.is_action_in_flight();
+            if action_busy {
+                ui.label(
+                    egui::RichText::new("↻ action système en cours — mise à jour différée")
+                        .small()
+                        .color(egui::Color32::from_rgb(214, 153, 58)),
+                );
+                ui.separator();
+            }
 
             // ── État courant ──────────────────────────────────────────────────
             Self::action_summary(ui, &state.vm);
@@ -1892,15 +1943,15 @@ impl LiteApp {
             });
             ui.horizontal(|ui| {
                 // "Activer" grisé si déjà actif, "Annuler" grisé si inactif.
-                if ui.add_enabled(!state.vm.dome_active, egui::Button::new("⚡ Activer")).clicked() {
+                if ui.add_enabled(!state.vm.dome_active && !action_busy, egui::Button::new("⚡ Activer")).clicked() {
                     match state.activate_dome() {
-                        Ok(()) => *info = Some("Dôme activé".to_string()),
+                        Ok(()) => *info = Some("Activation du dôme lancée".to_string()),
                         Err(err) => *error = Some(err),
                     }
                 }
-                if ui.add_enabled(state.vm.dome_active, egui::Button::new("↩ Annuler")).clicked() {
+                if ui.add_enabled(state.vm.dome_active && !action_busy, egui::Button::new("↩ Annuler")).clicked() {
                     match state.rollback_dome() {
-                        Ok(()) => *info = Some("Dôme annulé".to_string()),
+                        Ok(()) => *info = Some("Rollback du dôme lancé".to_string()),
                         Err(err) => *error = Some(err),
                     }
                 }
@@ -1952,14 +2003,18 @@ impl LiteApp {
             // ── SoulRAM ───────────────────────────────────────────────────────
             ui.label(egui::RichText::new("SoulRAM").strong());
             ui.horizontal(|ui| {
-                if ui.button("🧠 Activer").clicked() {
+                if ui.add_enabled(!action_busy, egui::Button::new("🧠 Activer")).clicked() {
                     if let Err(err) = state.enable_soulram() {
                         *error = Some(err);
+                    } else {
+                        *info = Some("Activation SoulRAM lancée".to_string());
                     }
                 }
-                if ui.button("🧠 Désactiver").clicked() {
+                if ui.add_enabled(!action_busy, egui::Button::new("🧠 Désactiver")).clicked() {
                     if let Err(err) = state.disable_soulram() {
                         *error = Some(err);
+                    } else {
+                        *info = Some("Désactivation SoulRAM lancée".to_string());
                     }
                 }
             });
@@ -2349,6 +2404,37 @@ impl LiteApp {
         });
     }
 
+    fn home_dashboard(ui: &mut egui::Ui, state: &mut LiteState, error: &mut Option<String>, info: &mut Option<String>) {
+        let wide = ui.available_width() >= 1200.0;
+        if wide {
+            ui.columns(2, |columns| {
+                Self::host_impact_panel(&mut columns[0], &state.vm);
+                columns[0].add_space(8.0);
+                Self::material_overview_panel(&mut columns[0], &state.vm);
+                columns[0].add_space(8.0);
+                Self::decision_panel(&mut columns[0], &state.vm);
+                columns[0].add_space(8.0);
+                Self::telemetry_panel(&mut columns[0], &state.vm);
+
+                Self::gains_panel(&mut columns[1], &state.vm);
+                columns[1].add_space(8.0);
+                Self::pilotage_panel(&mut columns[1], state, error, info);
+                columns[1].add_space(8.0);
+                Self::remote_supervisor_panel(&mut columns[1], state, error, info);
+            });
+        } else {
+            Self::host_impact_panel(ui, &state.vm);
+            ui.add_space(8.0);
+            Self::material_overview_panel(ui, &state.vm);
+            ui.add_space(8.0);
+            Self::decision_panel(ui, &state.vm);
+            ui.add_space(8.0);
+            Self::gains_panel(ui, &state.vm);
+            ui.add_space(8.0);
+            Self::telemetry_panel(ui, &state.vm);
+        }
+    }
+
 }
 
 impl eframe::App for LiteApp {
@@ -2364,7 +2450,7 @@ impl eframe::App for LiteApp {
             return;
         };
 
-        let repaint_ms = if state.vm.show_hud || state.is_refresh_in_flight() {
+        let repaint_ms = if state.vm.show_hud || state.is_refresh_in_flight() || state.is_action_in_flight() {
             500
         } else {
             2000
@@ -2396,60 +2482,43 @@ impl eframe::App for LiteApp {
             }
         });
 
+        let active_tab = &mut self.active_tab;
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("central_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.push_id("dashboard_columns", |ui| {
-                        ui.columns(2, |columns| {
-                            // Colonne gauche : observer → comprendre → mesurer
-                            Self::host_impact_panel(&mut columns[0], &state.vm);
-                            columns[0].add_space(8.0);
-                            Self::material_overview_panel(&mut columns[0], &state.vm);
-                            columns[0].add_space(8.0);
-                            Self::processes_panel(&mut columns[0], state);
-                            columns[0].add_space(8.0);
-                            Self::decision_panel(&mut columns[0], &state.vm);
-                            columns[0].add_space(8.0);
-                            Self::telemetry_panel(&mut columns[0], &state.vm);
-
-                            // Colonne droite : gains → agir → configurer → inventaire
-                            Self::gains_panel(&mut columns[1], &state.vm);
-                            columns[1].add_space(8.0);
-                            Self::pilotage_panel(
-                                &mut columns[1],
-                                state,
-                                &mut self.error,
-                                &mut self.info,
-                            );
-                            columns[1].add_space(8.0);
-                            Self::external_power_panel(
-                                &mut columns[1],
-                                state,
-                                &mut self.error,
-                                &mut self.info,
-                            );
-                            columns[1].add_space(8.0);
-                            Self::remote_supervisor_panel(
-                                &mut columns[1],
-                                state,
-                                &mut self.error,
-                                &mut self.info,
-                            );
-                            columns[1].add_space(8.0);
-                            Self::inventory_panel(&mut columns[1], state);
-                            columns[1].add_space(8.0);
-                            Self::benchmark_panel(
-                                &mut columns[1],
-                                state,
-                                &mut self.error,
-                                &mut self.info,
-                            );
-                            columns[1].add_space(8.0);
-                            Self::hud_panel(&mut columns[1], state);
-                        });
-                    });
+                    Self::dashboard_tabs(ui, active_tab);
+                    ui.add_space(8.0);
+                    match *active_tab {
+                        DashboardTab::Home => {
+                            Self::home_dashboard(ui, state, &mut self.error, &mut self.info);
+                        }
+                        DashboardTab::Actions => {
+                            Self::pilotage_panel(ui, state, &mut self.error, &mut self.info);
+                            ui.add_space(8.0);
+                            Self::external_power_panel(ui, state, &mut self.error, &mut self.info);
+                            ui.add_space(8.0);
+                            Self::remote_supervisor_panel(ui, state, &mut self.error, &mut self.info);
+                            ui.add_space(8.0);
+                            Self::benchmark_panel(ui, state, &mut self.error, &mut self.info);
+                            ui.add_space(8.0);
+                            Self::hud_panel(ui, state);
+                        }
+                        DashboardTab::Processes => {
+                            Self::processes_panel(ui, state);
+                        }
+                        DashboardTab::Energy => {
+                            Self::telemetry_panel(ui, &state.vm);
+                            ui.add_space(8.0);
+                            Self::gains_panel(ui, &state.vm);
+                        }
+                        DashboardTab::Hardware => {
+                            Self::material_overview_panel(ui, &state.vm);
+                            ui.add_space(8.0);
+                            Self::inventory_panel(ui, state);
+                        }
+                    }
                 }); // ScrollArea
         });
 
