@@ -53,6 +53,10 @@ pub fn runtime_short(run_time_s: u64) -> String {
     }
 }
 
+pub fn ago_ms(delta_ms: u64) -> String {
+    runtime_short(delta_ms / 1000)
+}
+
 pub fn io_pair(read_b: u64, write_b: u64) -> String {
     fn mib(v: u64) -> f64 {
         v as f64 / (1024.0 * 1024.0)

@@ -1219,14 +1219,17 @@ pub fn export_snapshot(vm: &LiteViewModel) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-pub fn append_observability_sample(vm: &LiteViewModel) -> Result<String, String> {
+pub fn observability_payload_json(vm: &LiteViewModel) -> Result<String, String> {
+    let payload = build_payload(vm, "observability_sample", Some("timeseries"), Some("tick"));
+    serde_json::to_string(&payload).map_err(|e| e.to_string())
+}
+
+pub fn append_observability_line(line: &str) -> Result<String, String> {
     let path = default_observability_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     rotate_observability_if_needed(&path)?;
-    let payload = build_payload(vm, "observability_sample", Some("timeseries"), Some("tick"));
-    let line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1234,4 +1237,9 @@ pub fn append_observability_sample(vm: &LiteViewModel) -> Result<String, String>
         .map_err(|e| e.to_string())?;
     writeln!(file, "{line}").map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+pub fn append_observability_sample(vm: &LiteViewModel) -> Result<String, String> {
+    let line = observability_payload_json(vm)?;
+    append_observability_line(&line)
 }

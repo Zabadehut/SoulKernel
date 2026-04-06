@@ -16,6 +16,7 @@ use soulkernel_core::telemetry::{
     MachineActivity, TelemetryIngestRequest, TelemetryState, TelemetrySummary,
 };
 use soulkernel_core::workload_catalog::{self, WorkloadSceneDto};
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -136,6 +137,42 @@ impl HostImpactDelta {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteSupervisorConfig {
+    pub enabled: bool,
+    pub server_url: String,
+    pub api_key: String,
+    pub machine_id: String,
+    pub push_interval_s: u64,
+}
+
+impl Default for RemoteSupervisorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_url: "http://127.0.0.1:8787/api/ingest".to_string(),
+            api_key: String::new(),
+            machine_id: default_machine_id(),
+            push_interval_s: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RemoteSupervisorStatus {
+    pub last_push_ms: Option<u64>,
+    pub last_http_status: Option<u16>,
+    pub last_error: Option<String>,
+    pub last_target_url: Option<String>,
+    pub connected: bool,
+}
+
+struct RemotePushSuccess {
+    ts_ms: u64,
+    status: u16,
+    target_url: String,
+}
+
 #[derive(Clone)]
 pub struct LiteViewModel {
     pub now_ms: u64,
@@ -160,6 +197,8 @@ pub struct LiteViewModel {
     pub manual_target_pid: Option<u32>,
     pub audit_path: String,
     pub observability_path: String,
+    pub remote_supervisor_config: RemoteSupervisorConfig,
+    pub remote_supervisor_status: RemoteSupervisorStatus,
     pub last_actions: Vec<String>,
     pub external_config: MerossFileConfig,
     pub external_status: ExternalPowerStatus,
@@ -219,7 +258,9 @@ pub struct LiteState {
     refresh_rx: Option<Receiver<Result<LiteRefreshSnapshot, String>>>,
     refresh_in_flight: bool,
     observability_write_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
+    remote_push_handle: Option<std::thread::JoinHandle<Result<RemotePushSuccess, String>>>,
     last_observability_write: Instant,
+    last_remote_push: Instant,
     /// Instant de la dernière exécution d'une action auto-cycle (pour respecter le cooldown interne).
     last_auto_cycle: Option<Instant>,
     /// Instant de la dernière évaluation auto-dôme (pour le cooldown de 30s).
@@ -314,6 +355,7 @@ impl LiteState {
         let benchmark_path = default_benchmark_path();
         let benchmark_state = BenchmarkState::new(benchmark_path);
         let benchmark_history = benchmark_state.history(None, None, None, None);
+        let remote_supervisor_config = load_remote_supervisor_config().unwrap_or_default();
 
         Ok(Self {
             runtime,
@@ -344,6 +386,8 @@ impl LiteState {
                 observability_path: crate::export::default_observability_path()
                     .to_string_lossy()
                     .into_owned(),
+                remote_supervisor_config,
+                remote_supervisor_status: RemoteSupervisorStatus::default(),
                 last_actions: Vec::new(),
                 external_config,
                 external_status,
@@ -379,7 +423,9 @@ impl LiteState {
             refresh_rx: None,
             refresh_in_flight: false,
             observability_write_handle: None,
+            remote_push_handle: None,
             last_observability_write: Instant::now() - Duration::from_secs(10),
+            last_remote_push: Instant::now() - Duration::from_secs(10),
             last_auto_cycle: None,
             last_auto_dome_eval: None,
             dome_activated_at: None,
@@ -388,6 +434,7 @@ impl LiteState {
 
     pub fn refresh_if_needed(&mut self) -> Result<bool, String> {
         self.poll_observability_write();
+        self.poll_remote_push();
         let applied = self.apply_pending_refresh()?;
 
         // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
@@ -556,6 +603,7 @@ impl LiteState {
 
     pub fn refresh_now(&mut self) -> Result<(), String> {
         self.poll_observability_write();
+        self.poll_remote_push();
         // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
         // Les process/inventory seront rafraîchis par le prochain cycle périodique.
         let refresh_processes = self.last_process_refresh.elapsed()
@@ -601,6 +649,34 @@ impl LiteState {
         }
     }
 
+    fn poll_remote_push(&mut self) {
+        let Some(handle) = self.remote_push_handle.take() else {
+            return;
+        };
+        if !handle.is_finished() {
+            self.remote_push_handle = Some(handle);
+            return;
+        }
+        match handle.join() {
+            Ok(Ok(success)) => {
+                self.vm.remote_supervisor_status.last_push_ms = Some(success.ts_ms);
+                self.vm.remote_supervisor_status.last_http_status = Some(success.status);
+                self.vm.remote_supervisor_status.last_target_url = Some(success.target_url);
+                self.vm.remote_supervisor_status.last_error = None;
+                self.vm.remote_supervisor_status.connected = true;
+            }
+            Ok(Err(err)) => {
+                self.vm.remote_supervisor_status.last_error = Some(err);
+                self.vm.remote_supervisor_status.connected = false;
+            }
+            Err(_) => {
+                self.vm.remote_supervisor_status.last_error =
+                    Some("panic du worker réseau".to_string());
+                self.vm.remote_supervisor_status.connected = false;
+            }
+        }
+    }
+
     fn spawn_observability_write_if_needed(&mut self) {
         const OBSERVABILITY_WRITE_MIN_S: u64 = 5;
         if self.observability_write_handle.is_some() {
@@ -613,6 +689,26 @@ impl LiteState {
         let vm = self.vm.clone();
         self.observability_write_handle = Some(std::thread::spawn(move || {
             crate::export::append_observability_sample(&vm)
+        }));
+    }
+
+    fn spawn_remote_push_if_needed(&mut self, force: bool) {
+        if self.remote_push_handle.is_some() {
+            return;
+        }
+        let cfg = self.vm.remote_supervisor_config.clone();
+        if !cfg.enabled {
+            return;
+        }
+        if !force
+            && self.last_remote_push.elapsed() < Duration::from_secs(cfg.push_interval_s.max(1))
+        {
+            return;
+        }
+        self.last_remote_push = Instant::now();
+        let vm = self.vm.clone();
+        self.remote_push_handle = Some(std::thread::spawn(move || {
+            push_remote_observability_sample(vm, cfg)
         }));
     }
 
@@ -837,6 +933,7 @@ impl LiteState {
         }
 
         self.spawn_observability_write_if_needed();
+        self.spawn_remote_push_if_needed(false);
 
         Ok(())
     }
@@ -932,6 +1029,33 @@ impl LiteState {
     pub fn save_external_config(&mut self) -> Result<(), String> {
         external_power::save_meross_config(&self.vm.external_config)?;
         self.vm.external_status = external_power::get_external_power_status();
+        Ok(())
+    }
+
+    pub fn save_remote_supervisor_config(&mut self) -> Result<(), String> {
+        self.vm.remote_supervisor_config.server_url =
+            normalize_remote_supervisor_url(&self.vm.remote_supervisor_config.server_url);
+        if self.vm.remote_supervisor_config.machine_id.trim().is_empty() {
+            self.vm.remote_supervisor_config.machine_id = default_machine_id();
+        }
+        let path = remote_supervisor_config_path()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let bytes = serde_json::to_vec_pretty(&self.vm.remote_supervisor_config)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn push_remote_supervisor_now(&mut self) -> Result<(), String> {
+        if !self.vm.remote_supervisor_config.enabled {
+            return Err("active d'abord la supervision distante".to_string());
+        }
+        if self.remote_push_handle.is_some() {
+            return Err("un envoi distant est déjà en cours".to_string());
+        }
+        self.spawn_remote_push_if_needed(true);
         Ok(())
     }
 
@@ -1254,6 +1378,95 @@ fn normalized_text(input: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn default_machine_id() -> String {
+    let env_candidates = ["SOULKERNEL_MACHINE_ID", "COMPUTERNAME", "HOSTNAME"];
+    for key in env_candidates {
+        if let Some(value) = std::env::var_os(key) {
+            let value = value.to_string_lossy().trim().to_string();
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    "soulkernel-client".to_string()
+}
+
+fn remote_supervisor_config_path() -> Result<PathBuf, String> {
+    external_power::soulkernel_config_dir()
+        .map(|dir| dir.join("remote_supervisor.json"))
+        .ok_or_else(|| "remote supervisor config dir unavailable".to_string())
+}
+
+fn load_remote_supervisor_config() -> Option<RemoteSupervisorConfig> {
+    let path = remote_supervisor_config_path().ok()?;
+    let raw = std::fs::read(path).ok()?;
+    let mut cfg: RemoteSupervisorConfig = serde_json::from_slice(&raw).ok()?;
+    cfg.server_url = normalize_remote_supervisor_url(&cfg.server_url);
+    if cfg.machine_id.trim().is_empty() {
+        cfg.machine_id = default_machine_id();
+    }
+    if cfg.push_interval_s == 0 {
+        cfg.push_interval_s = 5;
+    }
+    Some(cfg)
+}
+
+fn normalize_remote_supervisor_url(input: &str) -> String {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "http://127.0.0.1:8787/api/ingest".to_string();
+    }
+    if trimmed.contains("/api/ingest") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/api/ingest")
+    }
+}
+
+fn push_remote_observability_sample(
+    vm: LiteViewModel,
+    cfg: RemoteSupervisorConfig,
+) -> Result<RemotePushSuccess, String> {
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&crate::export::observability_payload_json(&vm)?)
+            .map_err(|e| e.to_string())?;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert(
+            "machine_id".to_string(),
+            serde_json::Value::String(cfg.machine_id.clone()),
+        );
+    }
+
+    let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut request = client
+        .post(normalize_remote_supervisor_url(&cfg.server_url))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body);
+    if let Some(api_key) = normalized_text(&cfg.api_key) {
+        request = request.bearer_auth(api_key);
+    }
+    let response = request.send().map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().unwrap_or_default();
+        let detail = if detail.trim().is_empty() {
+            format!("HTTP {}", status.as_u16())
+        } else {
+            format!("HTTP {}: {}", status.as_u16(), detail.trim())
+        };
+        return Err(detail);
+    }
+    Ok(RemotePushSuccess {
+        ts_ms: now_ms_local(),
+        status: status.as_u16(),
+        target_url: normalize_remote_supervisor_url(&cfg.server_url),
+    })
 }
 
 fn split_args(input: &str) -> Vec<String> {

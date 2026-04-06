@@ -2089,6 +2089,122 @@ impl LiteApp {
         });
     }
 
+    fn remote_supervisor_panel(
+        ui: &mut egui::Ui,
+        state: &mut LiteState,
+        error: &mut Option<String>,
+        info: &mut Option<String>,
+    ) {
+        ui.group(|ui| {
+            Self::section_title(
+                ui,
+                "Superviseur distant",
+                "Pousse les ticks d'observabilité vers SoulKernel-Supervisor pour la supervision live distante.",
+            );
+
+            ui.horizontal_wrapped(|ui| {
+                let status = &state.vm.remote_supervisor_status;
+                let color = if status.connected {
+                    egui::Color32::from_rgb(96, 168, 104)
+                } else if status.last_error.is_some() {
+                    egui::Color32::from_rgb(191, 97, 106)
+                } else {
+                    egui::Color32::DARK_GRAY
+                };
+                Self::metric_badge(
+                    ui,
+                    "Statut",
+                    if status.connected {
+                        "connecté".to_string()
+                    } else if status.last_error.is_some() {
+                        "erreur".to_string()
+                    } else {
+                        "inactif".to_string()
+                    },
+                    color,
+                );
+                if let Some(code) = status.last_http_status {
+                    Self::metric_badge(
+                        ui,
+                        "HTTP",
+                        code.to_string(),
+                        egui::Color32::from_rgb(92, 124, 250),
+                    );
+                }
+                if let Some(ts_ms) = status.last_push_ms {
+                    Self::metric_badge(
+                        ui,
+                        "Dernier push",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
+                        egui::Color32::GRAY,
+                    );
+                }
+            });
+
+            if let Some(target) = &state.vm.remote_supervisor_status.last_target_url {
+                ui.label(
+                    egui::RichText::new(format!("Cible  {target}"))
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
+            }
+            if let Some(err_msg) = &state.vm.remote_supervisor_status.last_error {
+                ui.label(
+                    egui::RichText::new(format!("Erreur  {err_msg}"))
+                        .small()
+                        .color(egui::Color32::from_rgb(191, 97, 106)),
+                );
+            }
+
+            ui.separator();
+            ui.checkbox(
+                &mut state.vm.remote_supervisor_config.enabled,
+                "Activer la supervision distante",
+            );
+            ui.horizontal(|ui| {
+                ui.label("Server URL");
+                ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.server_url);
+            });
+            ui.horizontal(|ui| {
+                ui.label("API key");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.api_key)
+                        .password(true),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Machine ID");
+                ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.machine_id);
+            });
+            ui.add(
+                egui::Slider::new(&mut state.vm.remote_supervisor_config.push_interval_s, 1..=60)
+                    .text("Intervalle push (s)"),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Le serveur doit exposer POST /api/ingest et accepter un payload JSON SoulKernel complet.",
+                )
+                .small()
+                .color(egui::Color32::GRAY),
+            );
+
+            ui.horizontal(|ui| {
+                if ui.button("Enregistrer").clicked() {
+                    match state.save_remote_supervisor_config() {
+                        Ok(()) => *info = Some("Config superviseur enregistrée".to_string()),
+                        Err(err) => *error = Some(err),
+                    }
+                }
+                if ui.button("Envoyer maintenant").clicked() {
+                    match state.push_remote_supervisor_now() {
+                        Ok(()) => *info = Some("Push superviseur lancé".to_string()),
+                        Err(err) => *error = Some(err),
+                    }
+                }
+            });
+        });
+    }
+
     fn processes_panel(ui: &mut egui::Ui, state: &LiteState) {
         let summary = &state.vm.process_report.summary;
         ui.group(|ui| {
@@ -2294,6 +2410,13 @@ impl eframe::App for LiteApp {
                             );
                             columns[1].add_space(8.0);
                             Self::external_power_panel(
+                                &mut columns[1],
+                                state,
+                                &mut self.error,
+                                &mut self.info,
+                            );
+                            columns[1].add_space(8.0);
+                            Self::remote_supervisor_panel(
                                 &mut columns[1],
                                 state,
                                 &mut self.error,
