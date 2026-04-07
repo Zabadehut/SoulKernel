@@ -129,14 +129,24 @@ impl LiteApp {
             Self::status_chip(ui, "SoulRAM", vm.soulram_active);
             ui.separator();
             // Puissance : la vraie valeur, pas une formule
-            let power = vm.metrics.raw.host_power_watts
+            let power = vm
+                .metrics
+                .raw
+                .host_power_watts
                 .or_else(|| vm.metrics.raw.wall_power_watts)
-                .or_else(|| if vm.external_status.is_fresh { vm.external_status.last_watts } else { None });
+                .or_else(|| {
+                    if vm.external_status.is_fresh {
+                        vm.external_status.last_watts
+                    } else {
+                        None
+                    }
+                });
             ui.label(format!("Puissance {}", fmt::watts(power)));
             ui.separator();
             // RAM : % d'utilisation direct
             if vm.metrics.raw.mem_total_mb > 0 {
-                let pct = vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64 * 100.0;
+                let pct =
+                    vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64 * 100.0;
                 ui.colored_label(
                     Self::tone_for_ratio(pct / 100.0),
                     format!("RAM {:.0}%", pct),
@@ -195,7 +205,11 @@ impl LiteApp {
                 Self::metric_badge(
                     ui,
                     "I/O",
-                    format!("R {:.1} / W {:.1} MB/s", vm.metrics.raw.io_read_mb_s.unwrap_or(0.0), vm.metrics.raw.io_write_mb_s.unwrap_or(0.0)),
+                    format!(
+                        "R {:.1} / W {:.1} MB/s",
+                        vm.metrics.raw.io_read_mb_s.unwrap_or(0.0),
+                        vm.metrics.raw.io_write_mb_s.unwrap_or(0.0)
+                    ),
                     Self::tone_for_ratio((io_total / 200.0).clamp(0.0, 1.0)),
                 );
             }
@@ -222,12 +236,14 @@ impl LiteApp {
             {
                 use soulkernel_core::kpi::KpiLabel;
                 let kpi_color = match vm.kpi.label {
-                    KpiLabel::Efficient   => egui::Color32::from_rgb(96, 168, 104),
-                    KpiLabel::Moderate    => egui::Color32::from_rgb(214, 153, 58),
+                    KpiLabel::Efficient => egui::Color32::from_rgb(96, 168, 104),
+                    KpiLabel::Moderate => egui::Color32::from_rgb(214, 153, 58),
                     KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
-                    KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
+                    KpiLabel::Unknown => egui::Color32::DARK_GRAY,
                 };
-                let kpi_val = vm.kpi.kpi_penalized
+                let kpi_val = vm
+                    .kpi
+                    .kpi_penalized
                     .map(|k| format!("{:.1} W/%", k))
                     .unwrap_or_else(|| "KPI N/A".to_string());
                 Self::metric_badge(ui, "KPI", kpi_val, kpi_color);
@@ -414,19 +430,24 @@ impl LiteApp {
                     columns[1].label(format!("Source {external_source}"));
                     columns[1].label(format!(
                         "Fraîcheur {}",
-                        if vm.external_status.is_fresh { "fraîche" } else { "stale" }
+                        if vm.external_status.is_fresh {
+                            "fraîche"
+                        } else {
+                            "stale"
+                        }
                     ));
                     columns[1].label(format!(
                         "Bridge {}",
-                        if vm.external_bridge_running { "actif" } else { "arrêté" }
+                        if vm.external_bridge_running {
+                            "actif"
+                        } else {
+                            "arrêté"
+                        }
                     ));
                     let path = &vm.external_status.power_file_path;
                     if !path.is_empty() {
-                        columns[1].label(
-                            egui::RichText::new(path)
-                                .small()
-                                .color(egui::Color32::GRAY),
-                        );
+                        columns[1]
+                            .label(egui::RichText::new(path).small().color(egui::Color32::GRAY));
                     }
                 } else {
                     columns[1].label(
@@ -467,11 +488,9 @@ impl LiteApp {
                         columns[2].label(format!("Mur {w:.1} W · hôte non mesuré"));
                         columns[2].label(format!("Confiance {confidence}"));
                         columns[2].label(
-                            egui::RichText::new(Self::power_unavailable_hint(
-                                &vm.platform_info.os,
-                            ))
-                            .small()
-                            .color(egui::Color32::DARK_GRAY),
+                            egui::RichText::new(Self::power_unavailable_hint(&vm.platform_info.os))
+                                .small()
+                                .color(egui::Color32::DARK_GRAY),
                         );
                     }
                     (Some(h), None) => {
@@ -484,11 +503,9 @@ impl LiteApp {
                                 .color(egui::Color32::DARK_GRAY),
                         );
                         columns[2].label(
-                            egui::RichText::new(Self::power_unavailable_hint(
-                                &vm.platform_info.os,
-                            ))
-                            .small()
-                            .color(egui::Color32::DARK_GRAY),
+                            egui::RichText::new(Self::power_unavailable_hint(&vm.platform_info.os))
+                                .small()
+                                .color(egui::Color32::DARK_GRAY),
                         );
                     }
                 }
@@ -505,7 +522,14 @@ impl LiteApp {
                     .iter()
                     .find(|p| p.pid == pid)
             })
-            .map(|proc_| format!("{} · PID {} · {}", proc_.name, proc_.pid, fmt::pct(proc_.cpu_usage_pct)))
+            .map(|proc_| {
+                format!(
+                    "{} · PID {} · {}",
+                    proc_.name,
+                    proc_.pid,
+                    fmt::pct(proc_.cpu_usage_pct)
+                )
+            })
             .unwrap_or_else(|| "aucune cible active".to_string());
         ui.label(format!("Cible  {target}"));
     }
@@ -526,17 +550,30 @@ impl LiteApp {
         let t = &vm.adaptive_tuning;
         ui.label(
             egui::RichText::new(format!(
-                "Formule dynamique {}  ·  λ {:.2}  ·  garde {:.0}%  ·  rollback {:.2}  ·  reward EMA {:.0}%  ·  {} obs",
+                "Formule dynamique {}  ·  λ {:.2}  ·  garde {:.0}%  ·  confiance {:.0}%  ·  attr {:.0}%  ·  reward EMA {:.0}%  ·  {} obs / {} skip",
                 if t.enabled { "ON" } else { "OFF" },
                 vm.kpi_lambda,
                 vm.device_profile.auto_dome_guard_min * 100.0,
-                vm.device_profile.kpi_post_action_rollback_ratio,
+                t.decision_confidence * 100.0,
+                t.process_attribution_confidence * 100.0,
                 t.reward_ema * 100.0,
-                t.samples
+                t.samples,
+                t.skipped_samples
             ))
             .small()
             .color(egui::Color32::GRAY),
         );
+        if t.memory_fault_guard_active || !t.last_learning_note.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("↳ {}", t.last_learning_note))
+                    .small()
+                    .color(if t.memory_fault_guard_active {
+                        egui::Color32::YELLOW
+                    } else {
+                        egui::Color32::GRAY
+                    }),
+            );
+        }
     }
 
     fn action_summary(ui: &mut egui::Ui, vm: &LiteViewModel) {
@@ -560,7 +597,10 @@ impl LiteApp {
 
     fn priority_hint(ui: &mut egui::Ui, vm: &LiteViewModel) {
         // Check if real dome savings are already measured this session.
-        let dome_delta_w = vm.telemetry.total.avg_power_dome_off_w
+        let dome_delta_w = vm
+            .telemetry
+            .total
+            .avg_power_dome_off_w
             .zip(vm.telemetry.total.avg_power_dome_on_w)
             .map(|(off, on)| off - on);
         let real_savings = vm.telemetry.total.energy_saved_kwh.unwrap_or(0.0) > 0.01
@@ -608,7 +648,9 @@ impl LiteApp {
                 egui::Color32::from_rgb(214, 153, 58),
                 egui::RichText::new("Impact modéré").strong(),
             );
-            ui.label("Le gain attendu semble limité. Vérifier d'abord la cible et la charge réelle.");
+            ui.label(
+                "Le gain attendu semble limité. Vérifier d'abord la cible et la charge réelle.",
+            );
         }
     }
 
@@ -877,9 +919,13 @@ impl LiteApp {
 
     fn host_impact_delta_row(ui: &mut egui::Ui, delta: &HostImpactDelta, now_ms: u64) {
         let age_s = now_ms.saturating_sub(delta.captured_at_ms) / 1000;
-        ui.label(egui::RichText::new(
-            format!("Résultat dernière action : {}  (il y a {}s)", delta.source, age_s)
-        ).strong());
+        ui.label(
+            egui::RichText::new(format!(
+                "Résultat dernière action : {}  (il y a {}s)",
+                delta.source, age_s
+            ))
+            .strong(),
+        );
         ui.horizontal_wrapped(|ui| {
             // RAM libérée
             let freed = delta.mem_freed_mb();
@@ -912,14 +958,14 @@ impl LiteApp {
                 } else {
                     egui::Color32::GRAY
                 };
+                Self::metric_badge(ui, "Page faults", format!("{:+.0}%", -pct), color);
+            } else if delta.page_faults_before.is_some() || delta.page_faults_after.is_some() {
                 Self::metric_badge(
                     ui,
                     "Page faults",
-                    format!("{:+.0}%", -pct),
-                    color,
+                    "mesure en cours".to_string(),
+                    egui::Color32::GRAY,
                 );
-            } else if delta.page_faults_before.is_some() || delta.page_faults_after.is_some() {
-                Self::metric_badge(ui, "Page faults", "mesure en cours".to_string(), egui::Color32::GRAY);
             }
 
             // Puissance économisée
@@ -931,16 +977,12 @@ impl LiteApp {
                 } else {
                     egui::Color32::GRAY
                 };
-                Self::metric_badge(
-                    ui,
-                    "Puissance",
-                    format!("{:+.1} W", -saved),
-                    color,
-                );
+                Self::metric_badge(ui, "Puissance", format!("{:+.1} W", -saved), color);
             }
 
             // Compression avant/après
-            if let (Some(before), Some(after)) = (delta.compression_before, delta.compression_after) {
+            if let (Some(before), Some(after)) = (delta.compression_before, delta.compression_after)
+            {
                 let delta_ratio = after - before;
                 let color = if delta_ratio > 0.02 {
                     egui::Color32::from_rgb(96, 168, 104)
@@ -975,9 +1017,15 @@ impl LiteApp {
                 "Pression, fenêtre d'action et garde — en un coup d'œil.",
             );
             let pressure = if vm.metrics.sigma >= vm.sigma_max {
-                ("Pression élevée", "La machine est tendue — éviter d'ajouter une charge.")
+                (
+                    "Pression élevée",
+                    "La machine est tendue — éviter d'ajouter une charge.",
+                )
             } else if vm.metrics.sigma >= vm.sigma_max * 0.75 {
-                ("Pression surveillée", "Charge modérée — agir avec précaution.")
+                (
+                    "Pression surveillée",
+                    "Charge modérée — agir avec précaution.",
+                )
             } else {
                 ("Pression basse", "La machine est à l'aise.")
             };
@@ -993,7 +1041,10 @@ impl LiteApp {
             } else if vm.formula.advanced_guard >= 0.5 {
                 ("Garde prudente", "SoulKernel attend un meilleur contexte.")
             } else {
-                ("Garde fermée", "SoulKernel bloque l'action pour protéger le HOST.")
+                (
+                    "Garde fermée",
+                    "SoulKernel bloque l'action pour protéger le HOST.",
+                )
             };
             let pressure_color = if vm.metrics.sigma >= vm.sigma_max {
                 egui::Color32::from_rgb(210, 84, 84)
@@ -1037,19 +1088,17 @@ impl LiteApp {
 
             // ── Ancienneté ────────────────────────────────────────────────────
             if lt.first_launch_ts > 0 {
-                let age_h = lt.total_samples as f64 * vm.telemetry.total.avg_power_w
-                    .map(|_| 1.0).unwrap_or(1.0); // just for age display
-                // Use total_samples * refresh_interval to estimate age
-                // refresh ~5s → total_idle_hours + total_dome_hours + reste
-                let monitored_h = lt.total_idle_hours + lt.total_dome_hours + lt.soulram_active_hours;
+                let age_h = lt.total_samples as f64
+                    * vm.telemetry.total.avg_power_w.map(|_| 1.0).unwrap_or(1.0); // just for age display
+                                                                                  // Use total_samples * refresh_interval to estimate age
+                                                                                  // refresh ~5s → total_idle_hours + total_dome_hours + reste
+                let monitored_h =
+                    lt.total_idle_hours + lt.total_dome_hours + lt.soulram_active_hours;
                 if monitored_h > 0.01 {
                     ui.label(
                         egui::RichText::new(format!(
                             "Suivi depuis {:.0}h  ({} samples  ·  {:.0}h idle  ·  {:.1}h dôme)",
-                            monitored_h,
-                            lt.total_samples,
-                            lt.total_idle_hours,
-                            lt.total_dome_hours,
+                            monitored_h, lt.total_samples, lt.total_idle_hours, lt.total_dome_hours,
                         ))
                         .small()
                         .color(egui::Color32::GRAY),
@@ -1170,7 +1219,10 @@ impl LiteApp {
                         Self::metric_badge(
                             ui,
                             "Coût cumulé",
-                            format!("{:.2} {}", lt.total_energy_cost_measured, vm.telemetry.pricing.currency),
+                            format!(
+                                "{:.2} {}",
+                                lt.total_energy_cost_measured, vm.telemetry.pricing.currency
+                            ),
                             egui::Color32::LIGHT_BLUE,
                         );
                     }
@@ -1253,7 +1305,10 @@ impl LiteApp {
                     Self::metric_badge(
                         ui,
                         "Dôme actif",
-                        format!("{:.0}% du temps", vm.telemetry.total.dome_active_ratio * 100.0),
+                        format!(
+                            "{:.0}% du temps",
+                            vm.telemetry.total.dome_active_ratio * 100.0
+                        ),
                         egui::Color32::from_rgb(96, 168, 104),
                     );
                 }
@@ -1271,7 +1326,9 @@ impl LiteApp {
                     fmt::watts(vm.telemetry.total.avg_power_dome_off_w)
                 ));
                 if let Some(saved) = vm.telemetry.total.energy_saved_kwh.filter(|&v| v > 0.0) {
-                    ui.label(format!("Économie estimée dôme {saved:.3} kWh cette session"));
+                    ui.label(format!(
+                        "Économie estimée dôme {saved:.3} kWh cette session"
+                    ));
                 }
             }
 
@@ -1341,7 +1398,11 @@ impl LiteApp {
                 Self::metric_badge(
                     ui,
                     "Bridge",
-                    if state.vm.external_bridge_running { "actif".to_string() } else { "arrêté".to_string() },
+                    if state.vm.external_bridge_running {
+                        "actif".to_string()
+                    } else {
+                        "arrêté".to_string()
+                    },
                     bridge_color,
                 );
                 let fresh_color = if state.vm.external_status.is_fresh {
@@ -1394,20 +1455,36 @@ impl LiteApp {
             ui.collapsing("Identifiants Meross", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("E-mail");
-                    let email = state.vm.external_config.meross_email.get_or_insert_default();
+                    let email = state
+                        .vm
+                        .external_config
+                        .meross_email
+                        .get_or_insert_default();
                     ui.text_edit_singleline(email);
                 });
                 ui.horizontal(|ui| {
                     ui.label("Mot de passe");
-                    let pwd = state.vm.external_config.meross_password.get_or_insert_default();
+                    let pwd = state
+                        .vm
+                        .external_config
+                        .meross_password
+                        .get_or_insert_default();
                     ui.add(egui::TextEdit::singleline(pwd).password(true));
                 });
                 ui.horizontal(|ui| {
                     ui.label("Région");
-                    let region = state.vm.external_config.meross_region.get_or_insert("eu".to_string());
+                    let region = state
+                        .vm
+                        .external_config
+                        .meross_region
+                        .get_or_insert("eu".to_string());
                     ui.text_edit_singleline(region);
                     ui.label("Modèle");
-                    let device = state.vm.external_config.meross_device_type.get_or_insert("mss315".to_string());
+                    let device = state
+                        .vm
+                        .external_config
+                        .meross_device_type
+                        .get_or_insert("mss315".to_string());
                     ui.text_edit_singleline(device);
                 });
             });
@@ -1433,9 +1510,12 @@ impl LiteApp {
             });
             if !state.vm.external_status.bridge_log_path.is_empty() {
                 ui.label(
-                    egui::RichText::new(format!("Log: {}", state.vm.external_status.bridge_log_path))
-                        .small()
-                        .color(egui::Color32::DARK_GRAY),
+                    egui::RichText::new(format!(
+                        "Log: {}",
+                        state.vm.external_status.bridge_log_path
+                    ))
+                    .small()
+                    .color(egui::Color32::DARK_GRAY),
                 );
             }
         });
@@ -1661,7 +1741,11 @@ impl LiteApp {
 
                     // Lien physique
                     if let Some(link) = &item.physical_link_hint {
-                        ui.label(egui::RichText::new(link).small().color(egui::Color32::DARK_GRAY));
+                        ui.label(
+                            egui::RichText::new(link)
+                                .small()
+                                .color(egui::Color32::DARK_GRAY),
+                        );
                     }
 
                     // Fiabilité : seulement si mesurée ou dérivée (pas "detected" à 65%)
@@ -1815,14 +1899,16 @@ impl LiteApp {
                 ));
                 {
                     use soulkernel_core::kpi::KpiLabel;
-                    let kpi_str = vm.kpi.kpi_penalized
+                    let kpi_str = vm
+                        .kpi
+                        .kpi_penalized
                         .map(|k| format!("KPI {:.1} W/%  [{}]", k, vm.kpi.label.as_str()))
                         .unwrap_or_else(|| "KPI —".to_string());
                     let kpi_color = match vm.kpi.label {
-                        KpiLabel::Efficient   => egui::Color32::from_rgb(96, 168, 104),
-                        KpiLabel::Moderate    => egui::Color32::from_rgb(214, 153, 58),
+                        KpiLabel::Efficient => egui::Color32::from_rgb(96, 168, 104),
+                        KpiLabel::Moderate => egui::Color32::from_rgb(214, 153, 58),
                         KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
-                        KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
+                        KpiLabel::Unknown => egui::Color32::DARK_GRAY,
                     };
                     ui.colored_label(kpi_color, kpi_str);
                 }
@@ -2473,7 +2559,12 @@ impl LiteApp {
         });
     }
 
-    fn home_dashboard(ui: &mut egui::Ui, state: &mut LiteState, error: &mut Option<String>, info: &mut Option<String>) {
+    fn home_dashboard(
+        ui: &mut egui::Ui,
+        state: &mut LiteState,
+        error: &mut Option<String>,
+        info: &mut Option<String>,
+    ) {
         let wide = ui.available_width() >= 1200.0;
         if wide {
             ui.columns(2, |columns| {
@@ -2503,7 +2594,6 @@ impl LiteApp {
             Self::telemetry_panel(ui, &state.vm);
         }
     }
-
 }
 
 impl eframe::App for LiteApp {
@@ -2519,11 +2609,12 @@ impl eframe::App for LiteApp {
             return;
         };
 
-        let repaint_ms = if state.vm.show_hud || state.is_refresh_in_flight() || state.is_action_in_flight() {
-            500
-        } else {
-            2000
-        };
+        let repaint_ms =
+            if state.vm.show_hud || state.is_refresh_in_flight() || state.is_action_in_flight() {
+                500
+            } else {
+                2000
+            };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
 
         if let Err(err) = state.refresh_if_needed() {
@@ -2568,7 +2659,12 @@ impl eframe::App for LiteApp {
                             ui.add_space(8.0);
                             Self::external_power_panel(ui, state, &mut self.error, &mut self.info);
                             ui.add_space(8.0);
-                            Self::remote_supervisor_panel(ui, state, &mut self.error, &mut self.info);
+                            Self::remote_supervisor_panel(
+                                ui,
+                                state,
+                                &mut self.error,
+                                &mut self.info,
+                            );
                             ui.add_space(8.0);
                             Self::benchmark_panel(ui, state, &mut self.error, &mut self.info);
                             ui.add_space(8.0);

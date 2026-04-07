@@ -7,8 +7,8 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::Read;
 use std::hash::{Hash, Hasher};
+use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -364,10 +364,22 @@ struct KpiExport {
 struct AdaptiveTuningExport {
     enabled: bool,
     samples: u64,
+    skipped_samples: u64,
     reward_ema: f64,
     delta_kpi_ema: f64,
     faults_gain_ema: f64,
     power_gain_ema: f64,
+    dome_reward_ema: f64,
+    dome_faults_gain_ema: f64,
+    dome_power_gain_ema: f64,
+    soulram_reward_ema: f64,
+    soulram_faults_gain_ema: f64,
+    soulram_power_gain_ema: f64,
+    decision_confidence: f64,
+    process_attribution_confidence: f64,
+    last_action_confidence: f64,
+    last_learning_note: String,
+    memory_fault_guard_active: bool,
     current_lambda: f64,
     current_guard_min: f64,
     current_rollback_ratio: f64,
@@ -741,8 +753,8 @@ fn build_external_power_export<'a>(vm: &'a LiteViewModel) -> ExternalPowerExport
 fn infer_machine_activity(vm: &LiteViewModel) -> &'static str {
     let cpu = vm.metrics.raw.cpu_pct;
     let gpu_pct = vm.metrics.raw.gpu_pct.unwrap_or(0.0);
-    let io_total = vm.metrics.raw.io_read_mb_s.unwrap_or(0.0)
-        + vm.metrics.raw.io_write_mb_s.unwrap_or(0.0);
+    let io_total =
+        vm.metrics.raw.io_read_mb_s.unwrap_or(0.0) + vm.metrics.raw.io_write_mb_s.unwrap_or(0.0);
     let webview_mem_mb = vm.metrics.raw.webview_host_mem_mb.unwrap_or(0) as f64;
     let gpu_adjusted = if webview_mem_mb >= 48.0 {
         (gpu_pct - 18.0).max(0.0)
@@ -1173,10 +1185,22 @@ fn build_adaptive_tuning_export(vm: &LiteViewModel) -> AdaptiveTuningExport {
     AdaptiveTuningExport {
         enabled: t.enabled,
         samples: t.samples,
+        skipped_samples: t.skipped_samples,
         reward_ema: t.reward_ema,
         delta_kpi_ema: t.delta_kpi_ema,
         faults_gain_ema: t.faults_gain_ema,
         power_gain_ema: t.power_gain_ema,
+        dome_reward_ema: t.dome_reward_ema,
+        dome_faults_gain_ema: t.dome_faults_gain_ema,
+        dome_power_gain_ema: t.dome_power_gain_ema,
+        soulram_reward_ema: t.soulram_reward_ema,
+        soulram_faults_gain_ema: t.soulram_faults_gain_ema,
+        soulram_power_gain_ema: t.soulram_power_gain_ema,
+        decision_confidence: t.decision_confidence,
+        process_attribution_confidence: t.process_attribution_confidence,
+        last_action_confidence: t.last_action_confidence,
+        last_learning_note: t.last_learning_note.clone(),
+        memory_fault_guard_active: t.memory_fault_guard_active,
         current_lambda: vm.kpi_lambda,
         current_guard_min: vm.device_profile.auto_dome_guard_min,
         current_rollback_ratio: vm.device_profile.kpi_post_action_rollback_ratio,

@@ -1,22 +1,22 @@
+use serde::{Deserialize, Serialize};
 use soulkernel_core::audit::{default_audit_path, now_ms_local};
 use soulkernel_core::benchmark::{
     self, compute_summary, BenchmarkHistoryResponse, BenchmarkPhase, BenchmarkSample,
     BenchmarkSession, BenchmarkState,
 };
+use soulkernel_core::device_profile::DeviceProfile;
 use soulkernel_core::external_power::{self, ExternalPowerStatus, MerossFileConfig};
 use soulkernel_core::formula::{self, FormulaResult, WorkloadProfile};
 use soulkernel_core::inventory::{self, DeviceInventoryReport};
+use soulkernel_core::kpi::{self, KpiLearningMemory, KpiSnapshot};
 use soulkernel_core::metrics::{self, ResourceState};
 use soulkernel_core::orchestrator;
 use soulkernel_core::platform::{self, PlatformInfo, PolicyMode, SoulRamBackendInfo};
 use soulkernel_core::processes::{self, ProcessObservedReport};
-use soulkernel_core::device_profile::DeviceProfile;
-use soulkernel_core::kpi::{self, KpiLearningMemory, KpiSnapshot};
 use soulkernel_core::telemetry::{
     MachineActivity, TelemetryIngestRequest, TelemetryState, TelemetrySummary,
 };
 use soulkernel_core::workload_catalog::{self, WorkloadSceneDto};
-use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -187,10 +187,22 @@ struct RemotePushSuccess {
 pub struct AdaptiveTuningState {
     pub enabled: bool,
     pub samples: u64,
+    pub skipped_samples: u64,
     pub reward_ema: f64,
     pub delta_kpi_ema: f64,
     pub faults_gain_ema: f64,
     pub power_gain_ema: f64,
+    pub dome_reward_ema: f64,
+    pub dome_faults_gain_ema: f64,
+    pub dome_power_gain_ema: f64,
+    pub soulram_reward_ema: f64,
+    pub soulram_faults_gain_ema: f64,
+    pub soulram_power_gain_ema: f64,
+    pub decision_confidence: f64,
+    pub process_attribution_confidence: f64,
+    pub last_action_confidence: f64,
+    pub last_learning_note: String,
+    pub memory_fault_guard_active: bool,
     pub base_guard_min: f64,
     pub base_rollback_ratio: f64,
     pub base_lambda: f64,
@@ -204,10 +216,17 @@ pub struct AdaptiveTuningState {
 struct AdaptiveTuningPersisted {
     enabled: bool,
     samples: u64,
+    skipped_samples: u64,
     reward_ema: f64,
     delta_kpi_ema: f64,
     faults_gain_ema: f64,
     power_gain_ema: f64,
+    dome_reward_ema: f64,
+    dome_faults_gain_ema: f64,
+    dome_power_gain_ema: f64,
+    soulram_reward_ema: f64,
+    soulram_faults_gain_ema: f64,
+    soulram_power_gain_ema: f64,
     guard_bias: f64,
     rollback_bias: f64,
     lambda_bias: f64,
@@ -218,10 +237,17 @@ impl Default for AdaptiveTuningPersisted {
         Self {
             enabled: true,
             samples: 0,
+            skipped_samples: 0,
             reward_ema: 0.5,
             delta_kpi_ema: 0.0,
             faults_gain_ema: 0.0,
             power_gain_ema: 0.0,
+            dome_reward_ema: 0.5,
+            dome_faults_gain_ema: 0.0,
+            dome_power_gain_ema: 0.0,
+            soulram_reward_ema: 0.5,
+            soulram_faults_gain_ema: 0.0,
+            soulram_power_gain_ema: 0.0,
             guard_bias: 0.0,
             rollback_bias: 0.0,
             lambda_bias: 0.0,
@@ -234,10 +260,22 @@ impl AdaptiveTuningState {
         Self {
             enabled: true,
             samples: 0,
+            skipped_samples: 0,
             reward_ema: 0.5,
             delta_kpi_ema: 0.0,
             faults_gain_ema: 0.0,
             power_gain_ema: 0.0,
+            dome_reward_ema: 0.5,
+            dome_faults_gain_ema: 0.0,
+            dome_power_gain_ema: 0.0,
+            soulram_reward_ema: 0.5,
+            soulram_faults_gain_ema: 0.0,
+            soulram_power_gain_ema: 0.0,
+            decision_confidence: 0.0,
+            process_attribution_confidence: 0.0,
+            last_action_confidence: 0.0,
+            last_learning_note: "initialisation".to_string(),
+            memory_fault_guard_active: false,
             base_guard_min: profile.auto_dome_guard_min,
             base_rollback_ratio: profile.kpi_post_action_rollback_ratio,
             base_lambda: profile.kpi_lambda_default,
@@ -253,10 +291,17 @@ impl AdaptiveTuningPersisted {
         Self {
             enabled: state.enabled,
             samples: state.samples,
+            skipped_samples: state.skipped_samples,
             reward_ema: state.reward_ema,
             delta_kpi_ema: state.delta_kpi_ema,
             faults_gain_ema: state.faults_gain_ema,
             power_gain_ema: state.power_gain_ema,
+            dome_reward_ema: state.dome_reward_ema,
+            dome_faults_gain_ema: state.dome_faults_gain_ema,
+            dome_power_gain_ema: state.dome_power_gain_ema,
+            soulram_reward_ema: state.soulram_reward_ema,
+            soulram_faults_gain_ema: state.soulram_faults_gain_ema,
+            soulram_power_gain_ema: state.soulram_power_gain_ema,
             guard_bias: state.guard_bias,
             rollback_bias: state.rollback_bias,
             lambda_bias: state.lambda_bias,
@@ -267,10 +312,17 @@ impl AdaptiveTuningPersisted {
         let mut state = AdaptiveTuningState::for_profile(profile);
         state.enabled = self.enabled;
         state.samples = self.samples;
+        state.skipped_samples = self.skipped_samples;
         state.reward_ema = self.reward_ema;
         state.delta_kpi_ema = self.delta_kpi_ema;
         state.faults_gain_ema = self.faults_gain_ema;
         state.power_gain_ema = self.power_gain_ema;
+        state.dome_reward_ema = self.dome_reward_ema;
+        state.dome_faults_gain_ema = self.dome_faults_gain_ema;
+        state.dome_power_gain_ema = self.dome_power_gain_ema;
+        state.soulram_reward_ema = self.soulram_reward_ema;
+        state.soulram_faults_gain_ema = self.soulram_faults_gain_ema;
+        state.soulram_power_gain_ema = self.soulram_power_gain_ema;
         state.guard_bias = self.guard_bias.clamp(-0.12, 0.15);
         state.rollback_bias = self.rollback_bias.clamp(-0.10, 0.08);
         state.lambda_bias = self.lambda_bias.clamp(-0.25, 0.50);
@@ -501,10 +553,8 @@ impl LiteState {
         let benchmark_history = benchmark_state.history(None, None, None, None);
         let remote_supervisor_config = load_remote_supervisor_config().unwrap_or_default();
         let mut device_profile = DeviceProfile::pc();
-        let adaptive_tuning =
-            load_adaptive_tuning(&default_machine_id(), &device_profile).unwrap_or_else(|| {
-                AdaptiveTuningState::for_profile(&device_profile)
-            });
+        let adaptive_tuning = load_adaptive_tuning(&default_machine_id(), &device_profile)
+            .unwrap_or_else(|| AdaptiveTuningState::for_profile(&device_profile));
         device_profile.auto_dome_guard_min =
             (adaptive_tuning.base_guard_min + adaptive_tuning.guard_bias).clamp(0.55, 0.95);
         device_profile.kpi_post_action_rollback_ratio =
@@ -630,13 +680,16 @@ impl LiteState {
         if !self.vm.device_profile.can_act {
             return;
         }
+        if self.soulram_fault_guard_active() {
+            self.vm.next_cycle_in_s = Some(self.vm.device_profile.soulram_sustain_cooldown_s);
+            return;
+        }
 
         let profile = self.selected_profile();
         let sigma = self.vm.metrics.sigma;
 
         // Compute remaining cooldown to display in UI.
-        let (allow, _notes) =
-            soulkernel_core::memory_policy::allow_global_trim(Some(&profile));
+        let (allow, _notes) = soulkernel_core::memory_policy::allow_global_trim(Some(&profile));
 
         if !allow {
             // Estimate remaining cooldown from last_auto_cycle timestamp.
@@ -661,7 +714,11 @@ impl LiteState {
         // sigma seul est insuffisant quand la pression mémoire est "basse" mais que
         // la machine consomme 147W/29% CPU (cas observé en prod). On accepte aussi
         // cpu_pct > 5% ou power > 20W comme preuve d'activité réelle.
-        let power_w = self.vm.metrics.raw.host_power_watts
+        let power_w = self
+            .vm
+            .metrics
+            .raw
+            .host_power_watts
             .or(self.vm.metrics.raw.wall_power_watts)
             .unwrap_or(0.0);
         let machine_active = sigma >= self.vm.device_profile.soulram_idle_sigma_min
@@ -713,6 +770,11 @@ impl LiteState {
 
         let kpi = &self.vm.kpi;
         let guard_ok = self.vm.formula.advanced_guard >= self.vm.device_profile.auto_dome_guard_min;
+        let decision_confidence = self.compute_decision_confidence();
+        self.vm.adaptive_tuning.decision_confidence = decision_confidence;
+        self.vm.adaptive_tuning.process_attribution_confidence =
+            self.compute_process_attribution_confidence();
+        self.vm.adaptive_tuning.memory_fault_guard_active = self.soulram_fault_guard_active();
 
         if !self.vm.dome_active {
             // ── Activation ───────────────────────────────────────────────────
@@ -723,15 +785,16 @@ impl LiteState {
                 !p.is_self_process
                     && !p.is_embedded_webview
                     && matches!(
-                        soulkernel_core::kpi::classify_by_name(
-                            &self.vm.device_profile,
-                            &p.name,
-                        ),
+                        soulkernel_core::kpi::classify_by_name(&self.vm.device_profile, &p.name,),
                         None
                     )
                     && p.cpu_usage_pct >= self.vm.device_profile.cpu_useful_min_pct
             });
-            if kpi.should_act_with_profile(&self.vm.device_profile) && guard_ok && has_useful_target {
+            if kpi.should_act_with_profile(&self.vm.device_profile)
+                && guard_ok
+                && has_useful_target
+                && decision_confidence >= 0.45
+            {
                 let _ = self.activate_dome(); // erreurs non fatales en auto
             }
         } else {
@@ -743,7 +806,8 @@ impl LiteState {
             // Durée minimale : le dôme doit rester actif au moins min_hold_s avant
             // qu'un rollback "KPI amélioré" soit autorisé. Évite le cycle
             // activate → Efficient → rollback immédiat → overhead revient → repeat.
-            let hold_elapsed = self.dome_activated_at
+            let hold_elapsed = self
+                .dome_activated_at
                 .map(|t| t.elapsed().as_secs())
                 .unwrap_or(self.vm.device_profile.auto_dome_min_hold_s + 1);
             let held_long_enough = hold_elapsed >= self.vm.device_profile.auto_dome_min_hold_s;
@@ -783,6 +847,54 @@ impl LiteState {
         Ok(())
     }
 
+    fn soulram_fault_guard_active(&self) -> bool {
+        self.vm.soulram_active
+            && self
+                .vm
+                .metrics
+                .raw
+                .page_faults_per_sec
+                .map(|faults| faults >= 25_000.0)
+                .unwrap_or(false)
+            && self.vm.adaptive_tuning.soulram_faults_gain_ema < -0.02
+    }
+
+    fn compute_decision_confidence(&self) -> f64 {
+        let freshness = if !self.vm.external_config.enabled || self.vm.external_status.is_fresh {
+            1.0
+        } else {
+            0.25
+        };
+        let power_sensor = if self.vm.metrics.raw.wall_power_watts.is_some()
+            || self.vm.metrics.raw.power_watts.is_some()
+        {
+            1.0
+        } else {
+            0.65
+        };
+        let process = self.compute_process_attribution_confidence();
+        let reward = self.vm.adaptive_tuning.reward_ema.clamp(0.15, 1.0);
+        let fault_guard = if self.soulram_fault_guard_active() {
+            0.45
+        } else {
+            1.0
+        };
+        (freshness * power_sensor * process * reward * fault_guard).clamp(0.0, 1.0)
+    }
+
+    fn compute_process_attribution_confidence(&self) -> f64 {
+        let top = &self.vm.process_report.top_processes;
+        if top.is_empty() {
+            return 0.45;
+        }
+        let suspicious = top
+            .iter()
+            .take(8)
+            .filter(|p| p.cpu_usage_pct < 0.5 && p.memory_kb < 32 * 1024)
+            .count() as f64;
+        (1.0 - suspicious * 0.08).clamp(0.35, 1.0)
+    }
+
     fn poll_observability_write(&mut self) {
         let Some(handle) = self.observability_write_handle.take() else {
             return;
@@ -796,10 +908,9 @@ impl LiteState {
                 self.vm.observability_path = path;
             }
             Ok(Err(err)) => {
-                self.vm.last_actions.insert(
-                    0,
-                    format!("⚠ observabilité: écriture échouée ({err})"),
-                );
+                self.vm
+                    .last_actions
+                    .insert(0, format!("⚠ observabilité: écriture échouée ({err})"));
             }
             Err(_) => {
                 self.vm
@@ -868,7 +979,8 @@ impl LiteState {
                         self.vm.dome_active = true;
                         self.dome_activated_at = Some(Instant::now());
                         self.vm.last_actions = actions;
-                        self.vm.kpi_memory
+                        self.vm
+                            .kpi_memory
                             .open(now_ms_local(), "dome", self.vm.kpi.kpi_penalized);
                         self.pending_host_impact = Some((impact_before, "dome"));
                     }
@@ -889,10 +1001,19 @@ impl LiteState {
                         self.vm.soulram_active = platform::soulram_enablement_effective(&actions);
                         self.vm.last_actions = actions
                             .into_iter()
-                            .map(|(msg, ok)| if ok { format!("✓ {msg}") } else { format!("✗ {msg}") })
+                            .map(|(msg, ok)| {
+                                if ok {
+                                    format!("✓ {msg}")
+                                } else {
+                                    format!("✗ {msg}")
+                                }
+                            })
                             .collect();
-                        self.vm.kpi_memory
-                            .open(now_ms_local(), "soulram", self.vm.kpi.kpi_penalized);
+                        self.vm.kpi_memory.open(
+                            now_ms_local(),
+                            "soulram",
+                            self.vm.kpi.kpi_penalized,
+                        );
                         self.pending_host_impact = Some((impact_before, "soulram"));
                     }
                     BackgroundActionSuccess::DisableSoulram {
@@ -902,7 +1023,13 @@ impl LiteState {
                         self.vm.soulram_active = false;
                         self.vm.last_actions = actions
                             .into_iter()
-                            .map(|(msg, ok)| if ok { format!("✓ {msg}") } else { format!("✗ {msg}") })
+                            .map(|(msg, ok)| {
+                                if ok {
+                                    format!("✓ {msg}")
+                                } else {
+                                    format!("✗ {msg}")
+                                }
+                            })
                             .collect();
                         self.pending_host_impact = Some((impact_before, "soulram"));
                     }
@@ -915,7 +1042,9 @@ impl LiteState {
                 self.vm.last_actions.insert(0, format!("✗ action: {err}"));
             }
             Err(_) => {
-                self.vm.last_actions.insert(0, "✗ action: worker panic".to_string());
+                self.vm
+                    .last_actions
+                    .insert(0, "✗ action: worker panic".to_string());
             }
         }
     }
@@ -925,7 +1054,8 @@ impl LiteState {
         if self.observability_write_handle.is_some() {
             return;
         }
-        if self.last_observability_write.elapsed() < Duration::from_secs(OBSERVABILITY_WRITE_MIN_S) {
+        if self.last_observability_write.elapsed() < Duration::from_secs(OBSERVABILITY_WRITE_MIN_S)
+        {
             return;
         }
         self.last_observability_write = Instant::now();
@@ -1055,8 +1185,16 @@ impl LiteState {
         // during active periods. This normalizes power_pressure in advanced_guard dynamically
         // so the guard is relative to this machine's actual envelope, not a hardcoded 120W.
         let is_real_wall_power = snapshot.metrics.raw.power_watts.is_some()
-            && snapshot.metrics.raw.power_watts_source.as_deref()
-                .map(|s| !s.contains("rapl") && !s.contains("pd_estimated") && !s.contains("usb_pd_measured"))
+            && snapshot
+                .metrics
+                .raw
+                .power_watts_source
+                .as_deref()
+                .map(|s| {
+                    !s.contains("rapl")
+                        && !s.contains("pd_estimated")
+                        && !s.contains("usb_pd_measured")
+                })
                 .unwrap_or(false);
         if is_real_wall_power && snapshot.metrics.raw.cpu_pct > 5.0 {
             if let Some(w) = snapshot.metrics.raw.power_watts {
@@ -1163,6 +1301,10 @@ impl LiteState {
             self.vm.device_profile.kpi_gamma,
             prev_kpi,
         );
+        self.vm.adaptive_tuning.decision_confidence = self.compute_decision_confidence();
+        self.vm.adaptive_tuning.process_attribution_confidence =
+            self.compute_process_attribution_confidence();
+        self.vm.adaptive_tuning.memory_fault_guard_active = self.soulram_fault_guard_active();
         if let Some(kv) = self.vm.kpi.kpi_penalized {
             self.vm.kpi_history.push((self.vm.now_ms, kv));
             if self.vm.kpi_history.len() > 60 {
@@ -1181,7 +1323,8 @@ impl LiteState {
         // MAIS uniquement après la période de grâce (grace_s) : les premières secondes
         // après activation génèrent un pic transitoire de page faults tout à fait normal.
         if self.vm.dome_active {
-            let grace_elapsed = self.dome_activated_at
+            let grace_elapsed = self
+                .dome_activated_at
                 .map(|t| t.elapsed().as_secs())
                 .unwrap_or(self.vm.device_profile.auto_dome_grace_s + 1);
             let past_grace = grace_elapsed >= self.vm.device_profile.auto_dome_grace_s;
@@ -1223,8 +1366,9 @@ impl LiteState {
     }
 
     pub fn reset_adaptive_tuning_for_profile(&mut self) {
-        self.vm.adaptive_tuning = load_adaptive_tuning(&default_machine_id(), &self.vm.device_profile)
-            .unwrap_or_else(|| AdaptiveTuningState::for_profile(&self.vm.device_profile));
+        self.vm.adaptive_tuning =
+            load_adaptive_tuning(&default_machine_id(), &self.vm.device_profile)
+                .unwrap_or_else(|| AdaptiveTuningState::for_profile(&self.vm.device_profile));
         self.apply_adaptive_tuning();
         let _ = self.save_adaptive_tuning();
     }
@@ -1256,6 +1400,20 @@ impl LiteState {
         let Some(rec) = self.vm.kpi_memory.records.last() else {
             return;
         };
+        let decision_confidence = self.compute_decision_confidence();
+        let process_confidence = self.compute_process_attribution_confidence();
+        let memory_fault_guard_active = self.soulram_fault_guard_active();
+        if self.vm.external_config.enabled && !self.vm.external_status.is_fresh {
+            let t = &mut self.vm.adaptive_tuning;
+            t.skipped_samples += 1;
+            t.decision_confidence = decision_confidence;
+            t.process_attribution_confidence = process_confidence;
+            t.last_action_confidence = decision_confidence;
+            t.memory_fault_guard_active = memory_fault_guard_active;
+            t.last_learning_note = "apprentissage ignoré: puissance externe stale".to_string();
+            let _ = self.save_adaptive_tuning();
+            return;
+        }
         let delta_kpi = rec.delta_kpi.unwrap_or(0.0).clamp(-20.0, 20.0);
         let reward_signal = if rec.rewarded { 1.0 } else { 0.0 };
         let faults_gain = self
@@ -1275,6 +1433,17 @@ impl LiteState {
 
         let t = &mut self.vm.adaptive_tuning;
         t.samples += 1;
+        t.decision_confidence = decision_confidence;
+        t.process_attribution_confidence = process_confidence;
+        t.last_action_confidence = decision_confidence;
+        t.memory_fault_guard_active = memory_fault_guard_active;
+        t.last_learning_note = if memory_fault_guard_active {
+            "SoulRAM actif mais faults élevés: agressivité mémoire bridée".to_string()
+        } else if decision_confidence < 0.45 {
+            "confiance faible: ajustement conservateur".to_string()
+        } else {
+            "apprentissage appliqué".to_string()
+        };
         t.reward_ema = t.reward_ema * 0.9 + reward_signal * 0.1;
         t.delta_kpi_ema = t.delta_kpi_ema * 0.9 + delta_kpi * 0.1;
         t.faults_gain_ema = t.faults_gain_ema * 0.9 + faults_gain * 0.1;
@@ -1282,8 +1451,12 @@ impl LiteState {
 
         match rec.action.as_str() {
             "dome" => {
+                t.dome_reward_ema = t.dome_reward_ema * 0.9 + reward_signal * 0.1;
+                t.dome_faults_gain_ema = t.dome_faults_gain_ema * 0.9 + faults_gain * 0.1;
+                t.dome_power_gain_ema = t.dome_power_gain_ema * 0.9 + power_gain * 0.1;
                 let dome_signal = ((-delta_kpi / 10.0) + power_gain + faults_gain * 0.5)
-                    .clamp(-1.0, 1.0);
+                    .clamp(-1.0, 1.0)
+                    * decision_confidence.max(0.25);
                 if dome_signal >= 0.0 {
                     t.guard_bias -= 0.020 * dome_signal;
                     t.rollback_bias += 0.020 * dome_signal;
@@ -1297,9 +1470,17 @@ impl LiteState {
                 }
             }
             "soulram" => {
-                let mem_signal =
-                    (faults_gain + (-delta_kpi / 10.0) * 0.5 + power_gain * 0.25).clamp(-1.0, 1.0);
-                t.lambda_bias += 0.040 * mem_signal;
+                t.soulram_reward_ema = t.soulram_reward_ema * 0.9 + reward_signal * 0.1;
+                t.soulram_faults_gain_ema = t.soulram_faults_gain_ema * 0.9 + faults_gain * 0.1;
+                t.soulram_power_gain_ema = t.soulram_power_gain_ema * 0.9 + power_gain * 0.1;
+                let mem_signal = (faults_gain + (-delta_kpi / 10.0) * 0.5 + power_gain * 0.25)
+                    .clamp(-1.0, 1.0)
+                    * decision_confidence.max(0.25);
+                if memory_fault_guard_active && mem_signal < 0.0 {
+                    t.lambda_bias -= 0.030 * (-mem_signal);
+                } else {
+                    t.lambda_bias += 0.040 * mem_signal;
+                }
                 if mem_signal >= 0.0 {
                     t.guard_bias -= 0.005 * mem_signal;
                 } else {
@@ -1349,7 +1530,13 @@ impl LiteState {
     pub fn save_remote_supervisor_config(&mut self) -> Result<(), String> {
         self.vm.remote_supervisor_config.server_url =
             normalize_remote_supervisor_url(&self.vm.remote_supervisor_config.server_url);
-        if self.vm.remote_supervisor_config.machine_id.trim().is_empty() {
+        if self
+            .vm
+            .remote_supervisor_config
+            .machine_id
+            .trim()
+            .is_empty()
+        {
             self.vm.remote_supervisor_config.machine_id = default_machine_id();
         }
         let path = remote_supervisor_config_path()?;
@@ -1405,11 +1592,8 @@ impl LiteState {
         let enroll_token = normalized_text(&self.vm.remote_supervisor_config.enroll_token);
         let server_url = self.vm.remote_supervisor_config.server_url.clone();
         let machine_id = self.vm.remote_supervisor_config.machine_id.clone();
-        let response = register_remote_supervisor_machine(
-            &server_url,
-            enroll_token.as_deref(),
-            &machine_id,
-        )?;
+        let response =
+            register_remote_supervisor_machine(&server_url, enroll_token.as_deref(), &machine_id)?;
         self.vm.remote_supervisor_config.machine_id = response.machine_id;
         self.vm.remote_supervisor_config.api_key = response.api_key;
         self.vm.remote_supervisor_config.server_url =
@@ -1680,7 +1864,12 @@ impl LiteState {
         profile: &WorkloadProfile,
     ) -> Result<BenchmarkSample, String> {
         let before = metrics::collect().map_err(|e| e.to_string())?;
-        let f_before = formula::compute(&before, profile, self.vm.kappa, self.vm.device_profile.p_active_hint_w);
+        let f_before = formula::compute(
+            &before,
+            profile,
+            self.vm.kappa,
+            self.vm.device_profile.p_active_hint_w,
+        );
         let probe =
             if self.vm.benchmark_use_system_probe || self.vm.benchmark_command.trim().is_empty() {
                 self.runtime.block_on(benchmark::execute_system_probe(
@@ -1694,7 +1883,12 @@ impl LiteState {
                 ))?
             };
         let after = metrics::collect().map_err(|e| e.to_string())?;
-        let f_after = formula::compute(&after, profile, self.vm.kappa, self.vm.device_profile.p_active_hint_w);
+        let f_after = formula::compute(
+            &after,
+            profile,
+            self.vm.kappa,
+            self.vm.device_profile.p_active_hint_w,
+        );
         Ok(BenchmarkSample {
             idx,
             phase,
@@ -1882,7 +2076,10 @@ fn normalize_remote_supervisor_ingest_url(input: &str) -> String {
 }
 
 fn normalize_remote_supervisor_register_url(input: &str) -> String {
-    format!("{}/api/register", normalize_remote_supervisor_base_url(input))
+    format!(
+        "{}/api/register",
+        normalize_remote_supervisor_base_url(input)
+    )
 }
 
 fn normalize_remote_supervisor_url(input: &str) -> String {
@@ -1982,7 +2179,10 @@ fn fetch_remote_supervisor_status(
         .build()
         .map_err(|e| e.to_string())?;
     let response = client
-        .get(format!("{}/api/status", normalize_remote_supervisor_base_url(server_url)))
+        .get(format!(
+            "{}/api/status",
+            normalize_remote_supervisor_base_url(server_url)
+        ))
         .send()
         .map_err(describe_reqwest_error)?;
     let status = response.status();
