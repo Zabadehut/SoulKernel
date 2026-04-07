@@ -24,6 +24,9 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
+const REMOTE_SUPERVISOR_TIMEOUT_S: u64 = 10;
+const REMOTE_SUPERVISOR_INGEST_TIMEOUT_S: u64 = 30;
+
 /// Snapshot interne utilisé pour calculer le delta avant/après une action.
 #[derive(Clone)]
 struct HostImpactSnapshot {
@@ -1892,7 +1895,7 @@ fn register_remote_supervisor_machine(
     machine_id_hint: &str,
 ) -> Result<RemoteSupervisorRegisterResponse, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(REMOTE_SUPERVISOR_TIMEOUT_S))
         .build()
         .map_err(|e| e.to_string())?;
     let payload = serde_json::json!({
@@ -1937,7 +1940,7 @@ fn push_remote_observability_sample(
 
     let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(REMOTE_SUPERVISOR_INGEST_TIMEOUT_S))
         .build()
         .map_err(|e| e.to_string())?;
     let mut request = client
@@ -1975,7 +1978,7 @@ fn fetch_remote_supervisor_status(
     server_url: &str,
 ) -> Result<RemoteSupervisorStatusResponse, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(REMOTE_SUPERVISOR_TIMEOUT_S))
         .build()
         .map_err(|e| e.to_string())?;
     let response = client
