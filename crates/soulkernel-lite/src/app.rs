@@ -2,12 +2,30 @@ use crate::export;
 use crate::fmt;
 use crate::state::{HostImpactDelta, LiteState, LiteViewModel};
 use eframe::egui;
+use egui::{Color32, RichText, Stroke, Vec2};
+
+// ── Design tokens ──────────────────────────────────────────────────────────────
+
+const C_BG: Color32 = Color32::from_rgb(6, 16, 25);
+const C_PANEL: Color32 = Color32::from_rgb(12, 24, 40);
+const C_PANEL2: Color32 = Color32::from_rgb(17, 32, 52);
+const C_PANEL3: Color32 = Color32::from_rgb(22, 40, 64);
+const C_BORDER: Color32 = Color32::from_rgb(30, 52, 78);
+const C_TEXT: Color32 = Color32::from_rgb(210, 228, 248);
+const C_MUTED: Color32 = Color32::from_rgb(110, 152, 196);
+const C_GREEN: Color32 = Color32::from_rgb(72, 210, 120);
+const C_YELLOW: Color32 = Color32::from_rgb(250, 198, 60);
+const C_RED: Color32 = Color32::from_rgb(239, 83, 104);
+const C_CYAN: Color32 = Color32::from_rgb(34, 211, 238);
+
+// ── App ────────────────────────────────────────────────────────────────────────
 
 pub struct LiteApp {
     state: Option<LiteState>,
     error: Option<String>,
     info: Option<String>,
     active_tab: DashboardTab,
+    visuals_configured: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -27,113 +45,334 @@ impl Default for LiteApp {
                 error: None,
                 info: None,
                 active_tab: DashboardTab::Home,
+                visuals_configured: false,
             },
             Err(err) => Self {
                 state: None,
                 error: Some(err),
                 info: None,
                 active_tab: DashboardTab::Home,
+                visuals_configured: false,
             },
         }
     }
 }
 
+// ── Visual primitives ──────────────────────────────────────────────────────────
+
 impl LiteApp {
-    fn tab_button(ui: &mut egui::Ui, active: bool, label: &str) -> egui::Response {
-        let fill = if active {
-            egui::Color32::from_rgb(70, 110, 78)
+    fn configure_visuals(ctx: &egui::Context) {
+        let mut v = egui::Visuals::dark();
+        v.override_text_color = Some(C_TEXT);
+        v.panel_fill = C_BG;
+        v.window_fill = C_PANEL;
+        v.window_stroke = Stroke::new(1.0, C_BORDER);
+        // Separator / non-interactive backgrounds
+        v.widgets.noninteractive.bg_fill = C_PANEL2;
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, C_BORDER);
+        v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, C_MUTED);
+        // Inactive buttons / inputs
+        v.widgets.inactive.bg_fill = C_PANEL2;
+        v.widgets.inactive.bg_stroke = Stroke::new(1.0, C_BORDER);
+        v.widgets.inactive.fg_stroke = Stroke::new(1.0, C_TEXT);
+        // Hover
+        v.widgets.hovered.bg_fill = C_PANEL3;
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0, C_CYAN);
+        v.widgets.hovered.fg_stroke = Stroke::new(1.5, C_TEXT);
+        // Active / pressed
+        v.widgets.active.bg_fill = Color32::from_rgb(25, 52, 84);
+        v.widgets.active.bg_stroke = Stroke::new(1.5, C_CYAN);
+        v.widgets.active.fg_stroke = Stroke::new(1.5, Color32::WHITE);
+        // Selection (text inputs, etc.)
+        v.selection.bg_fill = Color32::from_rgba_unmultiplied(34, 211, 238, 60);
+        v.selection.stroke = Stroke::new(1.0, C_CYAN);
+        ctx.set_visuals(v);
+    }
+
+    // ── Card frame ──────────────────────────────────────────────────────────────
+
+    fn panel_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+        egui::Frame::new()
+            .fill(C_PANEL)
+            .stroke(Stroke::new(1.0, C_BORDER))
+            .corner_radius(16.0)
+            .inner_margin(egui::Margin::same(16))
+            .show(ui, add_contents);
+    }
+
+    fn section_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+        egui::Frame::new()
+            .fill(C_PANEL2)
+            .stroke(Stroke::new(1.0, C_BORDER))
+            .corner_radius(10.0)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, add_contents);
+    }
+
+    // ── Section header ──────────────────────────────────────────────────────────
+
+    fn section_title(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+        ui.label(RichText::new(title).size(15.0).strong().color(C_TEXT));
+        if !subtitle.is_empty() {
+            ui.label(RichText::new(subtitle).size(11.0).color(C_MUTED));
+        }
+        ui.add_space(8.0);
+    }
+
+    fn eyebrow(ui: &mut egui::Ui, label: &str) {
+        ui.label(
+            RichText::new(label.to_uppercase())
+                .size(9.5)
+                .color(C_CYAN)
+                .strong(),
+        );
+    }
+
+    // ── Metric card ────────────────────────────────────────────────────────────
+
+    /// Full metric card: label (top, small) + big value + accent bar at bottom.
+    fn metric_badge(ui: &mut egui::Ui, title: &str, value: String, tone: Color32) {
+        let width = if value.len() > 28 { 220.0 } else { 132.0 };
+        let height = 62.0;
+        ui.allocate_ui_with_layout(
+            Vec2::new(width, height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_size(Vec2::new(width, height));
+                ui.set_max_size(Vec2::new(width, height));
+                egui::Frame::new()
+                    .fill(C_PANEL2)
+                    .stroke(Stroke::new(1.0, C_BORDER))
+                    .corner_radius(12.0)
+                    .inner_margin(egui::Margin::ZERO)
+                    .show(ui, |ui| {
+                        ui.set_min_size(Vec2::new(width, height));
+                        ui.set_max_size(Vec2::new(width, height));
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 10,
+                                bottom: 6,
+                            })
+                            .show(ui, |ui| {
+                                ui.set_max_width(width - 24.0);
+                                ui.set_max_height(height - 13.0);
+                                ui.label(RichText::new(title).size(9.5).color(C_MUTED).strong());
+                                ui.label(RichText::new(&value).size(15.0).strong().color(tone));
+                            });
+                        let (rect, _) =
+                            ui.allocate_exact_size(Vec2::new(width, 3.0), egui::Sense::hover());
+                        ui.painter()
+                            .rect_filled(rect, 0.0, tone.gamma_multiply(0.7));
+                    });
+            },
+        );
+    }
+
+    /// Compact inline badge: just text on a colored pill background.
+    fn status_chip(ui: &mut egui::Ui, label: &str, active: bool) {
+        let (fill, dot_color, text_color) = if active {
+            (
+                Color32::from_rgba_unmultiplied(72, 210, 120, 30),
+                C_GREEN,
+                C_GREEN,
+            )
         } else {
-            egui::Color32::from_rgb(45, 45, 45)
+            (C_PANEL3, C_BORDER, C_MUTED)
+        };
+        egui::Frame::new()
+            .fill(fill)
+            .stroke(Stroke::new(
+                1.0,
+                if active {
+                    C_GREEN.gamma_multiply(0.5)
+                } else {
+                    C_BORDER
+                },
+            ))
+            .corner_radius(999.0)
+            .inner_margin(egui::Margin {
+                left: 10,
+                right: 10,
+                top: 4,
+                bottom: 4,
+            })
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    // Dot indicator
+                    let (dot_rect, _) =
+                        ui.allocate_exact_size(Vec2::splat(7.0), egui::Sense::hover());
+                    ui.painter()
+                        .circle_filled(dot_rect.center(), 3.5, dot_color);
+                    ui.label(RichText::new(label).size(11.5).strong().color(text_color));
+                });
+            });
+    }
+
+    // ── Tab navigation ─────────────────────────────────────────────────────────
+
+    fn tab_button(ui: &mut egui::Ui, active: bool, label: &str) -> egui::Response {
+        let (fill, text_color, stroke) = if active {
+            (
+                Color32::from_rgba_unmultiplied(34, 211, 238, 28),
+                C_CYAN,
+                Stroke::new(1.0, C_CYAN.gamma_multiply(0.6)),
+            )
+        } else {
+            (Color32::TRANSPARENT, C_MUTED, Stroke::new(1.0, C_BORDER))
         };
         ui.add(
-            egui::Button::new(label)
+            egui::Button::new(RichText::new(label).size(12.0).strong().color(text_color))
                 .fill(fill)
-                .stroke(egui::Stroke::new(1.0, egui::Color32::DARK_GRAY))
-                .corner_radius(6.0),
+                .stroke(stroke)
+                .corner_radius(999.0),
         )
     }
 
     fn dashboard_tabs(ui: &mut egui::Ui, active_tab: &mut DashboardTab) {
-        ui.horizontal_wrapped(|ui| {
-            for (tab, label) in [
-                (DashboardTab::Home, "Accueil"),
-                (DashboardTab::Actions, "Actions"),
-                (DashboardTab::Processes, "Processus"),
-                (DashboardTab::Energy, "Énergie"),
-                (DashboardTab::Hardware, "Matériel"),
-            ] {
-                if Self::tab_button(ui, *active_tab == tab, label).clicked() {
-                    *active_tab = tab;
-                }
-            }
-        });
+        egui::Frame::new()
+            .fill(C_PANEL2)
+            .stroke(Stroke::new(1.0, C_BORDER))
+            .corner_radius(999.0)
+            .inner_margin(egui::Margin::symmetric(4, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (tab, label) in [
+                        (DashboardTab::Home, "Accueil"),
+                        (DashboardTab::Actions, "Actions"),
+                        (DashboardTab::Processes, "Processus"),
+                        (DashboardTab::Energy, "Énergie"),
+                        (DashboardTab::Hardware, "Matériel"),
+                    ] {
+                        if Self::tab_button(ui, *active_tab == tab, label).clicked() {
+                            *active_tab = tab;
+                        }
+                    }
+                });
+            });
     }
 
-    fn tone_for_ratio(value: f64) -> egui::Color32 {
+    // ── Color helpers ──────────────────────────────────────────────────────────
+
+    fn tone_for_ratio(value: f64) -> Color32 {
         if value >= 0.85 {
-            egui::Color32::from_rgb(210, 84, 84)
+            C_RED
         } else if value >= 0.60 {
-            egui::Color32::from_rgb(214, 153, 58)
+            C_YELLOW
         } else {
-            egui::Color32::from_rgb(96, 168, 104)
+            C_GREEN
         }
     }
 
-    fn status_chip(ui: &mut egui::Ui, label: &str, active: bool) {
-        let fill = if active {
-            egui::Color32::from_rgb(70, 110, 78)
+    fn kpi_color(label: &soulkernel_core::kpi::KpiLabel) -> Color32 {
+        use soulkernel_core::kpi::KpiLabel;
+        match label {
+            KpiLabel::Efficient => C_GREEN,
+            KpiLabel::Moderate => C_YELLOW,
+            KpiLabel::Inefficient => C_RED,
+            KpiLabel::Unknown => C_MUTED,
+        }
+    }
+
+    // ── Progress bar ──────────────────────────────────────────────────────────
+
+    fn progress_bar(ui: &mut egui::Ui, value: f32, color: Color32) {
+        let desired = Vec2::new(ui.available_width(), 4.0);
+        let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, C_PANEL3);
+        if value > 0.0 {
+            let filled = egui::Rect::from_min_size(
+                rect.min,
+                Vec2::new(rect.width() * value.clamp(0.0, 1.0), rect.height()),
+            );
+            ui.painter().rect_filled(filled, 2.0, color);
+        }
+    }
+
+    // ── Key-value row ─────────────────────────────────────────────────────────
+
+    fn kv_row(ui: &mut egui::Ui, label: &str, value: &str) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(label).size(11.0).color(C_MUTED));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(value).size(11.0).color(C_TEXT).strong());
+            });
+        });
+    }
+
+    fn kv_row_colored(ui: &mut egui::Ui, label: &str, value: &str, color: Color32) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(label).size(11.0).color(C_MUTED));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(value).size(11.0).strong().color(color));
+            });
+        });
+    }
+
+    // ── Power unavailable hint ─────────────────────────────────────────────────
+
+    fn power_unavailable_hint(os: &str) -> &'static str {
+        if os.contains("Windows") {
+            "desktop Windows: branchez un Meross"
+        } else if os.contains("macOS") || os.contains("Darwin") {
+            "Mac desktop: branchez un Meross"
         } else {
-            egui::Color32::from_rgb(70, 70, 70)
-        };
-        egui::Frame::new()
-            .fill(fill)
-            .corner_radius(4.0)
-            .inner_margin(egui::Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(label)
-                        .strong()
-                        .color(egui::Color32::WHITE),
-                );
-            });
+            "RAPL non disponible"
+        }
     }
 
-    fn metric_badge(ui: &mut egui::Ui, title: &str, value: String, tone: egui::Color32) {
-        egui::Frame::new()
-            .stroke(egui::Stroke::new(1.0, egui::Color32::DARK_GRAY))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(title)
-                        .small()
-                        .color(egui::Color32::GRAY),
-                );
-                ui.label(egui::RichText::new(value).strong().color(tone));
-            });
-    }
-
-    fn section_title(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-        ui.heading(title);
-        ui.label(subtitle);
-        ui.separator();
-    }
+    // ── Top bar ────────────────────────────────────────────────────────────────
 
     fn top_bar(ui: &mut egui::Ui, vm: &LiteViewModel) {
-        ui.horizontal_wrapped(|ui| {
-            ui.heading("SoulKernel");
+        ui.horizontal(|ui| {
+            // Logo / title
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 0,
+                    right: 16,
+                    top: 0,
+                    bottom: 0,
+                })
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("SoulKernel")
+                            .size(17.0)
+                            .strong()
+                            .color(C_CYAN),
+                    );
+                    ui.label(RichText::new("Lite").size(12.0).color(C_MUTED));
+                });
+
             ui.separator();
-            ui.label(format!("OS {}", vm.platform_info.os));
+
+            // OS + Workload
+            ui.label(
+                RichText::new(format!(
+                    "{}  ·  {}",
+                    vm.platform_info.os, vm.selected_workload
+                ))
+                .size(11.0)
+                .color(C_MUTED),
+            );
+
             ui.separator();
-            Self::status_chip(ui, "Dome", vm.dome_active);
+
+            // Status chips — Dome + SoulRAM
+            Self::status_chip(ui, "Dôme", vm.dome_active);
+            ui.add_space(4.0);
             Self::status_chip(ui, "SoulRAM", vm.soulram_active);
+
             ui.separator();
-            // Puissance : la vraie valeur, pas une formule
+
+            // Power
             let power = vm
                 .metrics
                 .raw
                 .host_power_watts
-                .or_else(|| vm.metrics.raw.wall_power_watts)
+                .or(vm.metrics.raw.wall_power_watts)
                 .or_else(|| {
                     if vm.external_status.is_fresh {
                         vm.external_status.last_watts
@@ -141,23 +380,68 @@ impl LiteApp {
                         None
                     }
                 });
-            ui.label(format!("Puissance {}", fmt::watts(power)));
+            let (power_label, power_color) = match power {
+                Some(w) => (format!("{:.1} W", w), C_CYAN),
+                None => ("— W".to_string(), C_MUTED),
+            };
+            ui.label(RichText::new("⚡").size(12.0).color(C_YELLOW));
+            ui.label(
+                RichText::new(&power_label)
+                    .size(13.0)
+                    .strong()
+                    .color(power_color),
+            );
+
             ui.separator();
-            // RAM : % d'utilisation direct
-            if vm.metrics.raw.mem_total_mb > 0 {
-                let pct =
-                    vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64 * 100.0;
-                ui.colored_label(
-                    Self::tone_for_ratio(pct / 100.0),
-                    format!("RAM {:.0}%", pct),
-                );
-            }
+
+            // CPU
+            let cpu_color = Self::tone_for_ratio(vm.metrics.cpu);
+            ui.label(RichText::new("CPU").size(10.0).color(C_MUTED));
+            ui.label(
+                RichText::new(fmt::pct(vm.metrics.raw.cpu_pct))
+                    .size(13.0)
+                    .strong()
+                    .color(cpu_color),
+            );
+
             ui.separator();
-            ui.label(format!("CPU {}", fmt::pct(vm.metrics.raw.cpu_pct)));
-            ui.separator();
-            ui.label(format!("Workload {}", vm.selected_workload));
+
+            // RAM
+            let mem_ratio = if vm.metrics.raw.mem_total_mb > 0 {
+                vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64
+            } else {
+                0.0
+            };
+            let ram_color = Self::tone_for_ratio(mem_ratio);
+            ui.label(RichText::new("RAM").size(10.0).color(C_MUTED));
+            ui.label(
+                RichText::new(format!("{:.0}%", mem_ratio * 100.0))
+                    .size(13.0)
+                    .strong()
+                    .color(ram_color),
+            );
+
+            // KPI pill on the right
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let kpi_color = Self::kpi_color(&vm.kpi.label);
+                egui::Frame::new()
+                    .fill(kpi_color.gamma_multiply(0.15))
+                    .stroke(Stroke::new(1.0, kpi_color.gamma_multiply(0.5)))
+                    .corner_radius(999.0)
+                    .inner_margin(egui::Margin::symmetric(10, 3))
+                    .show(ui, |ui| {
+                        let kpi_str = vm
+                            .kpi
+                            .kpi_penalized
+                            .map(|k| format!("{:.1} W/%  [{}]", k, vm.kpi.label.as_str()))
+                            .unwrap_or_else(|| "KPI —".to_string());
+                        ui.label(RichText::new(&kpi_str).size(11.0).strong().color(kpi_color));
+                    });
+            });
         });
     }
+
+    // ── Metrics strip ─────────────────────────────────────────────────────────
 
     fn metrics_strip(ui: &mut egui::Ui, vm: &LiteViewModel) {
         let mem_ratio = if vm.metrics.raw.mem_total_mb > 0 {
@@ -179,16 +463,18 @@ impl LiteApp {
                     None
                 }
             });
-        // Plain-language tension level — no formula variables shown.
+
         let (tension_label, tension_color) = if vm.metrics.sigma >= vm.sigma_max {
-            ("Tension haute", egui::Color32::from_rgb(210, 84, 84))
+            ("Tension haute", C_RED)
         } else if vm.metrics.sigma >= vm.sigma_max * 0.75 {
-            ("Tension mod.", egui::Color32::from_rgb(214, 153, 58))
+            ("Tension mod.", C_YELLOW)
         } else {
-            ("Tension basse", egui::Color32::from_rgb(96, 168, 104))
+            ("Tension basse", C_GREEN)
         };
 
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+
             Self::metric_badge(
                 ui,
                 "CPU",
@@ -226,21 +512,14 @@ impl LiteApp {
                 "Puissance",
                 fmt::watts(power_display),
                 if power_display.is_some() {
-                    egui::Color32::LIGHT_BLUE
+                    C_CYAN
                 } else {
-                    egui::Color32::DARK_GRAY
+                    C_MUTED
                 },
             );
             Self::metric_badge(ui, "Statut", tension_label.to_string(), tension_color);
-            // KPI compact dans la barre principale
             {
-                use soulkernel_core::kpi::KpiLabel;
-                let kpi_color = match vm.kpi.label {
-                    KpiLabel::Efficient => egui::Color32::from_rgb(96, 168, 104),
-                    KpiLabel::Moderate => egui::Color32::from_rgb(214, 153, 58),
-                    KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
-                    KpiLabel::Unknown => egui::Color32::DARK_GRAY,
-                };
+                let kpi_color = Self::kpi_color(&vm.kpi.label);
                 let kpi_val = vm
                     .kpi
                     .kpi_penalized
@@ -250,6 +529,8 @@ impl LiteApp {
             }
         });
     }
+
+    // ── Material overview panel ────────────────────────────────────────────────
 
     fn material_overview_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
         let mem_ratio = if vm.metrics.raw.mem_total_mb > 0 {
@@ -287,10 +568,10 @@ impl LiteApp {
         } else {
             "faible"
         };
-        // Helper: only emit a row if the value string is not "N/A" / empty.
+
         fn row(ui: &mut egui::Ui, label: &str, value: String) {
             if value != "N/A" && !value.is_empty() {
-                ui.label(format!("{label} {value}"));
+                LiteApp::kv_row(ui, label, &value);
             }
         }
 
@@ -298,53 +579,88 @@ impl LiteApp {
             && !(vm.metrics.raw.on_battery == Some(false)
                 && vm.metrics.raw.battery_percent.unwrap_or(0.0) <= 0.0);
 
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Matériel interne / externe",
                 "Ce que l'hôte voit · ce que la prise voit · l'écart.",
             );
             Self::priority_hint(ui, vm);
-            ui.separator();
+            ui.add_space(8.0);
             ui.columns(3, |columns| {
                 // ── Interne ──────────────────────────────────────────────────
-                columns[0].label(egui::RichText::new("Interne").strong());
-                columns[0].label(format!(
-                    "CPU {} · {} MHz",
-                    fmt::pct(vm.metrics.raw.cpu_pct),
-                    vm.metrics.raw.cpu_clock_mhz.unwrap_or(0.0).round()
-                ));
-                columns[0].label(format!(
-                    "RAM {} ({mem_ratio:.0} %)",
-                    fmt::gib_pair(vm.metrics.raw.mem_used_mb, vm.metrics.raw.mem_total_mb)
-                ));
-                columns[0].label(format!(
-                    "I/O R {:.2} / W {:.2} MB/s",
-                    vm.metrics.raw.io_read_mb_s.unwrap_or(0.0),
-                    vm.metrics.raw.io_write_mb_s.unwrap_or(0.0)
-                ));
-                // GPU — only when available
-                if vm.metrics.raw.gpu_pct.is_some() || vm.metrics.raw.gpu_power_watts.is_some() {
-                    columns[0].label(format!(
-                        "GPU {} · {}",
-                        fmt::opt_pct(vm.metrics.raw.gpu_pct),
-                        fmt::watts(vm.metrics.raw.gpu_power_watts)
-                    ));
+                Self::eyebrow(&mut columns[0], "Interne");
+                columns[0].add_space(4.0);
+                row(
+                    &mut columns[0],
+                    "CPU",
+                    format!(
+                        "{} · {} MHz",
+                        fmt::pct(vm.metrics.raw.cpu_pct),
+                        vm.metrics.raw.cpu_clock_mhz.unwrap_or(0.0).round()
+                    ),
+                );
+                {
+                    let cpu_r = (vm.metrics.raw.cpu_pct / 100.0).clamp(0.0, 1.0) as f32;
+                    Self::progress_bar(
+                        &mut columns[0],
+                        cpu_r,
+                        Self::tone_for_ratio(vm.metrics.cpu),
+                    );
+                    columns[0].add_space(2.0);
                 }
-                // Host watts (RAPL / battery discharge / PDH) — absent on Windows desktop
+                row(
+                    &mut columns[0],
+                    "RAM",
+                    format!(
+                        "{} ({mem_ratio:.0}%)",
+                        fmt::gib_pair(vm.metrics.raw.mem_used_mb, vm.metrics.raw.mem_total_mb)
+                    ),
+                );
+                {
+                    Self::progress_bar(
+                        &mut columns[0],
+                        (mem_ratio / 100.0) as f32,
+                        Self::tone_for_ratio(mem_ratio / 100.0),
+                    );
+                    columns[0].add_space(2.0);
+                }
+                row(
+                    &mut columns[0],
+                    "I/O",
+                    format!(
+                        "R {:.2} / W {:.2} MB/s",
+                        vm.metrics.raw.io_read_mb_s.unwrap_or(0.0),
+                        vm.metrics.raw.io_write_mb_s.unwrap_or(0.0)
+                    ),
+                );
+                if vm.metrics.raw.gpu_pct.is_some() || vm.metrics.raw.gpu_power_watts.is_some() {
+                    row(
+                        &mut columns[0],
+                        "GPU",
+                        format!(
+                            "{} · {}",
+                            fmt::opt_pct(vm.metrics.raw.gpu_pct),
+                            fmt::watts(vm.metrics.raw.gpu_power_watts)
+                        ),
+                    );
+                }
                 if let Some(w) = host {
-                    columns[0].label(format!("Watts hôte {:.1} W · src {host_source}", w));
+                    row(
+                        &mut columns[0],
+                        "Watts hôte",
+                        format!("{:.1} W  [{}]", w, host_source),
+                    );
                 } else {
                     columns[0].label(
-                        egui::RichText::new(format!(
+                        RichText::new(format!(
                             "Watts hôte N/A ({})",
                             Self::power_unavailable_hint(&vm.platform_info.os)
                         ))
-                        .color(egui::Color32::DARK_GRAY)
-                        .small(),
+                        .size(10.0)
+                        .color(C_MUTED),
                     );
                 }
-                // Temp — only when measured
                 row(
                     &mut columns[0],
                     "Temp CPU",
@@ -354,7 +670,6 @@ impl LiteApp {
                         .map(|v| format!("{v:.1} °C"))
                         .unwrap_or_else(|| "N/A".to_string()),
                 );
-                // Load avg — Linux/macOS only; absent on Windows
                 row(
                     &mut columns[0],
                     "Load avg",
@@ -364,7 +679,6 @@ impl LiteApp {
                         .map(|v| format!("{v:.2} x/core"))
                         .unwrap_or_else(|| "N/A".to_string()),
                 );
-                // Page faults
                 row(
                     &mut columns[0],
                     "Faults",
@@ -374,10 +688,9 @@ impl LiteApp {
                         .map(|v| format!("{v:.0}/s"))
                         .unwrap_or_else(|| "N/A".to_string()),
                 );
-                // Compression mémoire (Windows) / zRAM (Linux)
                 if let Some(ratio) = vm.metrics.compression {
                     let store_mb = ratio * vm.metrics.raw.mem_total_mb as f64;
-                    let saved_mb = store_mb * 1.5; // ~2.5x typique Windows/zram
+                    let saved_mb = store_mb * 1.5;
                     row(
                         &mut columns[0],
                         "Store compressé",
@@ -385,78 +698,82 @@ impl LiteApp {
                     );
                     row(
                         &mut columns[0],
-                        "RAM économisée ~",
+                        "RAM éco. ~",
                         format!("{:.0} MiB évités en swap", saved_mb),
                     );
-                } else {
-                    row(&mut columns[0], "Compression", "N/A".to_string());
                 }
-                // Swap / pagefile
                 {
-                    let swap_used = vm.metrics.raw.swap_used_mb;
-                    let swap_total = vm.metrics.raw.swap_total_mb;
-                    let label = if swap_used == 0 {
-                        "inactif".to_string()
-                    } else {
-                        format!("{} / {} MiB", swap_used, swap_total)
-                    };
-                    row(&mut columns[0], "Swap/Pagefile", label);
+                    let sw = vm.metrics.raw.swap_used_mb;
+                    let st = vm.metrics.raw.swap_total_mb;
+                    row(
+                        &mut columns[0],
+                        "Swap/Pagefile",
+                        if sw == 0 {
+                            "inactif".to_string()
+                        } else {
+                            format!("{sw} / {st} MiB")
+                        },
+                    );
                 }
-                // zRAM Linux
                 if let Some(z) = vm.metrics.raw.zram_used_mb {
                     row(&mut columns[0], "zRAM", format!("{z} MiB"));
                 }
-                // PSI — Linux only
                 if vm.metrics.raw.psi_cpu.is_some() || vm.metrics.raw.psi_mem.is_some() {
-                    columns[0].label(format!(
-                        "PSI CPU {:.1}% · MEM {:.1}%",
-                        vm.metrics.raw.psi_cpu.unwrap_or(0.0) * 100.0,
-                        vm.metrics.raw.psi_mem.unwrap_or(0.0) * 100.0
-                    ));
+                    row(
+                        &mut columns[0],
+                        "PSI CPU/MEM",
+                        format!(
+                            "{:.1}% · {:.1}%",
+                            vm.metrics.raw.psi_cpu.unwrap_or(0.0) * 100.0,
+                            vm.metrics.raw.psi_mem.unwrap_or(0.0) * 100.0
+                        ),
+                    );
                 }
 
                 // ── Externe ──────────────────────────────────────────────────
-                columns[1].label(egui::RichText::new("Externe").strong());
+                Self::eyebrow(&mut columns[1], "Externe");
+                columns[1].add_space(4.0);
                 if let Some(w) = wall {
-                    columns[1].label(format!("Watts mur {w:.1} W"));
-                } else {
-                    columns[1].label(
-                        egui::RichText::new("Watts mur N/A")
-                            .color(egui::Color32::DARK_GRAY)
-                            .small(),
+                    LiteApp::kv_row_colored(
+                        &mut columns[1],
+                        "Watts mur",
+                        &format!("{w:.1} W"),
+                        C_CYAN,
                     );
+                } else {
+                    columns[1].label(RichText::new("Watts mur N/A").size(11.0).color(C_MUTED));
                 }
                 if !external_source.is_empty() && external_source != "aucune" {
-                    columns[1].label(format!("Source {external_source}"));
-                    columns[1].label(format!(
-                        "Fraîcheur {}",
+                    row(&mut columns[1], "Source", external_source.clone());
+                    row(
+                        &mut columns[1],
+                        "Fraîcheur",
                         if vm.external_status.is_fresh {
-                            "fraîche"
+                            "fraîche".to_string()
                         } else {
-                            "stale"
-                        }
-                    ));
-                    columns[1].label(format!(
-                        "Bridge {}",
+                            "stale".to_string()
+                        },
+                    );
+                    row(
+                        &mut columns[1],
+                        "Bridge",
                         if vm.external_bridge_running {
-                            "actif"
+                            "actif".to_string()
                         } else {
-                            "arrêté"
-                        }
-                    ));
+                            "arrêté".to_string()
+                        },
+                    );
                     let path = &vm.external_status.power_file_path;
                     if !path.is_empty() {
-                        columns[1]
-                            .label(egui::RichText::new(path).small().color(egui::Color32::GRAY));
+                        columns[1].label(RichText::new(path).size(9.5).color(C_MUTED));
                     }
                 } else {
                     columns[1].label(
-                        egui::RichText::new("Aucune prise externe connectée")
-                            .color(egui::Color32::DARK_GRAY)
-                            .small(),
+                        RichText::new("Aucune prise externe connectée")
+                            .size(11.0)
+                            .color(C_MUTED),
                     );
                 }
-                // Battery in Externe block — only for laptops/devices with batteries
                 if has_battery {
                     let bat_state = vm
                         .metrics
@@ -470,48 +787,66 @@ impl LiteApp {
                         .battery_percent
                         .map(|v| format!("{v:.0}%"))
                         .unwrap_or_else(|| "N/A".to_string());
-                    columns[1].label(format!("Batterie {bat_state} · {bat_pct}"));
+                    row(
+                        &mut columns[1],
+                        "Batterie",
+                        format!("{bat_state} · {bat_pct}"),
+                    );
                 }
 
                 // ── Écart ─────────────────────────────────────────────────────
-                columns[2].label(egui::RichText::new("Écart").strong());
+                Self::eyebrow(&mut columns[2], "Écart");
+                columns[2].add_space(4.0);
                 match (host, wall) {
                     (Some(h), Some(w)) => {
                         let ratio = (h / w * 100.0).clamp(0.0, 100.0);
                         let unattr = (w - h).max(0.0);
-                        columns[2].label(format!("Hôte {h:.1} W / Mur {w:.1} W"));
-                        columns[2].label(format!("Hôte représente {ratio:.1}% du mur"));
-                        columns[2].label(format!("Non attribué {unattr:.1} W"));
-                        columns[2].label(format!("Confiance {confidence}"));
+                        LiteApp::kv_row(
+                            &mut columns[2],
+                            "Hôte / Mur",
+                            &format!("{h:.1} / {w:.1} W"),
+                        );
+                        LiteApp::kv_row(
+                            &mut columns[2],
+                            "Hôte repr.",
+                            &format!("{ratio:.1}% du mur"),
+                        );
+                        LiteApp::kv_row(&mut columns[2], "Non attribué", &format!("{unattr:.1} W"));
+                        LiteApp::kv_row(&mut columns[2], "Confiance", confidence);
                     }
                     (None, Some(w)) => {
-                        columns[2].label(format!("Mur {w:.1} W · hôte non mesuré"));
-                        columns[2].label(format!("Confiance {confidence}"));
+                        LiteApp::kv_row(&mut columns[2], "Mur", &format!("{w:.1} W"));
+                        LiteApp::kv_row(&mut columns[2], "Hôte", "non mesuré");
+                        LiteApp::kv_row(&mut columns[2], "Confiance", confidence);
                         columns[2].label(
-                            egui::RichText::new(Self::power_unavailable_hint(&vm.platform_info.os))
-                                .small()
-                                .color(egui::Color32::DARK_GRAY),
+                            RichText::new(Self::power_unavailable_hint(&vm.platform_info.os))
+                                .size(9.5)
+                                .color(C_MUTED),
                         );
                     }
                     (Some(h), None) => {
-                        columns[2].label(format!("Hôte {h:.1} W · prise non connectée"));
-                        columns[2].label(format!("Confiance {confidence}"));
+                        LiteApp::kv_row(&mut columns[2], "Hôte", &format!("{h:.1} W"));
+                        LiteApp::kv_row(&mut columns[2], "Prise", "non connectée");
+                        LiteApp::kv_row(&mut columns[2], "Confiance", confidence);
                     }
                     (None, None) => {
                         columns[2].label(
-                            egui::RichText::new("Aucune mesure de puissance disponible.")
-                                .color(egui::Color32::DARK_GRAY),
+                            RichText::new("Aucune mesure de puissance disponible.")
+                                .size(11.0)
+                                .color(C_MUTED),
                         );
                         columns[2].label(
-                            egui::RichText::new(Self::power_unavailable_hint(&vm.platform_info.os))
-                                .small()
-                                .color(egui::Color32::DARK_GRAY),
+                            RichText::new(Self::power_unavailable_hint(&vm.platform_info.os))
+                                .size(9.5)
+                                .color(C_MUTED),
                         );
                     }
                 }
             });
         });
     }
+
+    // ── Target summary ─────────────────────────────────────────────────────────
 
     fn target_summary(ui: &mut egui::Ui, vm: &LiteViewModel) {
         let target = vm
@@ -531,12 +866,18 @@ impl LiteApp {
                 )
             })
             .unwrap_or_else(|| "aucune cible active".to_string());
-        ui.label(format!("Cible  {target}"));
+        ui.label(
+            RichText::new(format!("Cible  {target}"))
+                .size(11.0)
+                .color(C_MUTED),
+        );
     }
+
+    // ── Tuning summary ─────────────────────────────────────────────────────────
 
     fn tuning_summary(ui: &mut egui::Ui, vm: &LiteViewModel) {
         ui.label(
-            egui::RichText::new(format!(
+            RichText::new(format!(
                 "Policy {}  ·  κ {:.2}  ·  Σmax {:.2}  ·  η {:.2}  ·  SoulRAM {}%",
                 vm.policy_mode.as_name(),
                 vm.kappa,
@@ -544,12 +885,12 @@ impl LiteApp {
                 vm.eta,
                 vm.soulram_percent
             ))
-            .small()
-            .color(egui::Color32::GRAY),
+            .size(10.0)
+            .color(C_MUTED),
         );
         let t = &vm.adaptive_tuning;
         ui.label(
-            egui::RichText::new(format!(
+            RichText::new(format!(
                 "Formule dynamique {}  ·  λ {:.2}  ·  garde {:.0}%  ·  confiance {:.0}%  ·  attr {:.0}%  ·  reward EMA {:.0}%  ·  {} obs / {} skip",
                 if t.enabled { "ON" } else { "OFF" },
                 vm.kpi_lambda,
@@ -560,43 +901,46 @@ impl LiteApp {
                 t.samples,
                 t.skipped_samples
             ))
-            .small()
-            .color(egui::Color32::GRAY),
+            .size(10.0).color(C_MUTED),
         );
         if t.memory_fault_guard_active || !t.last_learning_note.is_empty() {
             ui.label(
-                egui::RichText::new(format!("↳ {}", t.last_learning_note))
-                    .small()
+                RichText::new(format!("↳ {}", t.last_learning_note))
+                    .size(10.0)
                     .color(if t.memory_fault_guard_active {
-                        egui::Color32::YELLOW
+                        C_YELLOW
                     } else {
-                        egui::Color32::GRAY
+                        C_MUTED
                     }),
             );
         }
     }
 
+    // ── Action summary ─────────────────────────────────────────────────────────
+
     fn action_summary(ui: &mut egui::Ui, vm: &LiteViewModel) {
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
             Self::status_chip(ui, "Dôme", vm.dome_active);
             Self::status_chip(ui, "SoulRAM", vm.soulram_active);
             ui.label(
-                egui::RichText::new(format!("backend {}", vm.soulram_backend.backend))
-                    .small()
-                    .color(egui::Color32::GRAY),
+                RichText::new(format!("backend {}", vm.soulram_backend.backend))
+                    .size(10.0)
+                    .color(C_MUTED),
             );
         });
         if !vm.last_actions.is_empty() {
             ui.label(
-                egui::RichText::new(format!("↳ {}", vm.last_actions[0]))
-                    .small()
-                    .color(egui::Color32::GRAY),
+                RichText::new(format!("↳ {}", vm.last_actions[0]))
+                    .size(10.0)
+                    .color(C_MUTED),
             );
         }
     }
 
+    // ── Priority hint ──────────────────────────────────────────────────────────
+
     fn priority_hint(ui: &mut egui::Ui, vm: &LiteViewModel) {
-        // Check if real dome savings are already measured this session.
         let dome_delta_w = vm
             .telemetry
             .total
@@ -606,17 +950,14 @@ impl LiteApp {
         let real_savings = vm.telemetry.total.energy_saved_kwh.unwrap_or(0.0) > 0.01
             || dome_delta_w.unwrap_or(0.0) > 5.0;
 
-        if vm.metrics.sigma >= vm.sigma_max {
-            ui.colored_label(
-                egui::Color32::from_rgb(210, 84, 84),
-                egui::RichText::new("Pression élevée").strong(),
-            );
-            ui.label("La machine est déjà tendue. Réduire l'agressivité ou cibler plus finement.");
+        let (accent, title, body) = if vm.metrics.sigma >= vm.sigma_max {
+            (
+                C_RED,
+                "Pression élevée",
+                "La machine est déjà tendue. Réduire l'agressivité ou cibler plus finement."
+                    .to_string(),
+            )
         } else if real_savings {
-            ui.colored_label(
-                egui::Color32::from_rgb(96, 168, 104),
-                egui::RichText::new("Données comparatives disponibles").strong(),
-            );
             let body = if let (Some(saved_kwh), Some(delta_w)) =
                 (vm.telemetry.total.energy_saved_kwh, dome_delta_w)
             {
@@ -636,40 +977,59 @@ impl LiteApp {
                     vm.telemetry.total.energy_saved_kwh.unwrap_or(0.0)
                 )
             };
-            ui.label(body);
+            (C_GREEN, "Données comparatives disponibles", body)
         } else if vm.formula.pi >= 0.6 {
-            ui.colored_label(
-                egui::Color32::from_rgb(96, 168, 104),
-                egui::RichText::new("Fenêtre favorable").strong(),
-            );
-            ui.label("Le contexte est bon pour activer le dôme sur une cible utile.");
+            (
+                C_GREEN,
+                "Fenêtre favorable",
+                "Le contexte est bon pour activer le dôme sur une cible utile.".to_string(),
+            )
         } else {
-            ui.colored_label(
-                egui::Color32::from_rgb(214, 153, 58),
-                egui::RichText::new("Impact modéré").strong(),
-            );
-            ui.label(
-                "Le gain attendu semble limité. Vérifier d'abord la cible et la charge réelle.",
-            );
-        }
+            (
+                C_YELLOW,
+                "Impact modéré",
+                "Le gain attendu semble limité. Vérifier d'abord la cible et la charge réelle."
+                    .to_string(),
+            )
+        };
+
+        egui::Frame::new()
+            .fill(accent.gamma_multiply(0.08))
+            .stroke(Stroke::new(1.0, accent.gamma_multiply(0.4)))
+            .corner_radius(10.0)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("●").size(9.0).color(accent));
+                    ui.label(RichText::new(title).size(12.0).strong().color(accent));
+                });
+                ui.label(RichText::new(&body).size(11.0).color(C_MUTED));
+            });
     }
 
-    /// Panneau principal : ce que SoulKernel fait concrètement sur ce HOST.
-    /// Pas de formules : puissance, RAM, page faults, et delta depuis la dernière action.
+    // ── Host impact panel ──────────────────────────────────────────────────────
+
     fn host_impact_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Impact HOST",
-                "Ce que SoulKernel mesure et canalisé sur cette machine.",
+                "Ce que SoulKernel mesure et canalise sur cette machine.",
             );
 
-            // ── Puissance live ──────────────────────────────────────────────
             let host_w = vm.metrics.raw.host_power_watts;
             let wall_w = vm.metrics.raw.wall_power_watts.or_else(|| {
-                if vm.external_status.is_fresh { vm.external_status.last_watts } else { None }
+                if vm.external_status.is_fresh {
+                    vm.external_status.last_watts
+                } else {
+                    None
+                }
             });
-            let power_src = vm.metrics.raw.host_power_watts_source.as_deref()
+            let power_src = vm
+                .metrics
+                .raw
+                .host_power_watts_source
+                .as_deref()
                 .or(vm.metrics.raw.wall_power_watts_source.as_deref())
                 .unwrap_or(if vm.external_status.is_fresh && wall_w.is_some() {
                     "Meross"
@@ -678,26 +1038,31 @@ impl LiteApp {
                 });
 
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 if let Some(w) = host_w.or(wall_w) {
                     Self::metric_badge(
                         ui,
                         "Puissance HOST",
                         format!("{:.1} W  [{}]", w, power_src),
-                        egui::Color32::LIGHT_BLUE,
+                        C_CYAN,
                     );
                 } else {
                     Self::metric_badge(
                         ui,
                         "Puissance HOST",
-                        format!("N/A — {}", Self::power_unavailable_hint(&vm.platform_info.os)),
-                        egui::Color32::DARK_GRAY,
+                        format!(
+                            "N/A — {}",
+                            Self::power_unavailable_hint(&vm.platform_info.os)
+                        ),
+                        C_MUTED,
                     );
                 }
 
-                // ── RAM sous dôme ──────────────────────────────────────────
                 let mem_pct = if vm.metrics.raw.mem_total_mb > 0 {
                     vm.metrics.raw.mem_used_mb as f64 / vm.metrics.raw.mem_total_mb as f64 * 100.0
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 Self::metric_badge(
                     ui,
                     "RAM utilisée",
@@ -710,231 +1075,231 @@ impl LiteApp {
                     Self::tone_for_ratio(mem_pct / 100.0),
                 );
 
-                // ── Compression mémoire ───────────────────────────────────
                 if let Some(ratio) = vm.metrics.compression {
                     let store_mb = ratio * vm.metrics.raw.mem_total_mb as f64;
-                    let saved_mb = store_mb * 1.5; // ratio typique ~2.5x → économie = store * 1.5
+                    let saved_mb = store_mb * 1.5;
                     let swap_used = vm.metrics.raw.swap_used_mb;
                     let faults = vm.metrics.raw.page_faults_per_sec.unwrap_or(0.0);
-
-                    // Verdict : swap inactif + faults faibles = compression efficace
                     let (verdict_text, verdict_color) = if swap_used == 0 && faults < 500.0 {
-                        ("bénéfique", egui::Color32::from_rgb(80, 180, 100))
+                        ("bénéfique", C_GREEN)
                     } else if swap_used > 0 {
-                        ("swap actif — pression élevée", egui::Color32::from_rgb(220, 120, 50))
+                        ("swap actif — pression élevée", C_YELLOW)
                     } else {
-                        ("active", egui::Color32::GRAY)
+                        ("active", C_MUTED)
                     };
-
                     Self::metric_badge(
                         ui,
                         "Compression mém.",
                         format!(
-                            "store {:.0} MiB · ~{:.0} MiB économisés · {}",
+                            "store {:.0} MiB · ~{:.0} MiB éco. · {}",
                             store_mb, saved_mb, verdict_text
                         ),
                         verdict_color,
                     );
 
-                    // Swap / pagefile
                     let swap_label = if swap_used == 0 {
-                        egui::RichText::new("Swap/Pagefile  inactif")
-                            .color(egui::Color32::from_rgb(80, 180, 100))
-                            .small()
+                        RichText::new("Swap/Pagefile  inactif")
+                            .size(10.5)
+                            .color(C_GREEN)
                     } else {
-                        egui::RichText::new(format!(
+                        RichText::new(format!(
                             "Swap/Pagefile  {} MiB utilisé / {} MiB total",
                             swap_used, vm.metrics.raw.swap_total_mb
                         ))
-                        .color(egui::Color32::from_rgb(220, 120, 50))
-                        .small()
+                        .size(10.5)
+                        .color(C_YELLOW)
                     };
                     ui.label(swap_label);
                 }
-
             });
 
-            // ── Auto-cycle status ─────────────────────────────────────────
             if vm.soulram_active {
-                ui.separator();
+                ui.add_space(6.0);
                 if vm.auto_cycle_soulram {
                     match vm.next_cycle_in_s {
                         Some(0) | None => {
                             if let Some(last_ms) = vm.last_auto_cycle_ms {
                                 let age = vm.now_ms.saturating_sub(last_ms) / 1000;
                                 ui.label(
-                                    egui::RichText::new(format!(
+                                    RichText::new(format!(
                                         "Auto-cycle SoulRAM actif — dernier cycle il y a {age}s"
                                     ))
-                                    .small()
-                                    .color(egui::Color32::from_rgb(96, 168, 104)),
+                                    .size(10.5)
+                                    .color(C_GREEN),
                                 );
                             } else {
                                 ui.label(
-                                    egui::RichText::new("Auto-cycle SoulRAM actif — en attente de charge")
-                                        .small()
-                                        .color(egui::Color32::GRAY),
+                                    RichText::new(
+                                        "Auto-cycle SoulRAM actif — en attente de charge",
+                                    )
+                                    .size(10.5)
+                                    .color(C_MUTED),
                                 );
                             }
                         }
                         Some(remaining) => {
                             ui.label(
-                                egui::RichText::new(format!(
+                                RichText::new(format!(
                                     "Auto-cycle SoulRAM — prochain cycle dans {}",
                                     crate::fmt::runtime_short(remaining)
                                 ))
-                                .small()
-                                .color(egui::Color32::GRAY),
+                                .size(10.5)
+                                .color(C_MUTED),
                             );
                         }
                     }
                 } else {
                     ui.label(
-                        egui::RichText::new(
+                        RichText::new(
                             "SoulRAM actif — auto-cycle désactivé (one-shot). Activer dans Commandes.",
-                        )
-                        .small()
-                        .color(egui::Color32::DARK_GRAY),
+                        ).size(10.5).color(C_MUTED),
                     );
                 }
             }
 
-            // ── KPI énergétique ───────────────────────────────────────────
+            // ── KPI block ─────────────────────────────────────────────────────
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
             {
-                use soulkernel_core::kpi::KpiLabel;
-                ui.separator();
                 let kpi = &vm.kpi;
-                let label_str = kpi.label.as_str();
-                let label_color = match kpi.label {
-                    KpiLabel::Efficient   => egui::Color32::from_rgb(96, 168, 104),
-                    KpiLabel::Moderate    => egui::Color32::from_rgb(214, 153, 58),
-                    KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
-                    KpiLabel::Unknown     => egui::Color32::DARK_GRAY,
-                };
-                // ── Alerte auto-sabotage ──────────────────────────────────
+                let label_color = Self::kpi_color(&kpi.label);
                 if kpi.self_overload {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(210, 84, 84),
-                        format!(
-                            "⚠ SoulKernel {:.0}% CPU — l'optimiseur consomme plus qu'il n'optimise",
-                            kpi.cpu_self_pct
-                        ),
-                    );
+                    egui::Frame::new()
+                        .fill(C_RED.gamma_multiply(0.1))
+                        .stroke(Stroke::new(1.0, C_RED.gamma_multiply(0.4)))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(format!(
+                                "⚠ SoulKernel {:.0}% CPU — l'optimiseur consomme plus qu'il n'optimise",
+                                kpi.cpu_self_pct
+                            )).size(11.0).color(C_RED));
+                        });
+                    ui.add_space(6.0);
                 }
 
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                     let cpu_out_of_scope = (kpi.cpu_total_pct
                         - kpi.cpu_useful_pct
                         - kpi.cpu_overhead_pct
                         - kpi.cpu_system_pct)
                         .max(0.0);
-                    // KPI* valeur principale
                     match kpi.kpi_penalized {
                         Some(k) => Self::metric_badge(
-                            ui, "KPI énergétique",
-                            format!("{:.2} W/%  [{}]", k, label_str),
+                            ui,
+                            "KPI énergétique",
+                            format!("{:.2} W/%  [{}]", k, kpi.label.as_str()),
                             label_color,
                         ),
                         None => Self::metric_badge(
-                            ui, "KPI énergétique",
+                            ui,
+                            "KPI énergétique",
                             "N/A — aucun capteur puissance".to_string(),
-                            egui::Color32::DARK_GRAY,
+                            C_MUTED,
                         ),
                     }
-                    // CPU utile retenu par le KPI (somme bottom-up des top-N processus utiles).
                     Self::metric_badge(
-                        ui, "CPU utile (top-N)",
+                        ui,
+                        "CPU utile (top-N)",
                         format!("{:.1}%", kpi.cpu_useful_pct),
-                        Self::tone_for_ratio(1.0 - kpi.cpu_useful_pct / 100.0_f64.max(kpi.cpu_total_pct)),
+                        Self::tone_for_ratio(
+                            1.0 - kpi.cpu_useful_pct / 100.0_f64.max(kpi.cpu_total_pct),
+                        ),
                     );
                     if kpi.cpu_overhead_pct > 1.0 {
                         Self::metric_badge(
-                            ui, "Overhead",
+                            ui,
+                            "Overhead",
                             format!("{:.1}%", kpi.cpu_overhead_pct),
-                            egui::Color32::from_rgb(214, 153, 58),
+                            C_YELLOW,
                         );
                     }
                     if cpu_out_of_scope > 1.0 {
                         Self::metric_badge(
-                            ui, "CPU hors KPI",
+                            ui,
+                            "CPU hors KPI",
                             format!("{:.1}%", cpu_out_of_scope),
-                            egui::Color32::GRAY,
+                            C_MUTED,
                         );
                     }
-                    // Faults / s
                     if let Some(pf) = vm.metrics.raw.page_faults_per_sec {
                         if pf > 0.0 {
-                            let faults_k = pf / 1000.0;
                             let fault_color = if pf > 5000.0 {
-                                egui::Color32::from_rgb(210, 84, 84)
+                                C_RED
                             } else if pf > 1500.0 {
-                                egui::Color32::from_rgb(214, 153, 58)
+                                C_YELLOW
                             } else {
-                                egui::Color32::GRAY
+                                C_MUTED
                             };
                             let warn = if pf > 5000.0 { " ⚠" } else { "" };
                             Self::metric_badge(
-                                ui, "Faults mém.",
-                                format!("{:.0}k/s{}", faults_k, warn),
+                                ui,
+                                "Faults mém.",
+                                format!("{:.0}k/s{}", pf / 1000.0, warn),
                                 fault_color,
                             );
                         }
                     }
-                    // Tendance Δ KPI*
                     if let Some(trend) = kpi.trend {
                         let (trend_str, trend_color) = if trend > 1.0 {
-                            (format!("↑ +{:.2}", trend), egui::Color32::from_rgb(210, 84, 84))
+                            (format!("↑ +{:.2}", trend), C_RED)
                         } else if trend < -1.0 {
-                            (format!("↓ {:.2}", trend), egui::Color32::from_rgb(96, 168, 104))
+                            (format!("↓ {:.2}", trend), C_GREEN)
                         } else {
-                            (format!("→ {:.2}", trend), egui::Color32::GRAY)
+                            (format!("→ {:.2}", trend), C_MUTED)
                         };
                         Self::metric_badge(ui, "Tendance", trend_str, trend_color);
                     }
-                    // Ratio apprentissage
                     let ratio = vm.kpi_memory.reward_ratio();
                     if !vm.kpi_memory.records.is_empty() {
                         Self::metric_badge(
-                            ui, "Actions efficaces",
+                            ui,
+                            "Actions efficaces",
                             format!("{:.0}%", ratio * 100.0),
                             if ratio >= 0.6 {
-                                egui::Color32::from_rgb(96, 168, 104)
+                                C_GREEN
                             } else if ratio >= 0.4 {
-                                egui::Color32::from_rgb(214, 153, 58)
+                                C_YELLOW
                             } else {
-                                egui::Color32::from_rgb(210, 84, 84)
+                                C_RED
                             },
                         );
                     }
                 });
             }
 
-            // ── Delta depuis dernière action ──────────────────────────────
             if let Some(delta) = &vm.host_impact {
+                ui.add_space(8.0);
                 ui.separator();
+                ui.add_space(4.0);
                 Self::host_impact_delta_row(ui, delta, vm.now_ms);
             }
         });
     }
 
+    // ── Host impact delta row ─────────────────────────────────────────────────
+
     fn host_impact_delta_row(ui: &mut egui::Ui, delta: &HostImpactDelta, now_ms: u64) {
         let age_s = now_ms.saturating_sub(delta.captured_at_ms) / 1000;
         ui.label(
-            egui::RichText::new(format!(
+            RichText::new(format!(
                 "Résultat dernière action : {}  (il y a {}s)",
                 delta.source, age_s
             ))
+            .size(12.0)
             .strong(),
         );
         ui.horizontal_wrapped(|ui| {
-            // RAM libérée
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
             let freed = delta.mem_freed_mb();
             let ram_color = if freed > 50 {
-                egui::Color32::from_rgb(96, 168, 104)
+                C_GREEN
             } else if freed < -50 {
-                egui::Color32::from_rgb(210, 84, 84)
+                C_RED
             } else {
-                egui::Color32::GRAY
+                C_MUTED
             };
             Self::metric_badge(
                 ui,
@@ -948,47 +1313,32 @@ impl LiteApp {
                 },
                 ram_color,
             );
-
-            // Page faults réduites
             if let Some(pct) = delta.page_faults_reduction_pct() {
                 let color = if pct > 10.0 {
-                    egui::Color32::from_rgb(96, 168, 104)
+                    C_GREEN
                 } else if pct < -10.0 {
-                    egui::Color32::from_rgb(210, 84, 84)
+                    C_RED
                 } else {
-                    egui::Color32::GRAY
+                    C_MUTED
                 };
                 Self::metric_badge(ui, "Page faults", format!("{:+.0}%", -pct), color);
             } else if delta.page_faults_before.is_some() || delta.page_faults_after.is_some() {
-                Self::metric_badge(
-                    ui,
-                    "Page faults",
-                    "mesure en cours".to_string(),
-                    egui::Color32::GRAY,
-                );
+                Self::metric_badge(ui, "Page faults", "mesure en cours".to_string(), C_MUTED);
             }
-
-            // Puissance économisée
             if let Some(saved) = delta.power_saved_w() {
                 let color = if saved > 1.0 {
-                    egui::Color32::from_rgb(96, 168, 104)
+                    C_GREEN
                 } else if saved < -1.0 {
-                    egui::Color32::from_rgb(210, 84, 84)
+                    C_RED
                 } else {
-                    egui::Color32::GRAY
+                    C_MUTED
                 };
                 Self::metric_badge(ui, "Puissance", format!("{:+.1} W", -saved), color);
             }
-
-            // Compression avant/après
             if let (Some(before), Some(after)) = (delta.compression_before, delta.compression_after)
             {
                 let delta_ratio = after - before;
-                let color = if delta_ratio > 0.02 {
-                    egui::Color32::from_rgb(96, 168, 104)
-                } else {
-                    egui::Color32::GRAY
-                };
+                let color = if delta_ratio > 0.02 { C_GREEN } else { C_MUTED };
                 Self::metric_badge(
                     ui,
                     "Compression",
@@ -999,141 +1349,131 @@ impl LiteApp {
         });
     }
 
-    fn power_unavailable_hint(os: &str) -> &'static str {
-        if os.contains("Windows") {
-            "desktop Windows: branchez un Meross"
-        } else if os.contains("macOS") || os.contains("Darwin") {
-            "Mac desktop: branchez un Meross"
-        } else {
-            "RAPL non disponible"
-        }
-    }
+    // ── Decision panel ─────────────────────────────────────────────────────────
 
     fn decision_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "État système",
                 "Pression, fenêtre d'action et garde — en un coup d'œil.",
             );
-            let pressure = if vm.metrics.sigma >= vm.sigma_max {
+            let (pressure_text, pressure_desc, pressure_color) = if vm.metrics.sigma >= vm.sigma_max
+            {
                 (
                     "Pression élevée",
                     "La machine est tendue — éviter d'ajouter une charge.",
+                    C_RED,
                 )
             } else if vm.metrics.sigma >= vm.sigma_max * 0.75 {
                 (
                     "Pression surveillée",
                     "Charge modérée — agir avec précaution.",
+                    C_YELLOW,
                 )
             } else {
-                ("Pression basse", "La machine est à l'aise.")
+                ("Pression basse", "La machine est à l'aise.", C_GREEN)
             };
-            let window = if vm.formula.pi >= 0.6 {
-                ("Fenêtre ouverte", "Bon moment pour activer le dôme.")
+            let (window_text, window_desc, window_color) = if vm.formula.pi >= 0.6 {
+                (
+                    "Fenêtre ouverte",
+                    "Bon moment pour activer le dôme.",
+                    C_GREEN,
+                )
             } else if vm.formula.pi >= 0.35 {
-                ("Fenêtre modérée", "L'action peut avoir un effet limité.")
+                (
+                    "Fenêtre modérée",
+                    "L'action peut avoir un effet limité.",
+                    C_YELLOW,
+                )
             } else {
-                ("Fenêtre fermée", "Peu de gain attendu dans ce contexte.")
+                (
+                    "Fenêtre fermée",
+                    "Peu de gain attendu dans ce contexte.",
+                    C_RED,
+                )
             };
-            let guard = if vm.formula.advanced_guard >= 0.85 {
-                ("Garde ouverte", "SoulKernel peut agir librement.")
+            let (guard_text, guard_desc, guard_color) = if vm.formula.advanced_guard >= 0.85 {
+                ("Garde ouverte", "SoulKernel peut agir librement.", C_GREEN)
             } else if vm.formula.advanced_guard >= 0.5 {
-                ("Garde prudente", "SoulKernel attend un meilleur contexte.")
+                (
+                    "Garde prudente",
+                    "SoulKernel attend un meilleur contexte.",
+                    C_YELLOW,
+                )
             } else {
                 (
                     "Garde fermée",
                     "SoulKernel bloque l'action pour protéger le HOST.",
+                    C_RED,
                 )
             };
-            let pressure_color = if vm.metrics.sigma >= vm.sigma_max {
-                egui::Color32::from_rgb(210, 84, 84)
-            } else if vm.metrics.sigma >= vm.sigma_max * 0.75 {
-                egui::Color32::from_rgb(214, 153, 58)
-            } else {
-                egui::Color32::from_rgb(96, 168, 104)
-            };
-            let window_color = if vm.formula.pi >= 0.6 {
-                egui::Color32::from_rgb(96, 168, 104)
-            } else if vm.formula.pi >= 0.35 {
-                egui::Color32::from_rgb(214, 153, 58)
-            } else {
-                egui::Color32::from_rgb(210, 84, 84)
-            };
-            let guard_color = if vm.formula.advanced_guard >= 0.85 {
-                egui::Color32::from_rgb(96, 168, 104)
-            } else if vm.formula.advanced_guard >= 0.5 {
-                egui::Color32::from_rgb(214, 153, 58)
-            } else {
-                egui::Color32::from_rgb(210, 84, 84)
-            };
             ui.horizontal_wrapped(|ui| {
-                Self::metric_badge(ui, pressure.0, pressure.1.to_string(), pressure_color);
-                Self::metric_badge(ui, window.0, window.1.to_string(), window_color);
-                Self::metric_badge(ui, guard.0, guard.1.to_string(), guard_color);
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                Self::metric_badge(ui, pressure_text, pressure_desc.to_string(), pressure_color);
+                Self::metric_badge(ui, window_text, window_desc.to_string(), window_color);
+                Self::metric_badge(ui, guard_text, guard_desc.to_string(), guard_color);
             });
         });
     }
+
+    // ── Gains panel ────────────────────────────────────────────────────────────
 
     fn gains_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
         let lt = &vm.telemetry.lifetime;
         let mem = &vm.kpi_memory;
 
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Gains SoulKernel",
-                "Ce que l'application a concretement fait pour toi depuis le premier lancement.",
+                "Ce que l'application a concrètement fait pour toi depuis le premier lancement.",
             );
 
-            // ── Ancienneté ────────────────────────────────────────────────────
             if lt.first_launch_ts > 0 {
-                let age_h = lt.total_samples as f64
-                    * vm.telemetry.total.avg_power_w.map(|_| 1.0).unwrap_or(1.0); // just for age display
-                                                                                  // Use total_samples * refresh_interval to estimate age
-                                                                                  // refresh ~5s → total_idle_hours + total_dome_hours + reste
                 let monitored_h =
                     lt.total_idle_hours + lt.total_dome_hours + lt.soulram_active_hours;
                 if monitored_h > 0.01 {
                     ui.label(
-                        egui::RichText::new(format!(
+                        RichText::new(format!(
                             "Suivi depuis {:.0}h  ({} samples  ·  {:.0}h idle  ·  {:.1}h dôme)",
                             monitored_h, lt.total_samples, lt.total_idle_hours, lt.total_dome_hours,
                         ))
-                        .small()
-                        .color(egui::Color32::GRAY),
+                        .size(10.5)
+                        .color(C_MUTED),
                     );
                 }
-                let _ = age_h; // unused
             }
 
-            ui.separator();
+            ui.add_space(8.0);
 
             // ── Dôme ──────────────────────────────────────────────────────────
-            ui.label(egui::RichText::new("Dôme").strong());
+            Self::eyebrow(ui, "Dôme");
+            ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 Self::metric_badge(
                     ui,
                     "Activations",
                     format!("{}", lt.total_dome_activations),
                     if lt.total_dome_activations > 0 {
-                        egui::Color32::from_rgb(96, 168, 104)
+                        C_GREEN
                     } else {
-                        egui::Color32::GRAY
+                        C_MUTED
                     },
                 );
                 Self::metric_badge(
                     ui,
                     "Temps actif",
                     format!("{:.1}h", lt.total_dome_hours),
-                    egui::Color32::GRAY,
+                    C_MUTED,
                 );
                 if lt.total_cpu_hours_differential > 0.0 {
                     Self::metric_badge(
                         ui,
-                        "CPU·h économisé",
+                        "CPU·h éco.",
                         format!("{:.3} CPU·h", lt.total_cpu_hours_differential),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     );
                 }
                 if lt.total_mem_gb_hours_differential > 0.0 {
@@ -1141,79 +1481,81 @@ impl LiteApp {
                         ui,
                         "RAM·GB·h libérée",
                         format!("{:.3} GB·h", lt.total_mem_gb_hours_differential),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     );
                 }
             });
 
+            ui.add_space(8.0);
+
             // ── SoulRAM ───────────────────────────────────────────────────────
-            ui.separator();
-            ui.label(egui::RichText::new("SoulRAM").strong());
+            Self::eyebrow(ui, "SoulRAM");
+            ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 Self::metric_badge(
                     ui,
                     "Temps actif",
                     format!("{:.1}h", lt.soulram_active_hours),
                     if lt.soulram_active_hours > 0.0 {
-                        egui::Color32::from_rgb(96, 168, 104)
+                        C_GREEN
                     } else {
-                        egui::Color32::GRAY
+                        C_MUTED
                     },
                 );
             });
 
-            // ── KPI / efficacité des actions ──────────────────────────────────
-            ui.separator();
-            ui.label(egui::RichText::new("Efficacité des actions").strong());
+            ui.add_space(8.0);
+
+            // ── Efficacité des actions ────────────────────────────────────────
+            Self::eyebrow(ui, "Efficacité des actions");
+            ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                // Session courante : ratio de récompense
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 let reward = mem.reward_ratio();
                 Self::metric_badge(
                     ui,
                     "Actions efficaces (session)",
                     format!("{:.0}%", reward * 100.0),
                     if reward >= 0.6 {
-                        egui::Color32::from_rgb(96, 168, 104)
+                        C_GREEN
                     } else if reward >= 0.4 {
-                        egui::Color32::from_rgb(214, 153, 58)
+                        C_YELLOW
                     } else {
-                        egui::Color32::from_rgb(200, 80, 80)
+                        C_RED
                     },
                 );
-                // Gain KPI médian session (négatif = amélioration)
                 if let Some(avg_delta) = mem.avg_kpi_gain() {
                     Self::metric_badge(
                         ui,
                         "Δ KPI médian (session)",
                         format!("{:+.2} W/%", avg_delta),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     );
                 }
-                // Amélioration KPI lifetime (% calculé au fil des ticks)
                 if let Some(gain_pct) = lt.avg_kpi_gain_pct {
                     Self::metric_badge(
                         ui,
                         "Amélioration KPI (lifetime)",
                         format!("{:+.1}%", gain_pct),
-                        if gain_pct < 0.0 {
-                            egui::Color32::from_rgb(96, 168, 104) // négatif = bien
-                        } else {
-                            egui::Color32::from_rgb(200, 80, 80)
-                        },
+                        if gain_pct < 0.0 { C_GREEN } else { C_RED },
                     );
                 }
             });
 
-            // ── Énergie & coût (si capteur réel disponible) ───────────────────
-            ui.separator();
-            ui.label(egui::RichText::new("Énergie & coût").strong());
+            ui.add_space(8.0);
+
+            // ── Énergie & coût ────────────────────────────────────────────────
+            Self::eyebrow(ui, "Énergie & coût");
+            ui.add_space(4.0);
             if lt.has_real_power {
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                     Self::metric_badge(
                         ui,
                         "Énergie mesurée",
                         format!("{:.3} kWh", lt.total_energy_kwh),
-                        egui::Color32::LIGHT_BLUE,
+                        C_CYAN,
                     );
                     if lt.total_energy_cost_measured > 0.0 {
                         Self::metric_badge(
@@ -1223,7 +1565,7 @@ impl LiteApp {
                                 "{:.2} {}",
                                 lt.total_energy_cost_measured, vm.telemetry.pricing.currency
                             ),
-                            egui::Color32::LIGHT_BLUE,
+                            C_CYAN,
                         );
                     }
                     if lt.total_co2_measured_kg > 0.0 {
@@ -1231,75 +1573,69 @@ impl LiteApp {
                             ui,
                             "CO₂ mesuré",
                             format!("{:.3} kg", lt.total_co2_measured_kg),
-                            egui::Color32::GRAY,
+                            C_MUTED,
                         );
                     }
                 });
-                // Économie dôme session (puissance moy dôme ON vs OFF)
                 if let Some(saved) = vm.telemetry.total.energy_saved_kwh.filter(|&v| v > 0.0) {
+                    ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(format!(
+                        RichText::new(format!(
                             "Économie estimée dôme cette session  {:.4} kWh  (~{:.3} {})",
                             saved,
                             saved * vm.telemetry.pricing.price_per_kwh,
                             vm.telemetry.pricing.currency,
                         ))
-                        .color(egui::Color32::from_rgb(96, 168, 104)),
+                        .size(11.0)
+                        .color(C_GREEN),
                     );
                 }
             } else {
-                ui.label(
-                    egui::RichText::new(
-                        "Capteur de puissance non disponible — branchez un Meross ou activez RAPL \
-                         pour mesurer kWh et calculer les économies en euros.",
-                    )
-                    .small()
-                    .color(egui::Color32::from_rgb(180, 130, 50)),
-                );
-                // On peut quand même montrer un estimé si on a des données CPU diff
-                if lt.total_cpu_hours_differential > 0.0 {
-                    // Estimation très conservatrice : ~0.5 W par point de % CPU (TDP ~100W / 100% / 2)
-                    let est_kwh = lt.total_cpu_hours_differential * 0.5;
-                    let est_cost = est_kwh * vm.telemetry.pricing.price_per_kwh;
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Estimation sans capteur (0.5 W/%·CPU)  ~{:.4} kWh  ~{:.3} {}",
-                            est_kwh, est_cost, vm.telemetry.pricing.currency,
-                        ))
-                        .small()
-                        .color(egui::Color32::GRAY),
-                    );
-                }
+                egui::Frame::new()
+                    .fill(C_YELLOW.gamma_multiply(0.07))
+                    .stroke(Stroke::new(1.0, C_YELLOW.gamma_multiply(0.3)))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(
+                                "Capteur de puissance non disponible — branchez un Meross ou activez RAPL \
+                                 pour mesurer kWh et calculer les économies en euros.",
+                            ).size(11.0).color(C_YELLOW),
+                        );
+                        if lt.total_cpu_hours_differential > 0.0 {
+                            let est_kwh = lt.total_cpu_hours_differential * 0.5;
+                            let est_cost = est_kwh * vm.telemetry.pricing.price_per_kwh;
+                            ui.label(
+                                RichText::new(format!(
+                                    "Estimation sans capteur (0.5 W/%·CPU)  ~{:.4} kWh  ~{:.3} {}",
+                                    est_kwh, est_cost, vm.telemetry.pricing.currency,
+                                )).size(10.5).color(C_MUTED),
+                            );
+                        }
+                    });
             }
         });
     }
 
+    // ── Telemetry panel ────────────────────────────────────────────────────────
+
     fn telemetry_panel(ui: &mut egui::Ui, vm: &LiteViewModel) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Impact mesuré",
                 "Énergie consommée et gain du dôme depuis le début de la session.",
             );
-
-            // ── Énergie live ─────────────────────────────────────────────────
             let live_w = vm.telemetry.live_power_w;
             ui.horizontal_wrapped(|ui| {
-                Self::metric_badge(
-                    ui,
-                    "Source",
-                    vm.telemetry.power_source.clone(),
-                    egui::Color32::LIGHT_BLUE,
-                );
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                Self::metric_badge(ui, "Source", vm.telemetry.power_source.clone(), C_CYAN);
                 Self::metric_badge(
                     ui,
                     "Live",
                     fmt::watts(live_w),
-                    if live_w.is_some() {
-                        egui::Color32::LIGHT_BLUE
-                    } else {
-                        egui::Color32::DARK_GRAY
-                    },
+                    if live_w.is_some() { C_CYAN } else { C_MUTED },
                 );
                 if vm.telemetry.total.dome_active_ratio > 0.0 {
                     Self::metric_badge(
@@ -1309,71 +1645,87 @@ impl LiteApp {
                             "{:.0}% du temps",
                             vm.telemetry.total.dome_active_ratio * 100.0
                         ),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     );
                 }
             });
 
-            // ── Puissance moyenne ─────────────────────────────────────────────
             if vm.telemetry.total.avg_power_w.is_some()
                 || vm.telemetry.total.avg_power_dome_on_w.is_some()
             {
-                ui.separator();
-                ui.label(format!(
-                    "Puiss. moy. {}  |  dôme ON {}  |  dôme OFF {}",
-                    fmt::watts(vm.telemetry.total.avg_power_w),
-                    fmt::watts(vm.telemetry.total.avg_power_dome_on_w),
-                    fmt::watts(vm.telemetry.total.avg_power_dome_off_w)
-                ));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Puiss. moy. {}  |  dôme ON {}  |  dôme OFF {}",
+                        fmt::watts(vm.telemetry.total.avg_power_w),
+                        fmt::watts(vm.telemetry.total.avg_power_dome_on_w),
+                        fmt::watts(vm.telemetry.total.avg_power_dome_off_w)
+                    ))
+                    .size(11.0)
+                    .color(C_MUTED),
+                );
                 if let Some(saved) = vm.telemetry.total.energy_saved_kwh.filter(|&v| v > 0.0) {
-                    ui.label(format!(
-                        "Économie estimée dôme {saved:.3} kWh cette session"
-                    ));
+                    ui.label(
+                        RichText::new(format!(
+                            "Économie estimée dôme {saved:.3} kWh cette session"
+                        ))
+                        .size(11.0)
+                        .color(C_GREEN),
+                    );
                 }
             }
 
-            // ── Fenêtres temporelles ──────────────────────────────────────────
+            ui.add_space(6.0);
             ui.separator();
+            ui.add_space(6.0);
+
+            // Time windows
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 Self::metric_badge(
                     ui,
                     "1h",
                     format!("{:.3} kWh", vm.telemetry.hour.energy_kwh),
-                    egui::Color32::GRAY,
+                    C_MUTED,
                 );
                 Self::metric_badge(
                     ui,
                     "24h",
                     format!("{:.3} kWh", vm.telemetry.day.energy_kwh),
-                    egui::Color32::GRAY,
+                    C_MUTED,
                 );
                 Self::metric_badge(
                     ui,
                     "7j",
                     format!("{:.3} kWh", vm.telemetry.week.energy_kwh),
-                    egui::Color32::GRAY,
+                    C_MUTED,
                 );
                 Self::metric_badge(
                     ui,
                     "30j",
                     format!("{:.3} kWh", vm.telemetry.month.energy_kwh),
-                    egui::Color32::GRAY,
+                    C_MUTED,
                 );
             });
 
-            // ── Lifetime ──────────────────────────────────────────────────────
             if vm.telemetry.lifetime.total_energy_kwh > 0.0 {
-                ui.separator();
-                ui.label(format!(
-                    "Total vie  {:.3} kWh  ·  CO₂ {:.3} kg  ·  coût {:.2} {}",
-                    vm.telemetry.lifetime.total_energy_kwh,
-                    vm.telemetry.lifetime.total_co2_measured_kg,
-                    vm.telemetry.lifetime.total_energy_cost_measured,
-                    vm.telemetry.pricing.currency
-                ));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Total vie  {:.3} kWh  ·  CO₂ {:.3} kg  ·  coût {:.2} {}",
+                        vm.telemetry.lifetime.total_energy_kwh,
+                        vm.telemetry.lifetime.total_co2_measured_kg,
+                        vm.telemetry.lifetime.total_energy_cost_measured,
+                        vm.telemetry.pricing.currency
+                    ))
+                    .size(11.0)
+                    .color(C_MUTED),
+                );
             }
         });
     }
+
+    // ── External power panel ───────────────────────────────────────────────────
 
     fn external_power_panel(
         ui: &mut egui::Ui,
@@ -1381,19 +1733,18 @@ impl LiteApp {
         error: &mut Option<String>,
         info: &mut Option<String>,
     ) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Prise intelligente (Meross)",
                 "Mesure murale optionnelle — pour voir ce que la prise consomme vraiment.",
             );
-
-            // ── État courant ──────────────────────────────────────────────────
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 let bridge_color = if state.vm.external_bridge_running {
-                    egui::Color32::from_rgb(96, 168, 104)
+                    C_GREEN
                 } else {
-                    egui::Color32::DARK_GRAY
+                    C_MUTED
                 };
                 Self::metric_badge(
                     ui,
@@ -1406,9 +1757,9 @@ impl LiteApp {
                     bridge_color,
                 );
                 let fresh_color = if state.vm.external_status.is_fresh {
-                    egui::Color32::from_rgb(96, 168, 104)
+                    C_GREEN
                 } else {
-                    egui::Color32::from_rgb(214, 153, 58)
+                    C_YELLOW
                 };
                 Self::metric_badge(
                     ui,
@@ -1421,19 +1772,18 @@ impl LiteApp {
                 && state.vm.external_bridge_detail != "ok"
             {
                 ui.label(
-                    egui::RichText::new(&state.vm.external_bridge_detail)
-                        .small()
-                        .color(egui::Color32::GRAY),
+                    RichText::new(&state.vm.external_bridge_detail)
+                        .size(10.5)
+                        .color(C_MUTED),
                 );
             }
-
-            ui.separator();
+            ui.add_space(8.0);
             ui.checkbox(
                 &mut state.vm.external_config.enabled,
                 "Activer la source externe",
             );
             ui.horizontal(|ui| {
-                ui.label("Fichier données");
+                ui.label(RichText::new("Fichier données").size(11.0).color(C_MUTED));
                 let path = state.vm.external_config.power_file.get_or_insert_with(|| {
                     soulkernel_core::external_power::default_power_file()
                         .map(|p| p.to_string_lossy().into_owned())
@@ -1442,7 +1792,7 @@ impl LiteApp {
                 ui.text_edit_singleline(path);
             });
             ui.horizontal(|ui| {
-                ui.label("Python");
+                ui.label(RichText::new("Python").size(11.0).color(C_MUTED));
                 let bin = state.vm.external_config.python_bin.get_or_insert_with(|| {
                     if cfg!(target_os = "windows") {
                         "py".to_string()
@@ -1454,7 +1804,7 @@ impl LiteApp {
             });
             ui.collapsing("Identifiants Meross", |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("E-mail");
+                    ui.label(RichText::new("E-mail").size(11.0).color(C_MUTED));
                     let email = state
                         .vm
                         .external_config
@@ -1463,7 +1813,7 @@ impl LiteApp {
                     ui.text_edit_singleline(email);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Mot de passe");
+                    ui.label(RichText::new("Mot de passe").size(11.0).color(C_MUTED));
                     let pwd = state
                         .vm
                         .external_config
@@ -1472,14 +1822,14 @@ impl LiteApp {
                     ui.add(egui::TextEdit::singleline(pwd).password(true));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Région");
+                    ui.label(RichText::new("Région").size(11.0).color(C_MUTED));
                     let region = state
                         .vm
                         .external_config
                         .meross_region
                         .get_or_insert("eu".to_string());
                     ui.text_edit_singleline(region);
-                    ui.label("Modèle");
+                    ui.label(RichText::new("Modèle").size(11.0).color(C_MUTED));
                     let device = state
                         .vm
                         .external_config
@@ -1510,16 +1860,15 @@ impl LiteApp {
             });
             if !state.vm.external_status.bridge_log_path.is_empty() {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "Log: {}",
-                        state.vm.external_status.bridge_log_path
-                    ))
-                    .small()
-                    .color(egui::Color32::DARK_GRAY),
+                    RichText::new(format!("Log: {}", state.vm.external_status.bridge_log_path))
+                        .size(10.0)
+                        .color(C_MUTED),
                 );
             }
         });
     }
+
+    // ── Benchmark panel ────────────────────────────────────────────────────────
 
     fn benchmark_panel(
         ui: &mut egui::Ui,
@@ -1527,7 +1876,7 @@ impl LiteApp {
         error: &mut Option<String>,
         info: &mut Option<String>,
     ) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Test A/B",
@@ -1539,21 +1888,21 @@ impl LiteApp {
             );
             ui.collapsing("Commande externe", |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Commande");
+                    ui.label(RichText::new("Commande").size(11.0).color(C_MUTED));
                     ui.add_enabled(
                         !state.vm.benchmark_use_system_probe,
                         egui::TextEdit::singleline(&mut state.vm.benchmark_command),
                     );
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Arguments");
+                    ui.label(RichText::new("Arguments").size(11.0).color(C_MUTED));
                     ui.add_enabled(
                         !state.vm.benchmark_use_system_probe,
                         egui::TextEdit::singleline(&mut state.vm.benchmark_args),
                     );
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Dossier");
+                    ui.label(RichText::new("Dossier").size(11.0).color(C_MUTED));
                     ui.add_enabled(
                         !state.vm.benchmark_use_system_probe,
                         egui::TextEdit::singleline(&mut state.vm.benchmark_cwd),
@@ -1579,32 +1928,42 @@ impl LiteApp {
                 }
             }
             if let Some(session) = &state.vm.benchmark_last_session {
+                ui.add_space(8.0);
                 ui.separator();
+                ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                     Self::metric_badge(
                         ui,
                         "Médiane",
-                        session.summary.gain_median_pct
+                        session
+                            .summary
+                            .gain_median_pct
                             .map(|v| format!("{v:.1}%"))
                             .unwrap_or_else(|| "N/A".to_string()),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     );
                     Self::metric_badge(
                         ui,
                         "p95",
-                        session.summary.gain_p95_pct
+                        session
+                            .summary
+                            .gain_p95_pct
                             .map(|v| format!("{v:.1}%"))
                             .unwrap_or_else(|| "N/A".to_string()),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     );
                     Self::metric_badge(
                         ui,
                         "Efficacité",
-                        session.summary.efficiency_score
+                        session
+                            .summary
+                            .efficiency_score
                             .map(|v| format!("{v:.2}"))
                             .unwrap_or_else(|| "N/A".to_string()),
-                        egui::Color32::LIGHT_BLUE,
+                        C_CYAN,
                     );
+                    let uw_pct = session.summary.gain_utility_per_watt_pct.unwrap_or(0.0);
                     Self::metric_badge(
                         ui,
                         "U/W",
@@ -1613,12 +1972,9 @@ impl LiteApp {
                             .gain_utility_per_watt_pct
                             .map(|v| format!("{v:+.1}%"))
                             .unwrap_or_else(|| "N/A".to_string()),
-                        if session.summary.gain_utility_per_watt_pct.unwrap_or(0.0) >= 0.0 {
-                            egui::Color32::from_rgb(96, 168, 104)
-                        } else {
-                            egui::Color32::from_rgb(210, 84, 84)
-                        },
+                        if uw_pct >= 0.0 { C_GREEN } else { C_RED },
                     );
+                    let kw_pct = session.summary.gain_kwh_per_utility_pct.unwrap_or(0.0);
                     Self::metric_badge(
                         ui,
                         "kWh/U",
@@ -1627,11 +1983,7 @@ impl LiteApp {
                             .gain_kwh_per_utility_pct
                             .map(|v| format!("{v:+.1}%"))
                             .unwrap_or_else(|| "N/A".to_string()),
-                        if session.summary.gain_kwh_per_utility_pct.unwrap_or(0.0) >= 0.0 {
-                            egui::Color32::from_rgb(96, 168, 104)
-                        } else {
-                            egui::Color32::from_rgb(210, 84, 84)
-                        },
+                        if kw_pct >= 0.0 { C_GREEN } else { C_RED },
                     );
                 });
                 if let (Some(off), Some(on)) = (
@@ -1639,36 +1991,47 @@ impl LiteApp {
                     session.summary.measured_efficiency_on.as_ref(),
                 ) {
                     ui.label(
-                        egui::RichText::new(format!(
+                        RichText::new(format!(
                             "Mesuré: OFF {:.4} U/W → ON {:.4} U/W  ·  OFF {:.6} kWh/U → ON {:.6} kWh/U",
-                            off.utility_per_watt,
-                            on.utility_per_watt,
-                            off.kwh_per_utility,
-                            on.kwh_per_utility
-                        ))
-                        .small()
-                        .color(egui::Color32::GRAY),
+                            off.utility_per_watt, on.utility_per_watt,
+                            off.kwh_per_utility, on.kwh_per_utility
+                        )).size(10.0).color(C_MUTED),
                     );
                 }
             }
             if let Some(history) = &state.vm.benchmark_history {
                 if history.sessions.len() > 1 {
-                    ui.label(format!("{} sessions enregistrées", history.sessions.len()));
+                    ui.label(
+                        RichText::new(format!("{} sessions enregistrées", history.sessions.len()))
+                            .size(11.0)
+                            .color(C_MUTED),
+                    );
                 }
                 if let Some(advice) = &history.advice {
-                    ui.separator();
-                    ui.label(egui::RichText::new("Réglages conseillés").strong());
-                    ui.label(format!(
-                        "κ {:.1}  ·  Σmax {:.2}  ·  η {:.2}  ·  policy {}",
-                        advice.recommended_kappa,
-                        advice.recommended_sigma_max,
-                        advice.recommended_eta,
-                        advice.recommended_policy_mode
-                    ));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Réglages conseillés")
+                            .size(12.0)
+                            .strong()
+                            .color(C_TEXT),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "κ {:.1}  ·  Σmax {:.2}  ·  η {:.2}  ·  policy {}",
+                            advice.recommended_kappa,
+                            advice.recommended_sigma_max,
+                            advice.recommended_eta,
+                            advice.recommended_policy_mode
+                        ))
+                        .size(11.0)
+                        .color(C_MUTED),
+                    );
                 }
             }
         });
     }
+
+    // ── Inventory panel ────────────────────────────────────────────────────────
 
     fn inventory_panel(ui: &mut egui::Ui, state: &LiteState) {
         fn endpoint_weight(kind: &str) -> f64 {
@@ -1705,74 +2068,63 @@ impl LiteApp {
             if items.is_empty() {
                 return;
             }
-            ui.label(egui::RichText::new(title).strong());
+            ui.label(RichText::new(title).size(11.5).strong().color(C_CYAN));
             for item in items {
                 ui.horizontal_wrapped(|ui| {
-                    // Nom — gras si non vide
                     if !item.name.is_empty() {
-                        ui.strong(&item.name);
+                        ui.label(RichText::new(&item.name).strong());
                     }
-                    ui.label(format!("[{}]", item.kind));
-
-                    // Watts : seulement pour les endpoints ou si mesure réelle disponible
+                    ui.label(
+                        RichText::new(format!("[{}]", item.kind))
+                            .size(10.0)
+                            .color(C_MUTED),
+                    );
                     if endpoint_budget_w.is_some() {
                         let estimated_w = endpoint_budget_w
                             .map(|budget| budget * (endpoint_weight(&item.kind) / total_weight));
-                        ui.label(format!("~{}", crate::fmt::watts(estimated_w)));
+                        ui.label(
+                            RichText::new(format!("~{}", crate::fmt::watts(estimated_w)))
+                                .size(10.0),
+                        );
                     }
-
-                    // Scope de mesure : seulement si ce n'est pas "detected" banal
                     if let Some(scope) = &item.measurement_scope {
                         if scope != "detected" {
-                            ui.label(egui::RichText::new(format!("[{scope}]")).small());
+                            ui.label(RichText::new(format!("[{scope}]")).size(9.5).color(C_MUTED));
                         }
                     }
-
-                    // État
                     if let Some(active_state) = &item.active_state {
                         let (label, color) = match active_state.as_str() {
-                            "active" => ("actif", egui::Color32::from_rgb(96, 168, 104)),
-                            "connected" => ("connecté", egui::Color32::from_rgb(100, 149, 237)),
-                            "idle" => ("veille", egui::Color32::GRAY),
-                            other => (other, egui::Color32::GRAY),
+                            "active" => ("actif", C_GREEN),
+                            "connected" => ("connecté", Color32::from_rgb(100, 149, 237)),
+                            "idle" => ("veille", C_MUTED),
+                            other => (other, C_MUTED),
                         };
                         ui.colored_label(color, label);
                     }
-
-                    // Lien physique
                     if let Some(link) = &item.physical_link_hint {
-                        ui.label(
-                            egui::RichText::new(link)
-                                .small()
-                                .color(egui::Color32::DARK_GRAY),
-                        );
+                        ui.label(RichText::new(link).size(9.5).color(C_MUTED));
                     }
-
-                    // Fiabilité : seulement si mesurée ou dérivée (pas "detected" à 65%)
                     if let Some(score) = item.confidence_score {
                         if score < 0.64 || score > 0.66 {
-                            // Uniquement si ≠ 65% (valeur par défaut sans intérêt)
                             let color = if score >= 0.85 {
-                                egui::Color32::from_rgb(96, 168, 104)
+                                C_GREEN
                             } else if score >= 0.6 {
-                                egui::Color32::from_rgb(214, 153, 58)
+                                C_YELLOW
                             } else {
-                                egui::Color32::from_rgb(210, 84, 84)
+                                C_RED
                             };
                             ui.colored_label(color, format!("{:.0}%", score * 100.0));
                         }
                     }
-
-                    // Détail
                     if let Some(detail) = &item.detail {
-                        ui.label(egui::RichText::new(detail).small());
+                        ui.label(RichText::new(detail).size(10.0).color(C_MUTED));
                     }
                 });
             }
-            ui.separator();
+            ui.add_space(4.0);
         }
 
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Inventaire matériel",
@@ -1793,21 +2145,23 @@ impl LiteApp {
                 .map(|item| endpoint_weight(&item.kind))
                 .sum::<f64>()
                 .max(0.0001);
-            ui.label(format!(
-                "Inventaire: {} displays · {} GPU · {} storage · {} net · {} endpoints",
-                state.vm.device_inventory.displays.len(),
-                state.vm.device_inventory.gpus.len(),
-                state.vm.device_inventory.storage.len(),
-                state.vm.device_inventory.network.len(),
-                state.vm.device_inventory.connected_endpoints.len()
-            ));
+            ui.label(
+                RichText::new(format!(
+                    "Inventaire: {} displays · {} GPU · {} storage · {} net · {} endpoints",
+                    state.vm.device_inventory.displays.len(),
+                    state.vm.device_inventory.gpus.len(),
+                    state.vm.device_inventory.storage.len(),
+                    state.vm.device_inventory.network.len(),
+                    state.vm.device_inventory.connected_endpoints.len()
+                ))
+                .size(10.5)
+                .color(C_MUTED),
+            );
+            ui.add_space(8.0);
             egui::ScrollArea::vertical()
                 .id_salt("endpoints_scroll")
                 .max_height(260.0)
                 .show(ui, |ui| {
-                    // Displays, GPU, storage, network: no estimated watts — real data is in
-                    // item.detail already (e.g. NVML watts). Fake apportioned estimates
-                    // would show misleading numbers for devices with no power telemetry.
                     render_inventory_items(
                         ui,
                         "Displays",
@@ -1843,8 +2197,6 @@ impl LiteApp {
                         None,
                         total_weight,
                     );
-                    // Connected endpoints: show apportioned estimate only here,
-                    // where real per-port telemetry is absent.
                     render_inventory_items(
                         ui,
                         "Endpoints",
@@ -1856,17 +2208,25 @@ impl LiteApp {
         });
     }
 
+    // ── HUD panel ──────────────────────────────────────────────────────────────
+
     fn hud_panel(ui: &mut egui::Ui, state: &mut LiteState) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "HUD natif",
                 "Mini vue toujours visible pour les signaux utiles pendant l'usage.",
             );
             ui.checkbox(&mut state.vm.show_hud, "Afficher le HUD compact");
-            ui.label("Mode lite: HUD compact natif intégré, sans WebView.");
+            ui.label(
+                RichText::new("Mode lite: HUD compact natif intégré, sans WebView.")
+                    .size(11.0)
+                    .color(C_MUTED),
+            );
         });
     }
+
+    // ── HUD overlay ───────────────────────────────────────────────────────────
 
     fn hud_overlay(ctx: &egui::Context, vm: &LiteViewModel) {
         let power = vm
@@ -1881,47 +2241,65 @@ impl LiteApp {
                     None
                 }
             });
+
         egui::Window::new("SoulKernel HUD")
             .title_bar(false)
             .resizable(false)
             .collapsible(false)
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 16.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(6, 16, 25, 220))
+                    .stroke(Stroke::new(1.0, C_BORDER))
+                    .corner_radius(14.0)
+                    .inner_margin(egui::Margin::same(12)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     Self::status_chip(ui, "Dome", vm.dome_active);
                     Self::status_chip(ui, "SoulRAM", vm.soulram_active);
-                    ui.strong(fmt::watts(power));
+                    let (pw_str, pw_col) = match power {
+                        Some(w) => (format!("{:.1} W", w), C_CYAN),
+                        None => ("— W".to_string(), C_MUTED),
+                    };
+                    ui.label(RichText::new(pw_str).size(13.0).strong().color(pw_col));
                 });
-                ui.label(format!(
-                    "CPU {}  RAM {}",
-                    fmt::pct(vm.metrics.raw.cpu_pct),
-                    fmt::gib_pair(vm.metrics.raw.mem_used_mb, vm.metrics.raw.mem_total_mb)
-                ));
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "CPU {}  RAM {}",
+                        fmt::pct(vm.metrics.raw.cpu_pct),
+                        fmt::gib_pair(vm.metrics.raw.mem_used_mb, vm.metrics.raw.mem_total_mb)
+                    ))
+                    .size(11.0)
+                    .color(C_TEXT),
+                );
                 {
-                    use soulkernel_core::kpi::KpiLabel;
+                    let kpi_color = Self::kpi_color(&vm.kpi.label);
                     let kpi_str = vm
                         .kpi
                         .kpi_penalized
                         .map(|k| format!("KPI {:.1} W/%  [{}]", k, vm.kpi.label.as_str()))
                         .unwrap_or_else(|| "KPI —".to_string());
-                    let kpi_color = match vm.kpi.label {
-                        KpiLabel::Efficient => egui::Color32::from_rgb(96, 168, 104),
-                        KpiLabel::Moderate => egui::Color32::from_rgb(214, 153, 58),
-                        KpiLabel::Inefficient => egui::Color32::from_rgb(210, 84, 84),
-                        KpiLabel::Unknown => egui::Color32::DARK_GRAY,
-                    };
-                    ui.colored_label(kpi_color, kpi_str);
+                    ui.label(RichText::new(kpi_str).size(11.0).strong().color(kpi_color));
                 }
                 if vm.metrics.raw.gpu_pct.map_or(false, |g| g > 0.5) {
-                    ui.label(format!(
-                        "GPU {}  I/O R{:.1}/W{:.1} MB/s",
-                        fmt::opt_pct(vm.metrics.raw.gpu_pct),
-                        vm.metrics.raw.io_read_mb_s.unwrap_or(0.0),
-                        vm.metrics.raw.io_write_mb_s.unwrap_or(0.0)
-                    ));
+                    ui.label(
+                        RichText::new(format!(
+                            "GPU {}  I/O R{:.1}/W{:.1} MB/s",
+                            fmt::opt_pct(vm.metrics.raw.gpu_pct),
+                            vm.metrics.raw.io_read_mb_s.unwrap_or(0.0),
+                            vm.metrics.raw.io_write_mb_s.unwrap_or(0.0)
+                        ))
+                        .size(10.5)
+                        .color(C_MUTED),
+                    );
                 }
             });
     }
+
+    // ── Pilotage panel ─────────────────────────────────────────────────────────
 
     fn pilotage_panel(
         ui: &mut egui::Ui,
@@ -1929,7 +2307,7 @@ impl LiteApp {
         error: &mut Option<String>,
         info: &mut Option<String>,
     ) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Commandes",
@@ -1937,52 +2315,63 @@ impl LiteApp {
             );
             let action_busy = state.is_action_in_flight();
             if action_busy {
-                ui.label(
-                    egui::RichText::new("↻ action système en cours — mise à jour différée")
-                        .small()
-                        .color(egui::Color32::from_rgb(214, 153, 58)),
-                );
-                ui.separator();
+                egui::Frame::new()
+                    .fill(C_YELLOW.gamma_multiply(0.08))
+                    .stroke(Stroke::new(1.0, C_YELLOW.gamma_multiply(0.4)))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("↻ action système en cours — mise à jour différée")
+                                .size(11.0)
+                                .color(C_YELLOW),
+                        );
+                    });
+                ui.add_space(6.0);
             }
 
-            // ── État courant ──────────────────────────────────────────────────
             Self::action_summary(ui, &state.vm);
+            ui.add_space(8.0);
             ui.separator();
+            ui.add_space(8.0);
 
             // ── Cible ─────────────────────────────────────────────────────────
+            Self::eyebrow(ui, "Cible");
+            ui.add_space(4.0);
             ui.checkbox(&mut state.vm.auto_target, "Cible automatique");
             if !state.vm.auto_target {
-                // Selected text: show group name if multi-instance, else PID.
-                let selected_label = state.vm.manual_target_pid.map(|pid| {
-                    // Check if this PID belongs to a multi-instance group.
-                    let name = state
-                        .vm
-                        .process_report
-                        .top_processes
-                        .iter()
-                        .find(|p| p.pid == pid)
-                        .map(|p| p.name.as_str())
-                        .unwrap_or("");
-                    let count = state
-                        .vm
-                        .process_report
-                        .groups
-                        .iter()
-                        .find(|g| g.top_pid == pid)
-                        .map(|g| g.instance_count)
-                        .unwrap_or(1);
-                    if count > 1 {
-                        format!("{name} ×{count}")
-                    } else {
-                        format!("PID {pid}")
-                    }
-                }).unwrap_or_else(|| "aucune".to_string());
+                let selected_label = state
+                    .vm
+                    .manual_target_pid
+                    .map(|pid| {
+                        let name = state
+                            .vm
+                            .process_report
+                            .top_processes
+                            .iter()
+                            .find(|p| p.pid == pid)
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("");
+                        let count = state
+                            .vm
+                            .process_report
+                            .groups
+                            .iter()
+                            .find(|g| g.top_pid == pid)
+                            .map(|g| g.instance_count)
+                            .unwrap_or(1);
+                        if count > 1 {
+                            format!("{name} ×{count}")
+                        } else {
+                            format!("PID {pid}")
+                        }
+                    })
+                    .unwrap_or_else(|| "aucune".to_string());
 
                 egui::ComboBox::from_label("Cible manuelle")
                     .selected_text(selected_label)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut state.vm.manual_target_pid, None, "aucune");
-                        // Show groups with multiple instances first (top targets).
                         let multi_groups: Vec<_> = state
                             .vm
                             .process_report
@@ -1992,16 +2381,30 @@ impl LiteApp {
                             .collect();
                         if !multi_groups.is_empty() {
                             ui.separator();
-                            ui.label(egui::RichText::new("— Applications (plusieurs instances) —").small().color(egui::Color32::GRAY));
+                            ui.label(
+                                RichText::new("— Applications (plusieurs instances) —")
+                                    .size(10.0)
+                                    .color(C_MUTED),
+                            );
                             for g in multi_groups {
                                 ui.selectable_value(
                                     &mut state.vm.manual_target_pid,
                                     Some(g.top_pid),
-                                    format!("{} ×{}  {:.1}%  {}", g.name, g.instance_count, g.total_cpu_pct, fmt::mib_from_kb(g.total_memory_kb)),
+                                    format!(
+                                        "{} ×{}  {:.1}%  {}",
+                                        g.name,
+                                        g.instance_count,
+                                        g.total_cpu_pct,
+                                        fmt::mib_from_kb(g.total_memory_kb)
+                                    ),
                                 );
                             }
                             ui.separator();
-                            ui.label(egui::RichText::new("— Processus individuels —").small().color(egui::Color32::GRAY));
+                            ui.label(
+                                RichText::new("— Processus individuels —")
+                                    .size(10.0)
+                                    .color(C_MUTED),
+                            );
                         }
                         for proc_ in &state.vm.process_report.top_processes {
                             if proc_.is_self_process || proc_.is_embedded_webview {
@@ -2033,36 +2436,64 @@ impl LiteApp {
                     }
                 });
 
+            ui.add_space(10.0);
             ui.separator();
+            ui.add_space(8.0);
 
             // ── Dôme ─────────────────────────────────────────────────────────
+            Self::eyebrow(ui, "Dôme");
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Dôme").strong());
-                // État visible en permanence, pas seulement en mode auto.
-                Self::status_chip(ui, if state.vm.dome_active { "ACTIF" } else { "inactif" }, state.vm.dome_active);
-            });
-            ui.horizontal(|ui| {
-                // "Activer" grisé si déjà actif, "Annuler" grisé si inactif.
-                if ui.add_enabled(!state.vm.dome_active && !action_busy, egui::Button::new("⚡ Activer")).clicked() {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                Self::status_chip(
+                    ui,
+                    if state.vm.dome_active {
+                        "ACTIF"
+                    } else {
+                        "inactif"
+                    },
+                    state.vm.dome_active,
+                );
+                if ui
+                    .add_enabled(
+                        !state.vm.dome_active && !action_busy,
+                        egui::Button::new(RichText::new("⚡ Activer").size(12.0))
+                            .fill(C_GREEN.gamma_multiply(0.2))
+                            .stroke(Stroke::new(1.0, C_GREEN.gamma_multiply(0.5)))
+                            .corner_radius(8.0),
+                    )
+                    .clicked()
+                {
                     match state.activate_dome() {
                         Ok(()) => *info = Some("Activation du dôme lancée".to_string()),
                         Err(err) => *error = Some(err),
                     }
                 }
-                if ui.add_enabled(state.vm.dome_active && !action_busy, egui::Button::new("↩ Annuler")).clicked() {
+                if ui
+                    .add_enabled(
+                        state.vm.dome_active && !action_busy,
+                        egui::Button::new(RichText::new("↩ Annuler").size(12.0))
+                            .fill(C_RED.gamma_multiply(0.15))
+                            .stroke(Stroke::new(1.0, C_RED.gamma_multiply(0.4)))
+                            .corner_radius(8.0),
+                    )
+                    .clicked()
+                {
                     match state.rollback_dome() {
                         Ok(()) => *info = Some("Rollback du dôme lancé".to_string()),
                         Err(err) => *error = Some(err),
                     }
                 }
-                ui.separator();
                 ui.checkbox(&mut state.vm.auto_dome, "Auto (KPI)");
             });
             if state.vm.auto_dome {
                 let (auto_label, auto_color) = if state.vm.kpi.self_overload {
                     (
-                        format!("⚠ suspendu — SoulKernel {:.0}% CPU", state.vm.kpi.cpu_self_pct),
-                        egui::Color32::from_rgb(210, 84, 84),
+                        format!(
+                            "⚠ suspendu — SoulKernel {:.0}% CPU",
+                            state.vm.kpi.cpu_self_pct
+                        ),
+                        C_RED,
                     )
                 } else if state.vm.dome_active {
                     (
@@ -2071,46 +2502,76 @@ impl LiteApp {
                             state.vm.kpi.kpi_penalized.unwrap_or(0.0),
                             state.vm.kpi.label.as_str()
                         ),
-                        egui::Color32::from_rgb(96, 168, 104),
+                        C_GREEN,
                     )
                 } else {
                     match state.vm.auto_dome_next_eval_s {
                         Some(s) if s > 0 => (
                             format!("cooldown {}s — KPI {}", s, state.vm.kpi.label.as_str()),
-                            egui::Color32::GRAY,
+                            C_MUTED,
                         ),
                         _ => (
-                            format!("prêt — KPI {} / garde {:.0}%",
+                            format!(
+                                "prêt — KPI {} / garde {:.0}%",
                                 state.vm.kpi.label.as_str(),
                                 state.vm.formula.advanced_guard * 100.0
                             ),
-                            if state.vm.kpi.should_act_with_profile(&state.vm.device_profile)
+                            if state
+                                .vm
+                                .kpi
+                                .should_act_with_profile(&state.vm.device_profile)
                                 && state.vm.formula.advanced_guard
                                     >= state.vm.device_profile.auto_dome_guard_min
                             {
-                                egui::Color32::from_rgb(214, 153, 58) // va activer
+                                C_YELLOW
                             } else {
-                                egui::Color32::GRAY
+                                C_MUTED
                             },
                         ),
                     }
                 };
-                ui.label(egui::RichText::new(format!("↳ {auto_label}")).small().color(auto_color));
+                ui.label(
+                    RichText::new(format!("↳ {auto_label}"))
+                        .size(10.5)
+                        .color(auto_color),
+                );
             }
 
+            ui.add_space(10.0);
             ui.separator();
+            ui.add_space(8.0);
 
             // ── SoulRAM ───────────────────────────────────────────────────────
-            ui.label(egui::RichText::new("SoulRAM").strong());
+            Self::eyebrow(ui, "SoulRAM");
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(!action_busy, egui::Button::new("🧠 Activer")).clicked() {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if ui
+                    .add_enabled(
+                        !action_busy,
+                        egui::Button::new(RichText::new("🧠 Activer").size(12.0))
+                            .fill(C_CYAN.gamma_multiply(0.15))
+                            .stroke(Stroke::new(1.0, C_CYAN.gamma_multiply(0.4)))
+                            .corner_radius(8.0),
+                    )
+                    .clicked()
+                {
                     if let Err(err) = state.enable_soulram() {
                         *error = Some(err);
                     } else {
                         *info = Some("Activation SoulRAM lancée".to_string());
                     }
                 }
-                if ui.add_enabled(!action_busy, egui::Button::new("🧠 Désactiver")).clicked() {
+                if ui
+                    .add_enabled(
+                        !action_busy,
+                        egui::Button::new(RichText::new("🧠 Désactiver").size(12.0))
+                            .fill(C_PANEL3)
+                            .stroke(Stroke::new(1.0, C_BORDER))
+                            .corner_radius(8.0),
+                    )
+                    .clicked()
+                {
                     if let Err(err) = state.disable_soulram() {
                         *error = Some(err);
                     } else {
@@ -2118,26 +2579,23 @@ impl LiteApp {
                     }
                 }
             });
-            // Auto-cycle : re-applique SoulRAM dès que le cooldown est écoulé et sigma > 0.3.
             ui.checkbox(
                 &mut state.vm.auto_cycle_soulram,
                 "Auto-cycle (re-application automatique)",
             );
             if state.vm.auto_cycle_soulram {
-                let mode_hint = if soulkernel_core::workload_catalog::is_burst(
-                    &state.vm.selected_workload,
-                ) {
-                    "Burst : cycle toutes les ~3 min"
-                } else {
-                    "Sustain : cycle toutes les ~15 min"
-                };
-                ui.label(
-                    egui::RichText::new(mode_hint)
-                        .small()
-                        .color(egui::Color32::GRAY),
-                );
+                let mode_hint =
+                    if soulkernel_core::workload_catalog::is_burst(&state.vm.selected_workload) {
+                        "Burst : cycle toutes les ~3 min"
+                    } else {
+                        "Sustain : cycle toutes les ~15 min"
+                    };
+                ui.label(RichText::new(mode_hint).size(10.5).color(C_MUTED));
             }
+
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
                 if ui.button("Actualiser").clicked() {
                     if let Err(err) = state.refresh_now() {
                         *error = Some(err);
@@ -2152,8 +2610,8 @@ impl LiteApp {
             });
 
             // ── Réglages avancés ──────────────────────────────────────────────
+            ui.add_space(6.0);
             ui.collapsing("Réglages avancés", |ui| {
-                // Profil appareil
                 egui::ComboBox::from_label("Profil appareil")
                     .selected_text(state.vm.device_profile.label)
                     .show_ui(ui, |ui| {
@@ -2161,28 +2619,35 @@ impl LiteApp {
                             let label = p.label;
                             let id = p.id;
                             let selected = state.vm.device_profile.id == id;
-                            if ui.selectable_label(selected, format!(
-                                "{} — {}",
-                                label,
-                                if p.can_act { "actions activées" } else { "monitoring seul" }
-                            )).clicked() {
+                            if ui
+                                .selectable_label(
+                                    selected,
+                                    format!(
+                                        "{} — {}",
+                                        label,
+                                        if p.can_act {
+                                            "actions activées"
+                                        } else {
+                                            "monitoring seul"
+                                        }
+                                    ),
+                                )
+                                .clicked()
+                            {
                                 state.vm.device_profile = p;
                                 state.reset_adaptive_tuning_for_profile();
                             }
                         }
                     });
                 if !state.vm.device_profile.can_act {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(214, 153, 58),
-                        "Monitoring seul — dôme et SoulRAM désactivés.",
-                    );
+                    ui.colored_label(C_YELLOW, "Monitoring seul — dôme et SoulRAM désactivés.");
                 }
                 ui.separator();
                 let mut adaptive_enabled = state.vm.adaptive_tuning.enabled;
-                if ui.checkbox(
-                    &mut adaptive_enabled,
-                    "Ajustement dynamique de la formule",
-                ).changed() {
+                if ui
+                    .checkbox(&mut adaptive_enabled, "Ajustement dynamique de la formule")
+                    .changed()
+                {
                     state.set_adaptive_tuning_enabled(adaptive_enabled);
                 }
                 egui::ComboBox::from_label("Politique")
@@ -2212,44 +2677,40 @@ impl LiteApp {
             });
 
             // ── Info fichiers ─────────────────────────────────────────────────
+            ui.add_space(8.0);
             ui.separator();
+            ui.add_space(4.0);
             ui.label(
-                egui::RichText::new(format!("Audit  {}", state.vm.audit_path))
-                    .small()
-                    .color(egui::Color32::DARK_GRAY),
+                RichText::new(format!("Audit  {}", state.vm.audit_path))
+                    .size(9.5)
+                    .color(C_MUTED),
             );
             ui.label(
-                egui::RichText::new(format!("Observabilité  {}", state.vm.observability_path))
-                    .small()
-                    .color(egui::Color32::DARK_GRAY),
+                RichText::new(format!("Observabilité  {}", state.vm.observability_path))
+                    .size(9.5)
+                    .color(C_MUTED),
             );
             ui.label(
-                egui::RichText::new(format!(
+                RichText::new(format!(
                     "Journal time-series auto  fichier courant .jsonl + archives .jsonl.gz  rotation à partir de {:.0} MiB  archives conservées: 8",
                     crate::export::observability_rotation_bytes() as f64 / (1024.0 * 1024.0)
-                ))
-                .small()
-                .color(egui::Color32::GRAY),
+                )).size(9.5).color(C_MUTED),
             );
             if cfg!(target_os = "windows") {
                 ui.label(
-                    egui::RichText::new(
+                    RichText::new(
                         "Windows  AppData/Roaming/SoulKernel/telemetry/observability_samples.jsonl",
                     )
-                    .small()
-                    .color(egui::Color32::GRAY),
+                    .size(9.5)
+                    .color(C_MUTED),
                 );
             } else {
-                ui.label(
-                    egui::RichText::new(
-                        "Linux/macOS  XDG_DATA_HOME ou ~/.local/share/SoulKernel/telemetry/observability_samples.jsonl",
-                    )
-                    .small()
-                    .color(egui::Color32::GRAY),
-                );
+                ui.label(RichText::new("Linux/macOS  XDG_DATA_HOME ou ~/.local/share/SoulKernel/telemetry/observability_samples.jsonl").size(9.5).color(C_MUTED));
             }
         });
     }
+
+    // ── Remote supervisor panel ────────────────────────────────────────────────
 
     fn remote_supervisor_panel(
         ui: &mut egui::Ui,
@@ -2257,7 +2718,7 @@ impl LiteApp {
         error: &mut Option<String>,
         info: &mut Option<String>,
     ) {
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Superviseur distant",
@@ -2265,16 +2726,17 @@ impl LiteApp {
             );
 
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 let status = &state.vm.remote_supervisor_status;
                 let enrolled = !state.vm.remote_supervisor_config.api_key.trim().is_empty();
                 let color = if status.connected {
-                    egui::Color32::from_rgb(96, 168, 104)
+                    C_GREEN
                 } else if status.last_error.is_some() {
-                    egui::Color32::from_rgb(191, 97, 106)
+                    C_RED
                 } else if !enrolled {
-                    egui::Color32::from_rgb(214, 153, 58)
+                    C_YELLOW
                 } else {
-                    egui::Color32::DARK_GRAY
+                    C_MUTED
                 };
                 Self::metric_badge(
                     ui,
@@ -2285,7 +2747,7 @@ impl LiteApp {
                         status
                             .last_error_kind
                             .as_deref()
-                            .map(|kind| match kind {
+                            .map(|k| match k {
                                 "network" => "erreur réseau".to_string(),
                                 "http" => "erreur HTTP".to_string(),
                                 "runtime" => "erreur interne".to_string(),
@@ -2302,19 +2764,19 @@ impl LiteApp {
                 Self::metric_badge(
                     ui,
                     "Enrôlement",
-                    if enrolled { "clé présente".to_string() } else { "clé absente".to_string() },
                     if enrolled {
-                        egui::Color32::from_rgb(96, 168, 104)
+                        "clé présente".to_string()
                     } else {
-                        egui::Color32::from_rgb(214, 153, 58)
+                        "clé absente".to_string()
                     },
+                    if enrolled { C_GREEN } else { C_YELLOW },
                 );
                 if let Some(code) = status.last_success_http_status {
                     Self::metric_badge(
                         ui,
                         "Dernier HTTP",
                         code.to_string(),
-                        egui::Color32::from_rgb(92, 124, 250),
+                        Color32::from_rgb(92, 124, 250),
                     );
                 }
                 if let Some(ts_ms) = status.last_success_ms {
@@ -2322,7 +2784,7 @@ impl LiteApp {
                         ui,
                         "Dernier succès",
                         fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
-                        egui::Color32::GRAY,
+                        C_MUTED,
                     );
                 }
                 if let Some(ts_ms) = status.last_attempt_ms {
@@ -2330,81 +2792,82 @@ impl LiteApp {
                         ui,
                         "Dernière tentative",
                         fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
-                        egui::Color32::GRAY,
+                        C_MUTED,
                     );
                 }
             });
 
             if let Some(target) = &state.vm.remote_supervisor_status.last_target_url {
                 ui.label(
-                    egui::RichText::new(format!("Cible  {target}"))
-                        .small()
-                        .color(egui::Color32::GRAY),
+                    RichText::new(format!("Cible  {target}"))
+                        .size(10.0)
+                        .color(C_MUTED),
                 );
             }
             if let Some(err_msg) = &state.vm.remote_supervisor_status.last_error {
                 ui.label(
-                    egui::RichText::new(format!("Erreur  {err_msg}"))
-                        .small()
-                        .color(egui::Color32::from_rgb(191, 97, 106)),
+                    RichText::new(format!("Erreur  {err_msg}"))
+                        .size(10.5)
+                        .color(C_RED),
                 );
             }
             if let Some(ts_ms) = state.vm.remote_supervisor_status.last_error_ms {
                 ui.label(
-                    egui::RichText::new(format!(
+                    RichText::new(format!(
                         "Dernière erreur  {}",
                         fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms))
                     ))
-                    .small()
-                    .color(egui::Color32::GRAY),
+                    .size(10.0)
+                    .color(C_MUTED),
                 );
             }
 
-            ui.separator();
+            ui.add_space(8.0);
             ui.checkbox(
                 &mut state.vm.remote_supervisor_config.enabled,
                 "Activer la supervision distante",
             );
             ui.horizontal(|ui| {
-                ui.label("Server URL");
+                ui.label(RichText::new("Server URL").size(11.0).color(C_MUTED));
                 ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.server_url);
             });
             ui.horizontal(|ui| {
-                ui.label("Enroll token");
+                ui.label(RichText::new("Enroll token").size(11.0).color(C_MUTED));
                 ui.add(
-                    egui::TextEdit::singleline(
-                        &mut state.vm.remote_supervisor_config.enroll_token,
-                    )
-                    .password(true),
+                    egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.enroll_token)
+                        .password(true),
                 );
             });
             ui.horizontal(|ui| {
-                ui.label("API key");
+                ui.label(RichText::new("API key").size(11.0).color(C_MUTED));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.api_key)
                         .password(true),
                 );
             });
             ui.horizontal(|ui| {
-                ui.label("Machine ID");
+                ui.label(RichText::new("Machine ID").size(11.0).color(C_MUTED));
                 ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.machine_id);
             });
             ui.add(
-                egui::Slider::new(&mut state.vm.remote_supervisor_config.push_interval_s, 1..=60)
-                    .text("Intervalle push (s)"),
+                egui::Slider::new(
+                    &mut state.vm.remote_supervisor_config.push_interval_s,
+                    1..=60,
+                )
+                .text("Intervalle push (s)"),
             );
             ui.label(
-                egui::RichText::new(
+                RichText::new(
                     "Accepte une URL de base (ex. http://supervisor:8787) ou directement /api/ingest. Le serveur génère la clé via POST /api/register.",
-                )
-                .small()
-                .color(egui::Color32::GRAY),
+                ).size(10.0).color(C_MUTED),
             );
-
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
                 if ui.button("Enregistrer la machine").clicked() {
                     match state.register_remote_supervisor() {
-                        Ok(()) => *info = Some("Machine enregistrée auprès du superviseur".to_string()),
+                        Ok(()) => {
+                            *info = Some("Machine enregistrée auprès du superviseur".to_string())
+                        }
                         Err(err) => *error = Some(err),
                     }
                 }
@@ -2430,36 +2893,41 @@ impl LiteApp {
         });
     }
 
+    // ── Processes panel ────────────────────────────────────────────────────────
+
     fn processes_panel(ui: &mut egui::Ui, state: &LiteState) {
         let summary = &state.vm.process_report.summary;
-        ui.group(|ui| {
+        Self::panel_card(ui, |ui| {
             Self::section_title(
                 ui,
                 "Processus observés",
                 "Actifs en ce moment — groupés par application, puis détail.",
             );
 
-            // ── Alertes ────────────────────────────────────────────────────────
             if summary.bridge_python_count > 1 {
-                ui.colored_label(
-                    egui::Color32::from_rgb(214, 153, 58),
-                    format!(
-                        "⚠ {} processus Python bridge actifs — accumulation probable. Arrêter et redémarrer le bridge.",
-                        summary.bridge_python_count
-                    ),
-                );
+                egui::Frame::new()
+                    .fill(C_YELLOW.gamma_multiply(0.08))
+                    .stroke(Stroke::new(1.0, C_YELLOW.gamma_multiply(0.4)))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(format!(
+                            "⚠ {} processus Python bridge actifs — accumulation probable. Arrêter et redémarrer le bridge.",
+                            summary.bridge_python_count
+                        )).size(11.0).color(C_YELLOW));
+                    });
+                ui.add_space(6.0);
             }
             if summary.memory_compression_active {
                 ui.label(
-                    egui::RichText::new("Memory Compression actif (SoulRAM opérationnel)")
-                        .small()
-                        .color(egui::Color32::from_rgb(96, 168, 104)),
+                    RichText::new("Memory Compression actif (SoulRAM opérationnel)")
+                        .size(10.5)
+                        .color(C_GREEN),
                 );
             }
 
-            // ── En-tête ────────────────────────────────────────────────────────
             ui.label(
-                egui::RichText::new(format!(
+                RichText::new(format!(
                     "{} processus  ·  SoulKernel {:.1}% / {}  ·  UI {:.1}% / {}",
                     summary.process_count,
                     summary.self_cpu_usage_pct,
@@ -2467,12 +2935,12 @@ impl LiteApp {
                     summary.webview_cpu_usage_pct,
                     fmt::mib_from_kb(summary.webview_memory_kb),
                 ))
-                .small()
-                .color(egui::Color32::GRAY),
+                .size(10.5)
+                .color(C_MUTED),
             );
-            ui.separator();
+            ui.add_space(6.0);
 
-            // ── Vue groupée — applications avec plusieurs instances ou CPU notable ──
+            // Notable process groups
             let notable_groups: Vec<_> = state
                 .vm
                 .process_report
@@ -2482,26 +2950,48 @@ impl LiteApp {
                 .take(10)
                 .collect();
             if !notable_groups.is_empty() {
+                Self::eyebrow(ui, "Groupes");
+                ui.add_space(4.0);
                 for g in &notable_groups {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(egui::RichText::new(&g.name).strong());
-                        if g.instance_count > 1 {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(214, 153, 58),
-                                format!("×{}", g.instance_count),
+                    Self::section_card(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(&g.name).size(12.0).strong());
+                            if g.instance_count > 1 {
+                                egui::Frame::new()
+                                    .fill(C_YELLOW.gamma_multiply(0.2))
+                                    .corner_radius(999.0)
+                                    .inner_margin(egui::Margin::symmetric(6, 2))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new(format!("×{}", g.instance_count))
+                                                .size(10.0)
+                                                .color(C_YELLOW),
+                                        );
+                                    });
+                            }
+                            ui.label(
+                                RichText::new(format!("{:.1}%", g.total_cpu_pct))
+                                    .size(11.0)
+                                    .color(C_TEXT),
                             );
-                        }
-                        ui.label(format!("{:.1}%", g.total_cpu_pct));
-                        ui.label(fmt::mib_from_kb(g.total_memory_kb));
+                            ui.label(
+                                RichText::new(fmt::mib_from_kb(g.total_memory_kb))
+                                    .size(11.0)
+                                    .color(C_MUTED),
+                            );
+                        });
                     });
+                    ui.add_space(4.0);
                 }
-                ui.separator();
+                ui.add_space(4.0);
             }
 
-            // ── Détail individuel (top processus actifs) ──────────────────────
+            // Individual process list
+            Self::eyebrow(ui, "Processus");
+            ui.add_space(4.0);
             egui::ScrollArea::vertical()
                 .id_salt("processes_scroll")
-                .max_height(200.0)
+                .max_height(220.0)
                 .show(ui, |ui| {
                     for proc_ in &state.vm.process_report.top_processes {
                         ui.horizontal_wrapped(|ui| {
@@ -2512,44 +3002,65 @@ impl LiteApp {
                                 classify_by_name(&state.vm.device_profile, &proc_.name)
                             };
                             let name_color = match class {
-                                Some(ProcessClass::SystemKernel) => egui::Color32::DARK_GRAY,
-                                Some(ProcessClass::OverheadCritical) => egui::Color32::from_rgb(214, 153, 58),
-                                Some(ProcessClass::OverheadSoft) => egui::Color32::from_rgb(170, 130, 60),
-                                _ if proc_.is_self_process || proc_.is_embedded_webview => egui::Color32::DARK_GRAY,
-                                _ => egui::Color32::WHITE,
+                                Some(ProcessClass::SystemKernel) => C_MUTED,
+                                Some(ProcessClass::OverheadCritical) => C_YELLOW,
+                                Some(ProcessClass::OverheadSoft) => Color32::from_rgb(170, 130, 60),
+                                _ if proc_.is_self_process || proc_.is_embedded_webview => C_MUTED,
+                                _ => C_TEXT,
                             };
-                            ui.label(egui::RichText::new(&proc_.name).strong().color(name_color));
                             ui.label(
-                                egui::RichText::new(format!("#{}", proc_.pid))
-                                    .small()
-                                    .color(egui::Color32::DARK_GRAY),
+                                RichText::new(&proc_.name)
+                                    .size(12.0)
+                                    .strong()
+                                    .color(name_color),
                             );
-                            ui.label(fmt::pct(proc_.cpu_usage_pct));
-                            ui.label(fmt::mib_from_kb(proc_.memory_kb));
+                            ui.label(
+                                RichText::new(format!("#{}", proc_.pid))
+                                    .size(9.5)
+                                    .color(C_MUTED),
+                            );
+                            ui.label(RichText::new(fmt::pct(proc_.cpu_usage_pct)).size(11.0));
+                            ui.label(
+                                RichText::new(fmt::mib_from_kb(proc_.memory_kb))
+                                    .size(11.0)
+                                    .color(C_MUTED),
+                            );
                             if proc_.disk_read_bytes > 0 || proc_.disk_written_bytes > 0 {
-                                ui.label(fmt::io_pair(proc_.disk_read_bytes, proc_.disk_written_bytes));
+                                ui.label(
+                                    RichText::new(fmt::io_pair(
+                                        proc_.disk_read_bytes,
+                                        proc_.disk_written_bytes,
+                                    ))
+                                    .size(10.0)
+                                    .color(C_MUTED),
+                                );
                             }
                             ui.label(
-                                egui::RichText::new(fmt::runtime_short(proc_.run_time_s))
-                                    .small()
-                                    .color(egui::Color32::DARK_GRAY),
+                                RichText::new(fmt::runtime_short(proc_.run_time_s))
+                                    .size(9.5)
+                                    .color(C_MUTED),
                             );
-                            // Tag de classification KPI
                             match class {
                                 Some(ProcessClass::OverheadCritical) => {
-                                    ui.label(egui::RichText::new("overhead-sec").small().color(egui::Color32::from_rgb(214, 153, 58)));
+                                    ui.label(
+                                        RichText::new("overhead-sec").size(9.5).color(C_YELLOW),
+                                    );
                                 }
                                 Some(ProcessClass::OverheadSoft) => {
-                                    ui.label(egui::RichText::new("overhead").small().color(egui::Color32::from_rgb(170, 130, 60)));
+                                    ui.label(
+                                        RichText::new("overhead")
+                                            .size(9.5)
+                                            .color(Color32::from_rgb(170, 130, 60)),
+                                    );
                                 }
                                 Some(ProcessClass::SystemKernel) => {
-                                    ui.label(egui::RichText::new("sys").small().color(egui::Color32::DARK_GRAY));
+                                    ui.label(RichText::new("sys").size(9.5).color(C_MUTED));
                                 }
                                 _ if proc_.is_self_process => {
-                                    ui.label(egui::RichText::new("SoulKernel").small().color(egui::Color32::DARK_GRAY));
+                                    ui.label(RichText::new("SoulKernel").size(9.5).color(C_MUTED));
                                 }
                                 _ if proc_.is_embedded_webview => {
-                                    ui.label(egui::RichText::new("UI").small().color(egui::Color32::DARK_GRAY));
+                                    ui.label(RichText::new("UI").size(9.5).color(C_MUTED));
                                 }
                                 _ => {}
                             }
@@ -2558,6 +3069,8 @@ impl LiteApp {
                 });
         });
     }
+
+    // ── Home dashboard ─────────────────────────────────────────────────────────
 
     fn home_dashboard(
         ui: &mut egui::Ui,
@@ -2596,15 +3109,31 @@ impl LiteApp {
     }
 }
 
+// ── eframe::App ────────────────────────────────────────────────────────────────
+
 impl eframe::App for LiteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply theme once (idempotent in egui, no observable cost per frame)
+        if !self.visuals_configured {
+            Self::configure_visuals(ctx);
+            self.visuals_configured = true;
+        }
+
         let Some(state) = self.state.as_mut() else {
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("SoulKernel Lite");
-                if let Some(err) = &self.error {
-                    ui.colored_label(egui::Color32::RED, err);
-                }
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new("SoulKernel Lite")
+                            .size(24.0)
+                            .strong()
+                            .color(C_CYAN),
+                    );
+                    if let Some(err) = &self.error {
+                        ui.add_space(12.0);
+                        ui.label(RichText::new(err).size(13.0).color(C_RED));
+                    }
+                });
             });
             return;
         };
@@ -2621,7 +3150,6 @@ impl eframe::App for LiteApp {
             self.error = Some(err);
         }
 
-        // Nettoie les messages d'info périmés quand l'état réel du dôme a changé.
         if matches!(self.info.as_deref(), Some("Dôme activé")) && !state.vm.dome_active {
             self.info = None;
         }
@@ -2629,63 +3157,109 @@ impl eframe::App for LiteApp {
             self.info = None;
         }
 
+        // ── Top panel ──────────────────────────────────────────────────────────
         let state_vm = &state.vm;
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            Self::top_bar(ui, state_vm);
-            ui.separator();
-            Self::metrics_strip(ui, state_vm);
-            if let Some(info) = &self.info {
-                ui.colored_label(egui::Color32::LIGHT_GREEN, info);
-            }
-            if let Some(err) = &self.error {
-                ui.colored_label(egui::Color32::RED, err);
-            }
-        });
+        egui::TopBottomPanel::top("top")
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(6, 16, 25, 240))
+                    .stroke(Stroke::new(1.0, C_BORDER))
+                    .inner_margin(egui::Margin {
+                        left: 16,
+                        right: 16,
+                        top: 10,
+                        bottom: 10,
+                    }),
+            )
+            .show(ctx, |ui| {
+                Self::top_bar(ui, state_vm);
+                ui.add_space(6.0);
+                Self::metrics_strip(ui, state_vm);
 
+                // Feedback strip
+                if self.info.is_some() || self.error.is_some() {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if let Some(info) = &self.info {
+                            egui::Frame::new()
+                                .fill(C_GREEN.gamma_multiply(0.12))
+                                .stroke(Stroke::new(1.0, C_GREEN.gamma_multiply(0.4)))
+                                .corner_radius(6.0)
+                                .inner_margin(egui::Margin::symmetric(10, 4))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(info).size(11.0).color(C_GREEN));
+                                });
+                        }
+                        if let Some(err) = &self.error {
+                            egui::Frame::new()
+                                .fill(C_RED.gamma_multiply(0.12))
+                                .stroke(Stroke::new(1.0, C_RED.gamma_multiply(0.4)))
+                                .corner_radius(6.0)
+                                .inner_margin(egui::Margin::symmetric(10, 4))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(err).size(11.0).color(C_RED));
+                                });
+                        }
+                    });
+                }
+            });
+
+        // ── Central panel ──────────────────────────────────────────────────────
         let active_tab = &mut self.active_tab;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("central_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    Self::dashboard_tabs(ui, active_tab);
-                    ui.add_space(8.0);
-                    match *active_tab {
-                        DashboardTab::Home => {
-                            Self::home_dashboard(ui, state, &mut self.error, &mut self.info);
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(C_BG)
+                    .inner_margin(egui::Margin::same(16)),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("central_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        Self::dashboard_tabs(ui, active_tab);
+                        ui.add_space(12.0);
+                        match *active_tab {
+                            DashboardTab::Home => {
+                                Self::home_dashboard(ui, state, &mut self.error, &mut self.info);
+                            }
+                            DashboardTab::Actions => {
+                                Self::pilotage_panel(ui, state, &mut self.error, &mut self.info);
+                                ui.add_space(8.0);
+                                Self::external_power_panel(
+                                    ui,
+                                    state,
+                                    &mut self.error,
+                                    &mut self.info,
+                                );
+                                ui.add_space(8.0);
+                                Self::remote_supervisor_panel(
+                                    ui,
+                                    state,
+                                    &mut self.error,
+                                    &mut self.info,
+                                );
+                                ui.add_space(8.0);
+                                Self::benchmark_panel(ui, state, &mut self.error, &mut self.info);
+                                ui.add_space(8.0);
+                                Self::hud_panel(ui, state);
+                            }
+                            DashboardTab::Processes => {
+                                Self::processes_panel(ui, state);
+                            }
+                            DashboardTab::Energy => {
+                                Self::telemetry_panel(ui, &state.vm);
+                                ui.add_space(8.0);
+                                Self::gains_panel(ui, &state.vm);
+                            }
+                            DashboardTab::Hardware => {
+                                Self::material_overview_panel(ui, &state.vm);
+                                ui.add_space(8.0);
+                                Self::inventory_panel(ui, state);
+                            }
                         }
-                        DashboardTab::Actions => {
-                            Self::pilotage_panel(ui, state, &mut self.error, &mut self.info);
-                            ui.add_space(8.0);
-                            Self::external_power_panel(ui, state, &mut self.error, &mut self.info);
-                            ui.add_space(8.0);
-                            Self::remote_supervisor_panel(
-                                ui,
-                                state,
-                                &mut self.error,
-                                &mut self.info,
-                            );
-                            ui.add_space(8.0);
-                            Self::benchmark_panel(ui, state, &mut self.error, &mut self.info);
-                            ui.add_space(8.0);
-                            Self::hud_panel(ui, state);
-                        }
-                        DashboardTab::Processes => {
-                            Self::processes_panel(ui, state);
-                        }
-                        DashboardTab::Energy => {
-                            Self::telemetry_panel(ui, &state.vm);
-                            ui.add_space(8.0);
-                            Self::gains_panel(ui, &state.vm);
-                        }
-                        DashboardTab::Hardware => {
-                            Self::material_overview_panel(ui, &state.vm);
-                            ui.add_space(8.0);
-                            Self::inventory_panel(ui, state);
-                        }
-                    }
-                }); // ScrollArea
-        });
+                    });
+            });
 
         if state.vm.show_hud {
             Self::hud_overlay(ctx, &state.vm);
