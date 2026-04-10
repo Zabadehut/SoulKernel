@@ -121,10 +121,7 @@ pub fn compute(
         .raw
         .host_power_watts
         .or(metrics.raw.wall_power_watts)
-        .or_else(|| {
-            // Tente la source externe via wall_power_watts_source
-            metrics.raw.wall_power_watts
-        });
+        .or(metrics.raw.power_watts);
 
     let cpu_total = metrics.raw.cpu_pct;
     let mut cpu_overhead = 0.0f64;

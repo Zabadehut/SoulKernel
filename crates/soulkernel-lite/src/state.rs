@@ -792,6 +792,7 @@ impl LiteState {
             });
             if kpi.should_act_with_profile(&self.vm.device_profile)
                 && guard_ok
+                && self.vm.formula.rentable
                 && has_useful_target
                 && decision_confidence >= 0.45
             {
