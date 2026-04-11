@@ -5,6 +5,7 @@ members = [
   "crates/soulkernel-headless",
   "crates/soulkernel-lite",
   "crates/soulkernel-mcp",
+  "crates/soulkernel-profiler",
 ]
 
 [package]

@@ -52,7 +52,7 @@ fn handle_message(message: Value) -> Option<Value> {
         "notifications/initialized" => None,
         "ping" => Some(ok_response(id, json!({}))),
         "tools/list" => Some(ok_response(id, json!({ "tools": tools_manifest() }))),
-        "tools/call" => Some(handle_tool_call(id, message.get("params"))),
+        "tools/call"              => Some(handle_tool_call(id, message.get("params"))),
         _ => id.map(|req_id| error_response(req_id, -32601, format!("Method not found: {method}"))),
     }
 }
@@ -72,12 +72,17 @@ fn handle_tool_call(id: Option<Value>, params: Option<&Value>) -> Value {
         .unwrap_or_else(|| json!({}));
 
     let result = match name {
-        "get_live_report" => tool_get_live_report(&args),
-        "get_metric_snapshot" => tool_get_metric_snapshot(&args),
-        "get_timeline_samples" => tool_get_timeline_samples(&args),
-        "get_observability_status" => tool_get_observability_status(&args),
-        "get_project_bridge_status" => tool_get_project_bridge_status(&args),
-        "get_supervisor_launch_config" => tool_get_supervisor_launch_config(&args),
+        "get_live_report"             => tool_get_live_report(&args),
+        "get_metric_snapshot"         => tool_get_metric_snapshot(&args),
+        "get_timeline_samples"        => tool_get_timeline_samples(&args),
+        "get_observability_status"    => tool_get_observability_status(&args),
+        "get_project_bridge_status"   => tool_get_project_bridge_status(&args),
+        "get_supervisor_launch_config"=> tool_get_supervisor_launch_config(&args),
+        // ── Profiling pipeline ──────────────────────────────────────────────
+        "run_rust_profiler"           => tool_run_rust_profiler(&args),
+        "run_memlab"                  => tool_run_memlab(&args),
+        "get_profiling_reports"       => tool_get_profiling_reports(&args),
+        "get_profiling_summary"       => tool_get_profiling_summary(&args),
         other => Err(format!("Unknown tool: {other}")),
     };
 
@@ -256,6 +261,371 @@ fn tool_get_supervisor_launch_config(args: &Value) -> Result<Value, String> {
     }))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ── Profiling pipeline tools ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Chemin vers la racine du workspace depuis l'emplacement du binaire MCP.
+fn profiling_workspace_root() -> PathBuf {
+    std::env::var_os("SOULKERNEL_WORKSPACE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            // Remonte depuis target/ jusqu'au dossier contenant Cargo.toml
+            std::env::current_exe().ok().and_then(|exe| {
+                exe.ancestors()
+                    .find(|p| p.join("Cargo.toml").exists())
+                    .map(PathBuf::from)
+            })
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+fn profiling_reports_dir() -> PathBuf {
+    profiling_workspace_root().join("profiling-reports")
+}
+
+fn memlab_dir() -> PathBuf {
+    profiling_workspace_root().join("tools").join("memlab")
+}
+
+/// Exécute une commande, retourne (exit_code, stdout, stderr).
+fn run_cmd(
+    program: &str,
+    args: &[&str],
+    cwd: &Path,
+    timeout_s: u64,
+) -> (i32, String, String) {
+    use std::process::Command;
+    use std::time::Instant;
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_s);
+
+    let mut child = match Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return (-1, String::new(), e.to_string()),
+    };
+
+    // Attente bornée par timeout
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return (-2, String::new(), format!("timeout after {timeout_s}s"));
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Err(e) => return (-1, String::new(), e.to_string()),
+        }
+    }
+
+    let out = child.wait_with_output().unwrap_or_else(|_| {
+        std::process::Output {
+            status: std::process::ExitStatus::default(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+
+    let code = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (code, stdout, stderr)
+}
+
+// ── tool: run_rust_profiler ───────────────────────────────────────────────
+
+fn tool_run_rust_profiler(args: &Value) -> Result<Value, String> {
+    let mode = args
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("heap");
+    let features = match mode {
+        "heap" => "dhat-heap",
+        "cpu"  => "pprof-cpu",
+        "both" => "dhat-heap,pprof-cpu",
+        other  => return Err(format!("mode invalide: {other} (heap|cpu|both)")),
+    };
+    let timeout_s = args
+        .get("timeout_s")
+        .and_then(Value::as_u64)
+        .unwrap_or(120);
+
+    let workspace = profiling_workspace_root();
+    let (code, stdout, stderr) = run_cmd(
+        "cargo",
+        &[
+            "run",
+            "-p", "soulkernel-profiler",
+            "--features", features,
+            "--",
+            mode,
+        ],
+        &workspace,
+        timeout_s,
+    );
+
+    let reports_dir = profiling_reports_dir();
+    let meta = read_profiler_meta(&reports_dir);
+
+    Ok(json!({
+        "mode": mode,
+        "features": features,
+        "exit_code": code,
+        "stdout": stdout.lines().rev().take(20).collect::<Vec<_>>(),
+        "stderr_tail": stderr.lines().rev().take(10).collect::<Vec<_>>(),
+        "reports_dir": reports_dir.to_string_lossy(),
+        "meta": meta,
+        "available_reports": list_report_files(&reports_dir),
+    }))
+}
+
+fn read_profiler_meta(dir: &Path) -> Value {
+    let path = dir.join("profiler-meta.json");
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        serde_json::from_str(&content).unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    }
+}
+
+fn list_report_files(dir: &Path) -> Vec<Value> {
+    if !dir.exists() { return Vec::new(); }
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| {
+            let p = e.path();
+            let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            json!({
+                "name": p.file_name().unwrap_or_default().to_string_lossy(),
+                "path": p.to_string_lossy(),
+                "size_bytes": size,
+            })
+        })
+        .collect()
+}
+
+// ── tool: run_memlab ─────────────────────────────────────────────────────
+
+fn tool_run_memlab(args: &Value) -> Result<Value, String> {
+    let scenario = args
+        .get("scenario")
+        .and_then(Value::as_str)
+        .unwrap_or("all");
+    let dashboard_url = args
+        .get("dashboard_url")
+        .and_then(Value::as_str)
+        .unwrap_or("http://localhost:8787");
+    let app_url = args
+        .get("app_url")
+        .and_then(Value::as_str)
+        .unwrap_or("http://localhost:1420");
+    let timeout_s = args
+        .get("timeout_s")
+        .and_then(Value::as_u64)
+        .unwrap_or(300);
+
+    let memlab = memlab_dir();
+    if !memlab.exists() {
+        return Err(format!(
+            "Répertoire MemLab introuvable : {}",
+            memlab.display()
+        ));
+    }
+
+    // npm install si node_modules absent
+    if !memlab.join("node_modules").exists() {
+        let (code, _, stderr) = run_cmd("npm", &["install"], &memlab, 120);
+        if code != 0 {
+            return Err(format!("npm install échoué (code {code}): {stderr}"));
+        }
+    }
+
+    let (code, stdout, stderr) = run_cmd(
+        "bash",
+        &["run.sh", scenario],
+        &memlab,
+        timeout_s,
+    );
+
+    // Lecture du résumé JSON généré par run.sh
+    let summary_path = memlab.join("memlab-reports").join("summary.json");
+    let summary = if summary_path.exists() {
+        std::fs::read_to_string(&summary_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+
+    Ok(json!({
+        "scenario": scenario,
+        "exit_code": code,
+        "stdout_tail": stdout.lines().rev().take(30).collect::<Vec<_>>(),
+        "stderr_tail": stderr.lines().rev().take(10).collect::<Vec<_>>(),
+        "summary": summary,
+        "reports_dir": memlab.join("memlab-reports").to_string_lossy(),
+        "urls_tested": {
+            "dashboard": dashboard_url,
+            "app": app_url,
+        }
+    }))
+}
+
+// ── tool: get_profiling_reports ──────────────────────────────────────────
+
+fn tool_get_profiling_reports(_args: &Value) -> Result<Value, String> {
+    let rust_dir = profiling_reports_dir();
+    let memlab_dir = memlab_dir().join("memlab-reports");
+
+    let rust_files = list_report_files(&rust_dir);
+    let meta = read_profiler_meta(&rust_dir);
+
+    // Résumé MemLab
+    let memlab_summary = {
+        let path = memlab_dir.join("summary.json");
+        if path.exists() {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        }
+    };
+
+    // Lecture dhat-heap.json (extrait les top allocations)
+    let dhat_summary = {
+        let p = rust_dir.join("dhat-heap.json");
+        if p.exists() {
+            std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .map(|v| {
+                    json!({
+                        "total_bytes": v.get("totalBytes"),
+                        "total_blocks": v.get("totalBlocks"),
+                        "peak_bytes": v.get("peakBytes"),
+                        "at_t_gmax_bytes": v.get("atTGmaxBytes"),
+                    })
+                })
+                .unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        }
+    };
+
+    Ok(json!({
+        "rust": {
+            "reports_dir": rust_dir.to_string_lossy(),
+            "files": rust_files,
+            "meta": meta,
+            "dhat_summary": dhat_summary,
+            "flamegraph_exists": rust_dir.join("flamegraph.svg").exists(),
+            "proto_exists": rust_dir.join("profile.pb").exists(),
+        },
+        "frontend": {
+            "memlab_dir": memlab_dir.to_string_lossy(),
+            "summary": memlab_summary,
+        }
+    }))
+}
+
+// ── tool: get_profiling_summary ──────────────────────────────────────────
+
+fn tool_get_profiling_summary(_args: &Value) -> Result<Value, String> {
+    let rust_dir = profiling_reports_dir();
+    let memlab_reports = memlab_dir().join("memlab-reports");
+
+    let heap_exists = rust_dir.join("dhat-heap.json").exists();
+    let flamegraph_exists = rust_dir.join("flamegraph.svg").exists();
+    let memlab_summary_exists = memlab_reports.join("summary.json").exists();
+
+    let dhat_peak = if heap_exists {
+        std::fs::read_to_string(rust_dir.join("dhat-heap.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| v.get("peakBytes").and_then(Value::as_u64))
+    } else {
+        None
+    };
+
+    let memlab_leaks: Option<u64> = if memlab_summary_exists {
+        std::fs::read_to_string(memlab_reports.join("summary.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| {
+                let scenarios = v.get("scenarios")?.as_object()?;
+                Some(
+                    scenarios
+                        .values()
+                        .filter_map(|s| s.get("leak_count").and_then(Value::as_u64))
+                        .sum(),
+                )
+            })
+    } else {
+        None
+    };
+
+    // Commandes utiles affichées dans la réponse MCP
+    let workspace = profiling_workspace_root();
+    let commands = json!({
+        "heap_profile": format!(
+            "cargo run -p soulkernel-profiler --features dhat-heap -- heap"
+        ),
+        "cpu_profile": format!(
+            "cargo run -p soulkernel-profiler --features pprof-cpu -- cpu"
+        ),
+        "both_profiles": format!(
+            "cargo run -p soulkernel-profiler --features dhat-heap,pprof-cpu -- both"
+        ),
+        "memlab_dashboard": "cd tools/memlab && npm run check:dashboard",
+        "memlab_app": "cd tools/memlab && npm run check:app",
+        "memlab_all": "cd tools/memlab && npm run check:all",
+        "view_flamegraph": format!(
+            "open {}", workspace.join("profiling-reports/flamegraph.svg").display()
+        ),
+        "view_dhat": format!(
+            "npx dh {} {}", // dhat viewer: npx dh <heap.json>
+            workspace.join("profiling-reports/dhat-heap.json").display(),
+            ""
+        ),
+    });
+
+    Ok(json!({
+        "rust_profiling": {
+            "heap_profile_available": heap_exists,
+            "cpu_flamegraph_available": flamegraph_exists,
+            "peak_heap_bytes": dhat_peak,
+            "peak_heap_mb": dhat_peak.map(|b| b as f64 / 1_048_576.0),
+            "reports_dir": rust_dir.to_string_lossy(),
+        },
+        "frontend_profiling": {
+            "memlab_summary_available": memlab_summary_exists,
+            "total_leaks_detected": memlab_leaks,
+            "scenarios_dir": memlab_dir().join("scenarios").to_string_lossy(),
+        },
+        "quick_commands": commands,
+        "notes": [
+            "heap  : dhat-rs — profil d'allocations Rust (callstack + taille par site)",
+            "cpu   : pprof   — flamegraph CPU, compatible pprof tool et speedscope",
+            "memlab: scenarios/live-dashboard.ts (port 8787) + app-shell.ts (port 1420)",
+        ]
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 fn build_metric_snapshot(state: &ObservabilityStore, report: &Value) -> Value {
     let raw = report.pointer("/report/metrics/raw").cloned().unwrap_or(Value::Null);
     let kpi = report.get("kpi").cloned().unwrap_or(Value::Null);
@@ -388,6 +758,76 @@ fn tools_manifest() -> Vec<Value> {
                         "description": "Dashboard port to expose."
                     }
                 }
+            }
+        }),
+        // ── Profiling pipeline ───────────────────────────────────────────────
+        json!({
+            "name": "run_rust_profiler",
+            "description": "Build and run the soulkernel-profiler harness. \
+                Mode 'heap' runs dhat-heap (memory allocations callstack), \
+                'cpu' runs pprof flamegraph, 'both' runs both. \
+                Outputs are written to profiling-reports/ at the workspace root.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["heap", "cpu", "both"],
+                        "description": "Profiling mode. Default: heap."
+                    },
+                    "timeout_s": {
+                        "type": "integer",
+                        "description": "Max seconds to wait for the profiler to finish. Default: 120."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "run_memlab",
+            "description": "Run MemLab memory leak detection on the SoulKernel front-end. \
+                Scenario 'dashboard' targets the live-dashboard (localhost:8787), \
+                'app' targets the Svelte dev server (localhost:1420), \
+                'all' runs both. Requires the target server(s) to be running.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scenario": {
+                        "type": "string",
+                        "enum": ["dashboard", "app", "all"],
+                        "description": "Which scenario to run. Default: all."
+                    },
+                    "dashboard_url": {
+                        "type": "string",
+                        "description": "Override live-dashboard URL. Default: http://localhost:8787."
+                    },
+                    "app_url": {
+                        "type": "string",
+                        "description": "Override Svelte app URL. Default: http://localhost:1420."
+                    },
+                    "timeout_s": {
+                        "type": "integer",
+                        "description": "Max seconds for the full MemLab run. Default: 300."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "get_profiling_reports",
+            "description": "List all available profiling report files (dhat-heap.json, flamegraph.svg, \
+                profile.pb, memlab summary) with sizes and extracted key metrics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "get_profiling_summary",
+            "description": "Return a high-level summary of all profiling results: \
+                peak heap bytes (dhat), flamegraph availability (pprof), \
+                and total MemLab leaks detected. Also returns ready-to-run CLI commands.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
             }
         }),
     ]

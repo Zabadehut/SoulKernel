@@ -1,0 +1,25 @@
+{
+  "name": "soulkernel-memlab",
+  "version": "1.1.9",
+  "description": "MemLab memory leak detection for SoulKernel front-end (Svelte shell + live-dashboard)",
+  "private": true,
+  "scripts": {
+    "check:dashboard": "bash run.sh dashboard",
+    "check:app":       "bash run.sh app",
+    "check:all":       "bash run.sh all",
+    "report:dashboard":"memlab report --work-dir ./memlab-reports/dashboard",
+    "report:app":      "memlab report --work-dir ./memlab-reports/app",
+    "heap:snapshot":   "memlab heap-analysis --work-dir ./memlab-reports/dashboard",
+    "typecheck":       "tsc --noEmit --strict --moduleResolution node --esModuleInterop --target ES2020 --module commonjs --skipLibCheck scenarios/live-dashboard.ts scenarios/app-shell.ts",
+    "clean":           "rm -rf ./memlab-reports"
+  },
+  "dependencies": {
+    "@memlab/api":  "^2.0.0",
+    "@memlab/core": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/minimist": "^1.2.5",
+    "memlab":          "^2.0.0",
+    "typescript":      "^5.4.0"
+  }
+}
