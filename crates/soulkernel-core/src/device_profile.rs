@@ -122,7 +122,10 @@ impl DeviceProfile {
             kpi_norm_max: 20.0,
             kpi_self_overload_pct: 50.0,
             kpi_trend_degrade_threshold: 1.0,
-            kpi_post_action_rollback_ratio: 1.20,
+            // 1.50 au lieu de 1.20 : le KPI est fortement piloté par la pénalité faults
+            // (λ=0.5, 35k/s → ×2.75). Un spike transitoire de faults peut faire monter
+            // le KPI de 50% sans que le dôme soit réellement contreproductif.
+            kpi_post_action_rollback_ratio: 1.50,
             auto_dome_cooldown_s: 30,
             auto_dome_guard_min: 0.70,
             auto_dome_rollback_trend_max: 0.0,

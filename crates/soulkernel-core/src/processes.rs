@@ -94,7 +94,19 @@ pub fn collect_observed_report(top_n: usize) -> ProcessObservedReport {
             ),
     );
     sys.refresh_processes();
-    let logical_cores = sys.cpus().len().max(1) as f64;
+    // sys.cpus() peut retourner une liste vide sur Windows si le CPU list n'a pas été
+    // explicitement rafraîchi (sysinfo 0.30 ne le peuple pas via with_cpu_usage seul).
+    // available_parallelism() est l'API OS la plus fiable pour le nombre de threads logiques.
+    let logical_cores = {
+        let n = sys.cpus().len();
+        if n > 0 {
+            n
+        } else {
+            std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(1)
+        }
+    } as f64;
 
     let self_pid = get_current_pid().ok();
     let mut all_samples: Vec<ProcessSample> = Vec::with_capacity(sys.processes().len());
