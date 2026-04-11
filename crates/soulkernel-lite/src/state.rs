@@ -953,7 +953,13 @@ impl LiteState {
                 self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
                 self.vm.remote_supervisor_status.last_error = Some(err);
                 self.vm.remote_supervisor_status.last_error_ms = Some(now);
-                self.vm.remote_supervisor_status.last_error_kind = Some("network".to_string());
+                self.vm.remote_supervisor_status.last_error_kind =
+                    Some(classify_remote_supervisor_error_kind(
+                        self.vm.remote_supervisor_status
+                            .last_error
+                            .as_deref()
+                            .unwrap_or_default(),
+                    ));
                 self.vm.remote_supervisor_status.connected = false;
             }
             Err(_) => {
@@ -1080,6 +1086,13 @@ impl LiteState {
         }
         let cfg = self.vm.remote_supervisor_config.clone();
         if !cfg.enabled {
+            return;
+        }
+        if normalized_text(&cfg.api_key).is_none() {
+            self.vm.remote_supervisor_status.connected = false;
+            self.vm.remote_supervisor_status.last_error = None;
+            self.vm.remote_supervisor_status.last_error_ms = None;
+            self.vm.remote_supervisor_status.last_error_kind = None;
             return;
         }
         if !force
@@ -2237,6 +2250,16 @@ fn describe_reqwest_error(err: reqwest::Error) -> String {
         format!("requête invalide vers le superviseur: {err}")
     } else {
         format!("erreur réseau superviseur: {err}")
+    }
+}
+
+fn classify_remote_supervisor_error_kind(err: &str) -> String {
+    if err.starts_with("HTTP ") {
+        "http".to_string()
+    } else if err.contains("timeout") || err.contains("injoignable") || err.contains("réseau") {
+        "network".to_string()
+    } else {
+        "runtime".to_string()
     }
 }
 
