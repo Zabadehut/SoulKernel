@@ -175,6 +175,10 @@ pub struct RemoteSupervisorStatus {
     pub last_error: Option<String>,
     pub last_target_url: Option<String>,
     pub connected: bool,
+    pub last_registration_ms: Option<u64>,
+    pub last_registered_machine_id: Option<String>,
+    pub last_issued_ingest_url: Option<String>,
+    pub last_registration_reused_key: Option<bool>,
 }
 
 struct RemotePushSuccess {
@@ -363,6 +367,10 @@ struct RemoteSupervisorRegisterResponse {
     machine_id: String,
     api_key: String,
     ingest_url: String,
+    #[serde(default)]
+    supervisor_url: Option<String>,
+    #[serde(default)]
+    already_registered: bool,
 }
 
 #[derive(Clone)]
@@ -1589,23 +1597,45 @@ impl LiteState {
         ))
     }
 
-    pub fn register_remote_supervisor(&mut self) -> Result<(), String> {
+    pub fn register_remote_supervisor(&mut self) -> Result<String, String> {
         let enroll_token = normalized_text(&self.vm.remote_supervisor_config.enroll_token);
         let server_url = self.vm.remote_supervisor_config.server_url.clone();
         let machine_id = self.vm.remote_supervisor_config.machine_id.clone();
         let response =
             register_remote_supervisor_machine(&server_url, enroll_token.as_deref(), &machine_id)?;
+        let now = now_ms_local();
         self.vm.remote_supervisor_config.machine_id = response.machine_id;
         self.vm.remote_supervisor_config.api_key = response.api_key;
         self.vm.remote_supervisor_config.server_url =
             normalize_remote_supervisor_ingest_url(&response.ingest_url);
         self.vm.remote_supervisor_config.enabled = true;
+        self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
+        self.vm.remote_supervisor_status.last_target_url =
+            Some(normalize_remote_supervisor_register_url(&server_url));
+        self.vm.remote_supervisor_status.last_registration_ms = Some(now);
+        self.vm.remote_supervisor_status.last_registered_machine_id =
+            Some(self.vm.remote_supervisor_config.machine_id.clone());
+        self.vm.remote_supervisor_status.last_issued_ingest_url =
+            Some(normalize_remote_supervisor_ingest_url(&response.ingest_url));
+        self.vm.remote_supervisor_status.last_registration_reused_key =
+            Some(response.already_registered);
         self.vm.remote_supervisor_status.last_error = None;
         self.vm.remote_supervisor_status.last_error_ms = None;
         self.vm.remote_supervisor_status.last_error_kind = None;
         self.vm.remote_supervisor_status.connected = false;
         self.save_remote_supervisor_config()?;
-        Ok(())
+        Ok(format!(
+            "{} · machine={} · ingest={}",
+            if response.already_registered {
+                "Clé API récupérée"
+            } else {
+                "Clé API délivrée"
+            },
+            self.vm.remote_supervisor_config.machine_id,
+            response
+                .supervisor_url
+                .unwrap_or_else(|| normalize_remote_supervisor_base_url(&server_url))
+        ))
     }
 
     pub fn start_external_bridge(&mut self) -> Result<(), String> {

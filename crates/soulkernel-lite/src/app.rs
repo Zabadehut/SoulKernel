@@ -2795,13 +2795,47 @@ impl LiteApp {
                         C_MUTED,
                     );
                 }
+                if let Some(ts_ms) = status.last_registration_ms {
+                    Self::metric_badge(
+                        ui,
+                        "Clé reçue",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
+                        C_CYAN,
+                    );
+                }
             });
 
             if let Some(target) = &state.vm.remote_supervisor_status.last_target_url {
                 ui.label(
                     RichText::new(format!("Cible  {target}"))
+                    .size(10.0)
+                    .color(C_MUTED),
+                );
+            }
+            if let Some(machine_id) = &state.vm.remote_supervisor_status.last_registered_machine_id
+            {
+                ui.label(
+                    RichText::new(format!("Machine enrôlée  {machine_id}"))
+                        .size(10.0)
+                        .color(C_CYAN),
+                );
+            }
+            if let Some(ingest_url) = &state.vm.remote_supervisor_status.last_issued_ingest_url {
+                ui.label(
+                    RichText::new(format!("URL ingest  {ingest_url}"))
                         .size(10.0)
                         .color(C_MUTED),
+                );
+            }
+            if let Some(reused) = state.vm.remote_supervisor_status.last_registration_reused_key {
+                ui.label(
+                    RichText::new(if reused {
+                        "Le serveur a renvoyé la clé API existante pour cette machine."
+                    } else {
+                        "Le serveur a délivré une nouvelle clé API pour cette machine."
+                    })
+                    .size(10.0)
+                    .color(C_MUTED),
                 );
             }
             if let Some(err_msg) = &state.vm.remote_supervisor_status.last_error {
@@ -2827,19 +2861,26 @@ impl LiteApp {
                 &mut state.vm.remote_supervisor_config.enabled,
                 "Activer la supervision distante",
             );
+            ui.label(
+                RichText::new(
+                    "Flux attendu: renseigner l'URL du supervisor et le token d'enrôlement, puis cliquer sur “Demander la clé API”. Le serveur répond avec machine_id + api_key + ingest_url.",
+                )
+                .size(10.0)
+                .color(C_MUTED),
+            );
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Server URL").size(11.0).color(C_MUTED));
+                ui.label(RichText::new("URL supervisor").size(11.0).color(C_MUTED));
                 ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.server_url);
             });
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Enroll token").size(11.0).color(C_MUTED));
+                ui.label(RichText::new("Token d'enrôlement").size(11.0).color(C_MUTED));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.enroll_token)
                         .password(true),
                 );
             });
             ui.horizontal(|ui| {
-                ui.label(RichText::new("API key").size(11.0).color(C_MUTED));
+                ui.label(RichText::new("Clé API").size(11.0).color(C_MUTED));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.api_key)
                         .password(true),
@@ -2858,16 +2899,19 @@ impl LiteApp {
             );
             ui.label(
                 RichText::new(
-                    "Accepte une URL de base (ex. http://supervisor:8787) ou directement /api/ingest. Le serveur génère la clé via POST /api/register.",
+                    "Accepte une URL de base (ex. http://supervisor:8787) ou directement /api/ingest. Si URL + token sont présents, le bouton d’enrôlement demande la clé API au serveur via POST /api/register.",
                 ).size(10.0).color(C_MUTED),
             );
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                if ui.button("Enregistrer la machine").clicked() {
+                let can_request_api_key = !state.vm.remote_supervisor_config.server_url.trim().is_empty();
+                let request_button = ui.add_enabled(
+                    can_request_api_key,
+                    egui::Button::new("Demander la clé API"),
+                );
+                if request_button.clicked() {
                     match state.register_remote_supervisor() {
-                        Ok(()) => {
-                            *info = Some("Machine enregistrée auprès du superviseur".to_string())
-                        }
+                        Ok(msg) => *info = Some(msg),
                         Err(err) => *error = Some(err),
                     }
                 }
