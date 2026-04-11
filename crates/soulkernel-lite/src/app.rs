@@ -58,6 +58,14 @@ impl Default for LiteApp {
     }
 }
 
+impl Drop for LiteApp {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.as_mut() {
+            let _ = state.stop_external_bridge();
+        }
+    }
+}
+
 // ── Visual primitives ──────────────────────────────────────────────────────────
 
 impl LiteApp {
@@ -2722,205 +2730,193 @@ impl LiteApp {
             Self::section_title(
                 ui,
                 "Superviseur distant",
-                "Pousse les ticks d'observabilité vers SoulKernel-Supervisor pour la supervision live distante.",
+                "Supervision live distante — 2 couches de sécurité : token d'invitation unique + clé API machine.",
             );
+
+            // ── Badges de statut ────────────────────────────────────────────
+            let status = &state.vm.remote_supervisor_status;
+            let enrolled = !state.vm.remote_supervisor_config.api_key.trim().is_empty();
+            let has_server_info = status.server_info.is_some();
 
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                let status = &state.vm.remote_supervisor_status;
-                let enrolled = !state.vm.remote_supervisor_config.api_key.trim().is_empty();
-                let color = if status.connected {
-                    C_GREEN
-                } else if status.last_error.is_some() {
-                    C_RED
-                } else if !enrolled {
-                    C_YELLOW
+
+                // Étape 1 : serveur découvert
+                let (step1_label, step1_color) = if has_server_info {
+                    ("① Serveur ✓", C_GREEN)
+                } else if state.is_checking_server() {
+                    ("① Serveur…", C_YELLOW)
                 } else {
-                    C_MUTED
+                    ("① Serveur ?", C_MUTED)
                 };
-                Self::metric_badge(
-                    ui,
-                    "Statut",
-                    if status.connected {
-                        "connecté".to_string()
-                    } else if status.last_error.is_some() {
-                        status
-                            .last_error_kind
-                            .as_deref()
-                            .map(|k| match k {
-                                "network" => "erreur réseau".to_string(),
-                                "http" => "erreur HTTP".to_string(),
-                                "runtime" => "erreur interne".to_string(),
-                                _ => "erreur".to_string(),
-                            })
-                            .unwrap_or_else(|| "erreur".to_string())
-                    } else if !enrolled {
-                        "non enrôlé".to_string()
-                    } else {
-                        "inactif".to_string()
-                    },
-                    color,
-                );
-                Self::metric_badge(
-                    ui,
-                    "Enrôlement",
-                    if enrolled {
-                        "clé présente".to_string()
-                    } else {
-                        "clé absente".to_string()
-                    },
-                    if enrolled { C_GREEN } else { C_YELLOW },
-                );
-                if let Some(code) = status.last_success_http_status {
-                    Self::metric_badge(
-                        ui,
-                        "Dernier HTTP",
-                        code.to_string(),
-                        Color32::from_rgb(92, 124, 250),
-                    );
-                }
+                Self::metric_badge(ui, "Étape", step1_label.to_string(), step1_color);
+
+                // Étape 2 : enrôlement
+                let (step2_label, step2_color) = if enrolled {
+                    ("② Enrôlé ✓", C_GREEN)
+                } else if state.is_enrolling() {
+                    ("② Enrôlement…", C_YELLOW)
+                } else if has_server_info {
+                    ("② En attente", C_YELLOW)
+                } else {
+                    ("② Enrôlement", C_MUTED)
+                };
+                Self::metric_badge(ui, "Clé API", step2_label.to_string(), step2_color);
+
+                // Étape 3 : push en cours
+                let (step3_label, step3_color) = if status.connected {
+                    ("③ Push actif ✓", C_GREEN)
+                } else if enrolled {
+                    ("③ Push inactif", C_MUTED)
+                } else {
+                    ("③ Push", C_MUTED)
+                };
+                Self::metric_badge(ui, "Push", step3_label.to_string(), step3_color);
+
                 if let Some(ts_ms) = status.last_success_ms {
-                    Self::metric_badge(
-                        ui,
-                        "Dernier succès",
-                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
-                        C_MUTED,
-                    );
+                    Self::metric_badge(ui, "Dernier push",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)), C_GREEN);
                 }
                 if let Some(ts_ms) = status.last_attempt_ms {
-                    Self::metric_badge(
-                        ui,
-                        "Dernière tentative",
-                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
-                        C_MUTED,
-                    );
+                    Self::metric_badge(ui, "Tentative",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)), C_MUTED);
                 }
                 if let Some(ts_ms) = status.last_registration_ms {
-                    Self::metric_badge(
-                        ui,
-                        "Clé reçue",
-                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)),
-                        C_CYAN,
-                    );
+                    Self::metric_badge(ui, "Enrôlé",
+                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms)), C_CYAN);
                 }
             });
 
-            if let Some(target) = &state.vm.remote_supervisor_status.last_target_url {
-                ui.label(
-                    RichText::new(format!("Cible  {target}"))
-                    .size(10.0)
-                    .color(C_MUTED),
-                );
+            // Infos serveur découvert
+            if let Some(si) = &state.vm.remote_supervisor_status.server_info {
+                let mode = if si.enrollment_protected {
+                    "protégé (token requis)"
+                } else {
+                    "ouvert"
+                };
+                let name = si.name.as_deref().unwrap_or("SoulKernel Supervisor");
+                let ver  = si.version.as_deref().unwrap_or("?");
+                let mc   = si.machine_count.map(|n| format!(" · {n} machine(s)")).unwrap_or_default();
+                ui.label(RichText::new(format!("Serveur  {name} v{ver} · mode: {mode}{mc}"))
+                    .size(10.0).color(C_CYAN));
             }
-            if let Some(machine_id) = &state.vm.remote_supervisor_status.last_registered_machine_id
-            {
-                ui.label(
-                    RichText::new(format!("Machine enrôlée  {machine_id}"))
-                        .size(10.0)
-                        .color(C_CYAN),
-                );
+            if let Some(mid) = &state.vm.remote_supervisor_status.last_registered_machine_id {
+                ui.label(RichText::new(format!("Machine  {mid}")).size(10.0).color(C_CYAN));
             }
-            if let Some(ingest_url) = &state.vm.remote_supervisor_status.last_issued_ingest_url {
-                ui.label(
-                    RichText::new(format!("URL ingest  {ingest_url}"))
-                        .size(10.0)
-                        .color(C_MUTED),
-                );
+            if let Some(url) = &state.vm.remote_supervisor_status.last_issued_ingest_url {
+                ui.label(RichText::new(format!("Ingest   {url}")).size(10.0).color(C_MUTED));
             }
-            if let Some(reused) = state.vm.remote_supervisor_status.last_registration_reused_key {
-                ui.label(
-                    RichText::new(if reused {
-                        "Le serveur a renvoyé la clé API existante pour cette machine."
-                    } else {
-                        "Le serveur a délivré une nouvelle clé API pour cette machine."
-                    })
-                    .size(10.0)
-                    .color(C_MUTED),
-                );
+            if let Some(rotated) = state.vm.remote_supervisor_status.key_rotated {
+                if rotated {
+                    ui.label(RichText::new("↻ Clé API renouvelée (rotation automatique)")
+                        .size(10.0).color(C_YELLOW));
+                }
             }
             if let Some(err_msg) = &state.vm.remote_supervisor_status.last_error {
-                ui.label(
-                    RichText::new(format!("Erreur  {err_msg}"))
-                        .size(10.5)
-                        .color(C_RED),
-                );
-            }
-            if let Some(ts_ms) = state.vm.remote_supervisor_status.last_error_ms {
-                ui.label(
-                    RichText::new(format!(
-                        "Dernière erreur  {}",
-                        fmt::ago_ms(state.vm.now_ms.saturating_sub(ts_ms))
-                    ))
-                    .size(10.0)
-                    .color(C_MUTED),
-                );
+                ui.label(RichText::new(format!("⚠ {err_msg}")).size(10.5).color(C_RED));
             }
 
-            ui.add_space(8.0);
-            ui.checkbox(
-                &mut state.vm.remote_supervisor_config.enabled,
-                "Activer la supervision distante",
-            );
-            ui.label(
-                RichText::new(
-                    "Flux attendu: renseigner l'URL du supervisor et le token d'enrôlement, puis cliquer sur “Demander la clé API”. Le serveur répond avec machine_id + api_key + ingest_url.",
-                )
-                .size(10.0)
-                .color(C_MUTED),
-            );
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // ── Étape 1 : URL du serveur ─────────────────────────────────────
+            ui.label(RichText::new("① URL du Superviseur").size(11.5).color(C_CYAN));
             ui.horizontal(|ui| {
-                ui.label(RichText::new("URL supervisor").size(11.0).color(C_MUTED));
-                ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.server_url);
+                ui.label(RichText::new("URL").size(11.0).color(C_MUTED));
+                ui.add(egui::TextEdit::singleline(
+                    &mut state.vm.remote_supervisor_config.server_url,
+                ).hint_text("http://192.168.1.X:8787"));
+                let checking = state.is_checking_server();
+                let can_check = !state.vm.remote_supervisor_config.server_url.trim().is_empty() && !checking;
+                let lbl = if checking { "Vérification…" } else { "Vérifier" };
+                if ui.add_enabled(can_check, egui::Button::new(lbl)).clicked() {
+                    match state.check_remote_supervisor_server() {
+                        Ok(msg)  => *info  = Some(msg),
+                        Err(err) => *error = Some(err),
+                    }
+                }
             });
+            ui.label(RichText::new("Accepte http://host:8787 ou directement /api/ingest.")
+                .size(9.5).color(C_MUTED));
+
+            ui.add_space(6.0);
+
+            // ── Étape 2 : enrôlement ─────────────────────────────────────────
+            let protected = state.vm.remote_supervisor_status.server_info
+                .as_ref().map(|si| si.enrollment_protected).unwrap_or(true);
+            ui.label(RichText::new("② Token d'enrôlement (usage unique)").size(11.5).color(C_CYAN));
+            if protected {
+                ui.label(RichText::new(
+                    "Ce serveur est protégé. L'admin doit générer un token via :\n  POST /api/enrollment-tokens  (Bearer: SOULKERNEL_ADMIN_TOKEN)"
+                ).size(9.5).color(C_MUTED));
+            } else {
+                ui.label(RichText::new("Mode ouvert — le token est facultatif.")
+                    .size(9.5).color(C_MUTED));
+            }
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Token d'enrôlement").size(11.0).color(C_MUTED));
+                ui.label(RichText::new("Token").size(11.0).color(C_MUTED));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.enroll_token)
-                        .password(true),
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Clé API").size(11.0).color(C_MUTED));
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.api_key)
-                        .password(true),
+                        .password(true)
+                        .hint_text("ek_…"),
                 );
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Machine ID").size(11.0).color(C_MUTED));
-                ui.text_edit_singleline(&mut state.vm.remote_supervisor_config.machine_id);
+                ui.add(egui::TextEdit::singleline(
+                    &mut state.vm.remote_supervisor_config.machine_id,
+                ).hint_text("nom-machine (auto)"));
             });
-            ui.add(
-                egui::Slider::new(
-                    &mut state.vm.remote_supervisor_config.push_interval_s,
-                    1..=60,
-                )
-                .text("Intervalle push (s)"),
-            );
-            ui.label(
-                RichText::new(
-                    "Accepte une URL de base (ex. http://supervisor:8787) ou directement /api/ingest. Si URL + token sont présents, le bouton d’enrôlement demande la clé API au serveur via POST /api/register.",
-                ).size(10.0).color(C_MUTED),
-            );
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let enrolling = state.is_enrolling();
-                let testing = state.is_testing_connection();
-                let can_request_api_key =
-                    !state.vm.remote_supervisor_config.server_url.trim().is_empty() && !enrolling;
-                let enroll_label = if enrolling { "Enrôlement…" } else { "Demander la clé API" };
-                let request_button =
-                    ui.add_enabled(can_request_api_key, egui::Button::new(enroll_label));
-                if request_button.clicked() {
+                let can_enroll = has_server_info && !enrolling;
+                let enroll_lbl = if enrolling { "Enrôlement…" } else { "Demander la clé API" };
+                if ui.add_enabled(can_enroll, egui::Button::new(enroll_lbl)).clicked() {
                     match state.register_remote_supervisor() {
-                        Ok(msg) => *info = Some(msg),
+                        Ok(msg)  => *info  = Some(msg),
                         Err(err) => *error = Some(err),
                     }
                 }
-                let test_label = if testing { "Test…" } else { "Tester la connexion" };
-                if ui.add_enabled(!testing, egui::Button::new(test_label)).clicked() {
+                if enrolled {
+                    if ui.button("Révoquer la clé").clicked() {
+                        state.vm.remote_supervisor_config.api_key.clear();
+                        state.vm.remote_supervisor_config.enroll_token.clear();
+                        state.vm.remote_supervisor_status.connected = false;
+                        state.vm.remote_supervisor_status.key_rotated = None;
+                        state.vm.remote_supervisor_status.last_registered_machine_id = None;
+                        state.vm.remote_supervisor_status.last_issued_ingest_url = None;
+                        let _ = state.save_remote_supervisor_config();
+                        *info = Some("Clé API révoquée localement.".to_string());
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+
+            // ── Étape 3 : push actif ─────────────────────────────────────────
+            ui.label(RichText::new("③ Supervision active").size(11.5).color(C_CYAN));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Clé API").size(11.0).color(C_MUTED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.vm.remote_supervisor_config.api_key)
+                        .password(true)
+                        .hint_text("sk_… (auto après enrôlement)"),
+                );
+            });
+            ui.add(
+                egui::Slider::new(&mut state.vm.remote_supervisor_config.push_interval_s, 1..=60)
+                    .text("Intervalle push (s)"),
+            );
+            ui.checkbox(&mut state.vm.remote_supervisor_config.enabled, "Activer la supervision distante");
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let testing = state.is_testing_connection();
+                let test_lbl = if testing { "Test…" } else { "Tester la connexion" };
+                if ui.add_enabled(!testing, egui::Button::new(test_lbl)).clicked() {
                     match state.test_remote_supervisor_connection() {
-                        Ok(msg) => *info = Some(msg),
+                        Ok(msg)  => *info  = Some(msg),
                         Err(err) => *error = Some(err),
                     }
                 }
@@ -2930,7 +2926,7 @@ impl LiteApp {
                         Err(err) => *error = Some(err),
                     }
                 }
-                if ui.button("Envoyer maintenant").clicked() {
+                if ui.add_enabled(enrolled, egui::Button::new("Envoyer maintenant")).clicked() {
                     match state.push_remote_supervisor_now() {
                         Ok(()) => *info = Some("Push superviseur lancé".to_string()),
                         Err(err) => *error = Some(err),

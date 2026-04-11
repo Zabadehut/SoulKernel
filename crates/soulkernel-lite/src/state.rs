@@ -179,6 +179,19 @@ pub struct RemoteSupervisorStatus {
     pub last_registered_machine_id: Option<String>,
     pub last_issued_ingest_url: Option<String>,
     pub last_registration_reused_key: Option<bool>,
+    pub key_rotated: Option<bool>,
+    pub server_info: Option<RemoteSupervisorServerInfo>,
+}
+
+/// Informations retournées par GET /api/server-info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteSupervisorServerInfo {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// true  → token d'enrôlement requis (admin doit en créer un)
+    /// false → enrôlement ouvert
+    pub enrollment_protected: bool,
+    pub machine_count: Option<u64>,
 }
 
 struct RemotePushSuccess {
@@ -371,6 +384,8 @@ struct RemoteSupervisorRegisterResponse {
     supervisor_url: Option<String>,
     #[serde(default)]
     already_registered: bool,
+    #[serde(default)]
+    key_rotated: bool,
 }
 
 #[derive(Clone)]
@@ -464,6 +479,7 @@ pub struct LiteState {
     action_handle: Option<std::thread::JoinHandle<Result<BackgroundActionSuccess, String>>>,
     enroll_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
     test_connection_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
+    server_info_handle: Option<std::thread::JoinHandle<Result<RemoteSupervisorServerInfo, String>>>,
     last_observability_write: Instant,
     last_remote_push: Instant,
     pending_host_impact: Option<(HostImpactSnapshot, &'static str)>,
@@ -643,6 +659,7 @@ impl LiteState {
             action_handle: None,
             enroll_handle: None,
             test_connection_handle: None,
+            server_info_handle: None,
             last_observability_write: Instant::now() - Duration::from_secs(10),
             last_remote_push: Instant::now() - Duration::from_secs(10),
             pending_host_impact: None,
@@ -658,6 +675,7 @@ impl LiteState {
         self.poll_action();
         self.poll_enroll();
         self.poll_test_connection();
+        self.poll_server_info();
         let applied = self.apply_pending_refresh()?;
 
         // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
@@ -845,6 +863,7 @@ impl LiteState {
         self.poll_action();
         self.poll_enroll();
         self.poll_test_connection();
+        self.poll_server_info();
         // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
         // Les process/inventory seront rafraîchis par le prochain cycle périodique.
         let refresh_processes = self.last_process_refresh.elapsed()
@@ -1701,18 +1720,22 @@ impl LiteState {
                             Some(normalize_remote_supervisor_ingest_url(&response.ingest_url));
                         self.vm.remote_supervisor_status.last_registration_reused_key =
                             Some(response.already_registered);
+                        self.vm.remote_supervisor_status.key_rotated = Some(response.key_rotated);
                         self.vm.remote_supervisor_status.last_error = None;
                         self.vm.remote_supervisor_status.last_error_ms = None;
                         self.vm.remote_supervisor_status.last_error_kind = None;
                         self.vm.remote_supervisor_status.connected = false;
+                        // Effacer le token d'enrôlement (usage unique — ne pas le conserver)
+                        self.vm.remote_supervisor_config.enroll_token.clear();
                         let _ = self.save_remote_supervisor_config();
+                        let label = if response.already_registered {
+                            if response.key_rotated { "Clé API renouvelée" } else { "Clé récupérée" }
+                        } else {
+                            "Clé API délivrée"
+                        };
                         self.vm.last_actions.insert(
                             0,
-                            format!(
-                                "✓ {} · machine={}",
-                                if response.already_registered { "Clé récupérée" } else { "Clé délivrée" },
-                                self.vm.remote_supervisor_config.machine_id,
-                            ),
+                            format!("✓ {} · machine={}", label, self.vm.remote_supervisor_config.machine_id),
                         );
                     }
                     Err(e) => {
@@ -1731,6 +1754,49 @@ impl LiteState {
                 self.vm.remote_supervisor_status.last_error_ms = Some(now);
             }
         }
+    }
+
+    /// Lance une découverte asynchrone du serveur (GET /api/server-info).
+    /// Met à jour `status.server_info` au retour.
+    pub fn check_remote_supervisor_server(&mut self) -> Result<String, String> {
+        if self.server_info_handle.is_some() {
+            return Err("Vérification déjà en cours…".to_string());
+        }
+        let server_url = self.vm.remote_supervisor_config.server_url.clone();
+        self.server_info_handle = Some(std::thread::spawn(move || {
+            fetch_remote_supervisor_server_info(&normalize_remote_supervisor_base_url(&server_url))
+        }));
+        Ok("Vérification du serveur…".to_string())
+    }
+
+    fn poll_server_info(&mut self) {
+        let Some(handle) = self.server_info_handle.take() else { return };
+        if !handle.is_finished() {
+            self.server_info_handle = Some(handle);
+            return;
+        }
+        let now = now_ms_local();
+        match handle.join() {
+            Ok(Ok(info)) => {
+                self.vm.remote_supervisor_status.server_info = Some(info);
+                self.vm.remote_supervisor_status.last_error = None;
+                self.vm.remote_supervisor_status.last_error_ms = None;
+            }
+            Ok(Err(err)) => {
+                self.vm.remote_supervisor_status.server_info = None;
+                self.vm.remote_supervisor_status.last_error = Some(err);
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+            }
+            Err(_) => {
+                self.vm.remote_supervisor_status.last_error =
+                    Some("server-info thread panic".to_string());
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+            }
+        }
+    }
+
+    pub fn is_checking_server(&self) -> bool {
+        self.server_info_handle.is_some()
     }
 
     pub fn start_external_bridge(&mut self) -> Result<(), String> {
@@ -2321,6 +2387,34 @@ fn fetch_remote_supervisor_status(
         });
     }
     response.json().map_err(|e| e.to_string())
+}
+
+fn fetch_remote_supervisor_server_info(
+    base_url: &str,
+) -> Result<RemoteSupervisorServerInfo, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(REMOTE_SUPERVISOR_TIMEOUT_S))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(format!("{}/api/server-info", base_url))
+        .send()
+        .map_err(describe_reqwest_error)?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().unwrap_or_default();
+        return Err(if detail.trim().is_empty() {
+            format!("HTTP {}", status.as_u16())
+        } else {
+            format!("HTTP {}: {}", status.as_u16(), detail.trim())
+        });
+    }
+    response.json::<serde_json::Value>().map_err(|e| e.to_string()).map(|v| RemoteSupervisorServerInfo {
+        name: v["name"].as_str().map(str::to_string),
+        version: v["version"].as_str().map(str::to_string),
+        enrollment_protected: v["enrollment_protected"].as_bool().unwrap_or(false),
+        machine_count: v["machine_count"].as_u64(),
+    })
 }
 
 fn describe_reqwest_error(err: reqwest::Error) -> String {
