@@ -362,7 +362,7 @@ enum BackgroundActionSuccess {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RemoteSupervisorRegisterResponse {
     machine_id: String,
     api_key: String,
@@ -462,6 +462,8 @@ pub struct LiteState {
     observability_write_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
     remote_push_handle: Option<std::thread::JoinHandle<Result<RemotePushSuccess, String>>>,
     action_handle: Option<std::thread::JoinHandle<Result<BackgroundActionSuccess, String>>>,
+    enroll_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
+    test_connection_handle: Option<std::thread::JoinHandle<Result<String, String>>>,
     last_observability_write: Instant,
     last_remote_push: Instant,
     pending_host_impact: Option<(HostImpactSnapshot, &'static str)>,
@@ -639,6 +641,8 @@ impl LiteState {
             observability_write_handle: None,
             remote_push_handle: None,
             action_handle: None,
+            enroll_handle: None,
+            test_connection_handle: None,
             last_observability_write: Instant::now() - Duration::from_secs(10),
             last_remote_push: Instant::now() - Duration::from_secs(10),
             pending_host_impact: None,
@@ -652,6 +656,8 @@ impl LiteState {
         self.poll_observability_write();
         self.poll_remote_push();
         self.poll_action();
+        self.poll_enroll();
+        self.poll_test_connection();
         let applied = self.apply_pending_refresh()?;
 
         // ── Auto-cycle SoulRAM ────────────────────────────────────────────────
@@ -837,6 +843,8 @@ impl LiteState {
         self.poll_observability_write();
         self.poll_remote_push();
         self.poll_action();
+        self.poll_enroll();
+        self.poll_test_connection();
         // Post-action refresh : metrics seulement (pas de processes/inventory qui sont lourds).
         // Les process/inventory seront rafraîchis par le prochain cycle périodique.
         let refresh_processes = self.last_process_refresh.elapsed()
@@ -1387,6 +1395,14 @@ impl LiteState {
         self.action_handle.is_some()
     }
 
+    pub fn is_enrolling(&self) -> bool {
+        self.enroll_handle.is_some()
+    }
+
+    pub fn is_testing_connection(&self) -> bool {
+        self.test_connection_handle.is_some()
+    }
+
     pub fn reset_adaptive_tuning_for_profile(&mut self) {
         self.vm.adaptive_tuning =
             load_adaptive_tuning(&default_machine_id(), &self.vm.device_profile)
@@ -1594,61 +1610,127 @@ impl LiteState {
     }
 
     pub fn test_remote_supervisor_connection(&mut self) -> Result<String, String> {
+        if self.test_connection_handle.is_some() {
+            return Err("Test déjà en cours…".to_string());
+        }
         let server_url = self.vm.remote_supervisor_config.server_url.clone();
-        let target_url = normalize_remote_supervisor_base_url(&server_url);
-        let status = fetch_remote_supervisor_status(&target_url)?;
+        self.test_connection_handle = Some(std::thread::spawn(move || {
+            let target_url = normalize_remote_supervisor_base_url(&server_url);
+            let status = fetch_remote_supervisor_status(&target_url)?;
+            Ok(format!(
+                "superviseur OK · {} machine(s) · {} échantillons",
+                status.machine_count, status.sample_count
+            ))
+        }));
+        Ok("Test de connexion en cours…".to_string())
+    }
+
+    fn poll_test_connection(&mut self) {
+        let Some(handle) = self.test_connection_handle.take() else { return };
+        if !handle.is_finished() {
+            self.test_connection_handle = Some(handle);
+            return;
+        }
         let now = now_ms_local();
-        self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
-        self.vm.remote_supervisor_status.last_target_url = Some(target_url);
-        self.vm.remote_supervisor_status.last_error = None;
-        self.vm.remote_supervisor_status.last_error_ms = None;
-        self.vm.remote_supervisor_status.last_error_kind = None;
-        self.vm.remote_supervisor_status.connected = true;
-        Ok(format!(
-            "superviseur OK · {} machine(s) · {} échantillons",
-            status.machine_count, status.sample_count
-        ))
+        match handle.join() {
+            Ok(Ok(msg)) => {
+                self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
+                self.vm.remote_supervisor_status.last_error = None;
+                self.vm.remote_supervisor_status.last_error_ms = None;
+                self.vm.remote_supervisor_status.last_error_kind = None;
+                self.vm.remote_supervisor_status.connected = true;
+                self.vm.last_actions.insert(0, format!("✓ {msg}"));
+            }
+            Ok(Err(err)) => {
+                self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
+                self.vm.remote_supervisor_status.last_error = Some(err);
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+                self.vm.remote_supervisor_status.connected = false;
+            }
+            Err(_) => {
+                self.vm.remote_supervisor_status.last_error =
+                    Some("test connexion thread panic".to_string());
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+            }
+        }
     }
 
     pub fn register_remote_supervisor(&mut self) -> Result<String, String> {
+        if self.enroll_handle.is_some() {
+            return Err("Enrôlement déjà en cours…".to_string());
+        }
         let enroll_token = normalized_text(&self.vm.remote_supervisor_config.enroll_token);
         let server_url = self.vm.remote_supervisor_config.server_url.clone();
         let machine_id = self.vm.remote_supervisor_config.machine_id.clone();
-        let response =
-            register_remote_supervisor_machine(&server_url, enroll_token.as_deref(), &machine_id)?;
+        self.enroll_handle = Some(std::thread::spawn(move || {
+            let response = register_remote_supervisor_machine(
+                &server_url,
+                enroll_token.as_deref(),
+                &machine_id,
+            )?;
+            // Retourne un JSON compact pour transférer vers le thread UI
+            serde_json::to_string(&response).map_err(|e| e.to_string())
+        }));
+        Ok("Enrôlement en cours…".to_string())
+    }
+
+    fn poll_enroll(&mut self) {
+        let Some(handle) = self.enroll_handle.take() else { return };
+        if !handle.is_finished() {
+            self.enroll_handle = Some(handle);
+            return;
+        }
         let now = now_ms_local();
-        self.vm.remote_supervisor_config.machine_id = response.machine_id;
-        self.vm.remote_supervisor_config.api_key = response.api_key;
-        self.vm.remote_supervisor_config.server_url =
-            normalize_remote_supervisor_ingest_url(&response.ingest_url);
-        self.vm.remote_supervisor_config.enabled = true;
-        self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
-        self.vm.remote_supervisor_status.last_target_url =
-            Some(normalize_remote_supervisor_register_url(&server_url));
-        self.vm.remote_supervisor_status.last_registration_ms = Some(now);
-        self.vm.remote_supervisor_status.last_registered_machine_id =
-            Some(self.vm.remote_supervisor_config.machine_id.clone());
-        self.vm.remote_supervisor_status.last_issued_ingest_url =
-            Some(normalize_remote_supervisor_ingest_url(&response.ingest_url));
-        self.vm.remote_supervisor_status.last_registration_reused_key =
-            Some(response.already_registered);
-        self.vm.remote_supervisor_status.last_error = None;
-        self.vm.remote_supervisor_status.last_error_ms = None;
-        self.vm.remote_supervisor_status.last_error_kind = None;
-        self.vm.remote_supervisor_status.connected = false;
-        self.save_remote_supervisor_config()?;
-        Ok(format!(
-            "{} · machine={} · ingest={}",
-            if response.already_registered {
-                "Clé API récupérée"
-            } else {
-                "Clé API délivrée"
-            },
-            self.vm.remote_supervisor_config.machine_id,
-            response
-                .supervisor_url
-                .unwrap_or_else(|| normalize_remote_supervisor_base_url(&server_url))
-        ))
+        match handle.join() {
+            Ok(Ok(json_str)) => {
+                match serde_json::from_str::<RemoteSupervisorRegisterResponse>(&json_str) {
+                    Ok(response) => {
+                        let server_url = self.vm.remote_supervisor_config.server_url.clone();
+                        self.vm.remote_supervisor_config.machine_id = response.machine_id.clone();
+                        self.vm.remote_supervisor_config.api_key = response.api_key;
+                        self.vm.remote_supervisor_config.server_url =
+                            normalize_remote_supervisor_ingest_url(&response.ingest_url);
+                        self.vm.remote_supervisor_config.enabled = true;
+                        self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
+                        self.vm.remote_supervisor_status.last_target_url =
+                            Some(normalize_remote_supervisor_register_url(&server_url));
+                        self.vm.remote_supervisor_status.last_registration_ms = Some(now);
+                        self.vm.remote_supervisor_status.last_registered_machine_id =
+                            Some(response.machine_id);
+                        self.vm.remote_supervisor_status.last_issued_ingest_url =
+                            Some(normalize_remote_supervisor_ingest_url(&response.ingest_url));
+                        self.vm.remote_supervisor_status.last_registration_reused_key =
+                            Some(response.already_registered);
+                        self.vm.remote_supervisor_status.last_error = None;
+                        self.vm.remote_supervisor_status.last_error_ms = None;
+                        self.vm.remote_supervisor_status.last_error_kind = None;
+                        self.vm.remote_supervisor_status.connected = false;
+                        let _ = self.save_remote_supervisor_config();
+                        self.vm.last_actions.insert(
+                            0,
+                            format!(
+                                "✓ {} · machine={}",
+                                if response.already_registered { "Clé récupérée" } else { "Clé délivrée" },
+                                self.vm.remote_supervisor_config.machine_id,
+                            ),
+                        );
+                    }
+                    Err(e) => {
+                        self.vm.remote_supervisor_status.last_error = Some(e.to_string());
+                        self.vm.remote_supervisor_status.last_error_ms = Some(now);
+                    }
+                }
+            }
+            Ok(Err(err)) => {
+                self.vm.remote_supervisor_status.last_error = Some(err);
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+                self.vm.remote_supervisor_status.last_attempt_ms = Some(now);
+            }
+            Err(_) => {
+                self.vm.remote_supervisor_status.last_error = Some("enroll thread panic".to_string());
+                self.vm.remote_supervisor_status.last_error_ms = Some(now);
+            }
+        }
     }
 
     pub fn start_external_bridge(&mut self) -> Result<(), String> {

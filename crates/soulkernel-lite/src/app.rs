@@ -2904,18 +2904,21 @@ impl LiteApp {
             );
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                let can_request_api_key = !state.vm.remote_supervisor_config.server_url.trim().is_empty();
-                let request_button = ui.add_enabled(
-                    can_request_api_key,
-                    egui::Button::new("Demander la clé API"),
-                );
+                let enrolling = state.is_enrolling();
+                let testing = state.is_testing_connection();
+                let can_request_api_key =
+                    !state.vm.remote_supervisor_config.server_url.trim().is_empty() && !enrolling;
+                let enroll_label = if enrolling { "Enrôlement…" } else { "Demander la clé API" };
+                let request_button =
+                    ui.add_enabled(can_request_api_key, egui::Button::new(enroll_label));
                 if request_button.clicked() {
                     match state.register_remote_supervisor() {
                         Ok(msg) => *info = Some(msg),
                         Err(err) => *error = Some(err),
                     }
                 }
-                if ui.button("Tester la connexion").clicked() {
+                let test_label = if testing { "Test…" } else { "Tester la connexion" };
+                if ui.add_enabled(!testing, egui::Button::new(test_label)).clicked() {
                     match state.test_remote_supervisor_connection() {
                         Ok(msg) => *info = Some(msg),
                         Err(err) => *error = Some(err),
